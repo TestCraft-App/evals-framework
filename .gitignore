@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+.env
+playwright-report/
+test-results/
+data/
+.env.*
+!.env.example
