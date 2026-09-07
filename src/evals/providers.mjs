@@ -1,10 +1,11 @@
-import { AppError } from './validation.mjs';
+import { AppError, unsupportedGraderModel } from './validation.mjs';
 
 export function publicConfig(env) {
   return {
-    app: 'TestCraft Evals', version: 2,
+    app: 'TestCraft Evals', version: 3,
     llmReady: Boolean(env.OPENAI_API_KEY),
     model: env.LLM_MODEL || 'gpt-4o-mini', judgeModel: env.JUDGE_MODEL || env.LLM_MODEL || 'gpt-4o-mini',
+    judgeModelCompatible: !unsupportedGraderModel(env.JUDGE_MODEL || env.LLM_MODEL || 'gpt-4o-mini'),
     testcraftBaseUrl: env.TESTCRAFT_BASE_URL || 'https://api.testcraft.app',
     testcraftIdeasReady: true, testcraftCodeReady: true,
   };
@@ -30,7 +31,7 @@ export async function chat({ env, model, messages, schema, fetchImpl = fetch }) 
   if (!env.OPENAI_API_KEY) throw new AppError('Set OPENAI_API_KEY in the backend .env and restart to call the generation or judge model.', 503);
   const body = { model, messages, store: false };
   if (schema) body.response_format = { type: 'json_schema', json_schema: { name: 'evaluation_grade', strict: true, schema } };
-  const data = await requestJson(`${(env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`, body, env.OPENAI_API_KEY, fetchImpl, schema ? 'Judge model' : 'Generation model');
+  const data = await requestJson(`${(env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`, body, env.OPENAI_API_KEY, fetchImpl, schema ? 'Model grader' : 'Generation model');
   const choice = data.choices?.[0];
   if (choice?.message?.refusal) throw new AppError('The model refused this request. Inspect the evaluation input.', 422);
   if (choice?.finish_reason && choice.finish_reason !== 'stop') throw new AppError('The model response was incomplete. Try a different model or a shorter input.', 502);
@@ -74,7 +75,7 @@ export function testcraftRequest(evaluation) {
   if (evaluation.type === 'code') {
     path = evaluation.fromIdeas ? '/api/automate-tests-ideas' : '/api/automate-tests';
     Object.assign(payload, { baseUrl: evaluation.pageUrl, framework: evaluation.framework, language: evaluation.language, pom: evaluation.pom });
-    if (evaluation.fromIdeas) payload.ideas = evaluation.input.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    if (evaluation.fromIdeas) payload.ideas = (evaluation.ideas ?? evaluation.input).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   }
   return { path, payload };
 }

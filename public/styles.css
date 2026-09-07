@@ -23,3 +23,68 @@ label,input:not([type=checkbox]),select,textarea,.filters label,.filters input,.
 .output-card pre,.context-pre,.check blockquote,.code-input{font-size:.8125rem}
 label small,.field-hint,.stats small,.row-meta,.eval-id,.table-footer,footer span{color:#647b71}
 .page-heading{margin-bottom:20px}.shell{padding-top:28px}
+
+/* The dialog has one scroll owner; its heading, steps and actions stay in view. */
+body.modal-open { overflow: hidden; }
+html { scrollbar-gutter: stable; }
+#evaluation-dialog { width: min(960px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: hidden; }
+#evaluation-form { display: flex; flex-direction: column; max-height: calc(100dvh - 34px); }
+.dialog-heading { padding: 20px 26px 16px; flex: none; gap: 16px; align-items: center; border-bottom: 0; }
+.dialog-heading .icon-button { flex: none; width: 36px; height: 36px; }
+.wizard-steps { display: flex; gap: 28px; list-style: none; margin: 0; padding: 0 26px 18px; border-bottom: 1px solid var(--line); flex: none; }
+.wizard-steps li { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: .875rem; }
+.step-number { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border: 1px solid #bacbc6; border-radius: 50%; font-size: .875rem; }
+.wizard-steps [aria-current=step] { color: var(--teal-dark); font-weight: 650; }
+.wizard-steps [aria-current=step] .step-number { color: white; background: var(--teal); border-color: var(--teal); }
+#wizard-body { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; min-height: 0; }
+.parameter-panel { padding: 20px 26px; background: #f3f8f6; border-bottom: 1px solid var(--line); }
+.parameter-panel h3, .criteria-section h3 { font-size: .9375rem; margin-bottom: 14px; }
+.parameter-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.method-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.generation-options { display: flex; gap: 24px; align-items: end; margin-top: 14px; flex-wrap: wrap; }
+.generation-options > label { width: 220px; max-width: 100%; }
+.code-options { display: flex; flex-wrap: wrap; gap: 12px 22px; padding-bottom: 10px; }
+.code-options .check-label { margin: 0; }
+#evaluation-dialog input:disabled, #evaluation-dialog select:disabled, #evaluation-dialog textarea:disabled { background: #e9eeec; color: #6c7d77; border-color: #d7e0dc; cursor: not-allowed; }
+#evaluation-dialog label:has(> :disabled) { color: #697d75; }
+#evaluation-dialog .field-hint { margin: 10px 0 0; font-size: .8125rem; line-height: 1.55; }
+#evaluation-dialog .evaluation-inputs { padding: 22px 26px; display: grid; gap: 18px; }
+#evaluation-dialog .evaluation-inputs > label { margin: 0; }
+#evaluation-dialog textarea { resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+#evaluation-dialog .optional { color: var(--muted); font-weight: 400; }
+#evaluation-dialog .dialog-footer { flex: none; padding: 16px 26px; gap: 12px; }
+#evaluation-dialog .dialog-footer > span { max-width: none; min-width: 0; font-size: .8125rem; }
+.wizard-actions { display: flex; gap: 8px; flex: none; }
+.wizard-actions .button { min-height: 42px; }
+.criteria-section { padding: 24px 26px; }
+.criteria-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.criteria-heading h3 { margin: 0; }
+#criteria-list { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 8px; }
+#criteria-list li { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; }
+#criteria-list textarea { margin: 0; border-color: transparent; padding: 2px 6px; min-height: 28px; }
+#criteria-list textarea:focus { border-color: var(--teal); }
+#criteria-list .icon-button { width: 28px; height: 28px; font-size: 18px; background: transparent; }
+#criteria-list .icon-button:hover { background: #eef4f1; }
+.criterion-number { font-size: .8125rem; color: var(--teal); background: #e9f5ef; border-radius: 4px; text-align: center; line-height: 24px; }
+.criteria-empty { padding: 22px 16px; margin-top: 18px; border: 1px dashed #becfc8; border-radius: 8px; color: var(--muted); font-size: .875rem; text-align: center; }
+.criteria-composer { display: flex; align-items: start; gap: 12px; margin-top: 16px; }
+.criteria-composer textarea { margin: 0; min-height: 72px; }
+.criteria-composer .button { min-height: 42px; }
+#models-feedback { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+#models-feedback .text-button { padding: 0; }
+@media (max-width: 760px) {
+  .parameter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .generation-options { align-items: start; gap: 18px; }
+}
+@media (max-width: 520px) {
+  #evaluation-dialog { width: calc(100% - 16px); max-height: calc(100dvh - 16px); }
+  #evaluation-form { max-height: calc(100dvh - 18px); }
+  .dialog-heading, .parameter-panel, #evaluation-dialog .evaluation-inputs, .criteria-section, #evaluation-dialog .dialog-footer { padding: 16px; }
+  .wizard-steps { padding: 0 16px 14px; gap: 16px; }
+  .wizard-steps li { align-items: start; font-size: .8125rem; }
+  .method-row, .parameter-row { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .criteria-composer { flex-direction: column; }
+  #evaluation-dialog .dialog-footer { flex-wrap: wrap; }
+  #evaluation-dialog .dialog-footer > span:not(:empty) { flex-basis: 100%; }
+  .wizard-actions { margin-left: auto; flex-wrap: wrap; }
+}

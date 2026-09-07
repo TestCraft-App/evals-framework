@@ -25,12 +25,12 @@
     <section id="evaluations-panel" role="tabpanel" aria-labelledby="evaluations-tab">
       <div class="stats">
         <article><span>Total evaluations</span><strong id="stat-total">0</strong><small>Your saved evaluation dataset</small></article>
-        <article><span>Passed</span><strong id="stat-passed" class="teal">0</strong><small>Latest run meets its threshold</small></article>
+        <article><span>Passed</span><strong id="stat-passed" class="teal">0</strong><small>Latest run meets the evaluation criteria</small></article>
         <article><span>Needs attention</span><strong id="stat-failed">0</strong><small>Failed checks or execution errors</small></article>
         <article><span>Average score</span><strong id="stat-score">—</strong><small>Graded results from latest runs</small></article>
       </div>
       <section class="table-card" aria-label="Evaluation library">
-        <div class="section-heading"><div><h2>Evaluation library</h2><p>Save an input and a reference, then run the evaluations you want to compare.</p></div><div class="actions"><button id="example-button" class="button">Load example</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
+        <div class="section-heading"><div><h2>Evaluation library</h2><p>Save an input and criteria, then run the evaluations you want to compare.</p></div><div class="actions"><button id="example-button" class="button">Load example</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
           <label>Type<select id="filter-type"><option value="">All types</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
@@ -56,30 +56,59 @@
   </main>
 
   <dialog id="evaluation-dialog" aria-labelledby="dialog-title">
-    <form id="evaluation-form">
-      <div class="dialog-heading"><div><p class="eyebrow">BUILD YOUR DATASET</p><h2 id="dialog-title">New evaluation</h2><p>Define the case now. Generate and grade it when you run.</p></div><button type="button" id="close-dialog" class="icon-button" aria-label="Close new evaluation">×</button></div>
-      <div class="modal-grid">
-        <aside class="parameters">
-          <h3>Parameters</h3>
-          <label>Evaluation type<select id="type" name="type"><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-          <label>Output source<select id="source" name="source"><option value="testcraft_api">TestCraft v1 API</option><option value="pasted">Paste from TestCraft</option><option value="llm">Backend LLM adapter</option></select></label>
-          <p class="field-hint" id="source-hint"></p>
-          <label>Framework<select id="framework" name="framework"><option value="playwright">Playwright</option><option value="cypress">Cypress</option><option value="selenium">Selenium</option></select></label>
-          <label>Language<select id="language" name="language"></select></label>
-          <div id="code-options" hidden><label class="check-label"><input id="pom" name="pom" type="checkbox">Page Object Model</label><label class="check-label"><input id="from-ideas" name="fromIdeas" type="checkbox">Use input as selected test ideas</label></div>
-          <label id="model-field">Generation model<input name="model" id="model" maxlength="120" placeholder="API default"></label>
-          <div class="method-section"><h3>Evaluation method</h3><label>Method<select name="method" id="method"><option value="model_grade">Model grade</option><option value="exact_match">Exact match</option><option value="contains">Contains</option></select></label><p id="method-hint" class="field-hint"></p><label>Pass threshold (%)<input id="threshold" name="threshold" type="number" min="1" max="100" value="80" required></label><label id="judge-field">Judge model<input id="judge-model" name="judgeModel" maxlength="120"></label><label id="criteria-field">Evaluation criteria<textarea id="criteria" name="criteria" rows="6" maxlength="8000" placeholder="One criterion per line"></textarea><small>Each criterion receives a score and evidence. Scores are averaged equally.</small></label></div>
-        </aside>
-        <div class="evaluation-inputs">
-          <label>Evaluation name<input name="name" id="name" maxlength="140" required placeholder="e.g. Login form · negative test coverage"></label>
-          <label>Input / test intent<textarea name="input" id="input" rows="3" maxlength="16000" required placeholder="What should TestCraft generate for this UI?"></textarea></label>
-          <label>HTML input<textarea name="html" id="html" class="code-input" rows="6" maxlength="100000" required spellcheck="false" placeholder="Paste the selected element or page HTML from TestCraft…"></textarea><small>Stored as context. HTML and scripts are never rendered or executed.</small></label>
-          <label>Page URL<input name="pageUrl" id="page-url" type="url" maxlength="2000" placeholder="https://example.com/login"></label>
-          <label>Expected output<textarea name="expectedOutput" id="expected-output" rows="4" maxlength="50000" required placeholder="Describe the expected behavior, paste a reference output, or add required fragments."></textarea><small id="expected-hint">The reference is sent only to the evaluator, never to the generator.</small></label>
-          <label id="actual-field" hidden>TestCraft output<textarea name="actualOutput" id="actual-output" class="code-input" rows="5" maxlength="60000" placeholder="Paste the actual ideas or code produced by the extension."></textarea></label>
-        </div>
+    <form id="evaluation-form" novalidate>
+      <div class="dialog-heading"><div><p class="eyebrow">BUILD YOUR DATASET</p><h2 id="dialog-title">New evaluation</h2></div><button type="button" id="close-dialog" class="icon-button" aria-label="Close new evaluation">×</button></div>
+      <ol class="wizard-steps" aria-label="Evaluation setup">
+        <li id="step-indicator-1" aria-current="step"><span class="step-number">1</span><span>Parameters &amp; input</span></li>
+        <li id="step-indicator-2"><span class="step-number">2</span><span>Evaluation method</span></li>
+      </ol>
+      <div id="wizard-body">
+        <section id="step-1" aria-label="Parameters and input">
+          <div class="parameter-panel">
+            <h3>Parameters</h3>
+            <div class="parameter-row">
+              <label>TestCraft endpoint<select id="type" name="type"><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
+              <label>Output source<select id="source" name="source"><option value="testcraft_api">TestCraft v1 API</option><option value="pasted">Paste from TestCraft</option><option value="llm">Backend LLM adapter</option></select></label>
+              <label>Framework<select id="framework" name="framework" aria-describedby="code-params-hint"><option value="playwright">Playwright</option><option value="cypress">Cypress</option><option value="selenium">Selenium</option></select></label>
+              <label>Language<select id="language" name="language" aria-describedby="code-params-hint"></select></label>
+            </div>
+            <p id="code-params-hint" class="field-hint">Framework and language apply only to Generate code.</p>
+            <div class="generation-options">
+              <label id="model-field">Generation model<input name="model" id="model" maxlength="120" placeholder="API default"></label>
+              <div class="code-options"><label class="check-label"><input id="pom" name="pom" type="checkbox">Page Object Model</label><label class="check-label"><input id="from-ideas" name="fromIdeas" type="checkbox">Generate code from selected ideas</label></div>
+            </div>
+            <p class="field-hint" id="source-hint"></p>
+          </div>
+          <div class="evaluation-inputs">
+            <label>Eval name<input name="name" id="name" maxlength="140" required placeholder="e.g. SauceDemo · login coverage"></label>
+            <label>Test description <span class="optional">(optional)</span><textarea name="input" id="input" rows="2" maxlength="16000" placeholder="Add context for the evaluation, if needed."></textarea></label>
+            <label>HTML input<textarea name="html" id="html" class="code-input" rows="5" maxlength="100000" required spellcheck="false" placeholder="Paste the selected element or page HTML from TestCraft…"></textarea><small>Context only. HTML and scripts are never rendered or executed.</small></label>
+            <label>Page URL<input name="pageUrl" id="page-url" type="url" maxlength="2000" placeholder="https://www.saucedemo.com/"><small>Required for TestCraft code generation; optional for ideas.</small></label>
+            <label id="ideas-field" hidden>Selected test ideas<textarea name="ideas" id="ideas" rows="3" maxlength="16000" placeholder="One test idea per line"></textarea></label>
+            <label id="actual-field" hidden>TestCraft output<textarea name="actualOutput" id="actual-output" class="code-input" rows="5" maxlength="60000" placeholder="Paste the actual ideas or code produced by the extension."></textarea></label>
+          </div>
+        </section>
+        <section id="step-2" aria-label="Evaluation method and criteria" hidden>
+          <div class="parameter-panel">
+            <h3>Evaluation method</h3>
+            <div class="method-row">
+              <label>Method<select name="method" id="method"><option value="model_grade">Model grade</option><option value="exact_match">Exact match</option><option value="contains">Contains</option></select></label>
+              <label id="judge-field">Model grader<select id="judge-model" name="judgeModel" aria-describedby="models-status"></select></label>
+            </div>
+            <div id="models-feedback"><p class="field-hint" id="models-status" role="status"></p><button type="button" id="retry-models" class="text-button" hidden>Retry loading models</button></div>
+            <p id="method-hint" class="field-hint"></p>
+          </div>
+          <div class="criteria-section" aria-labelledby="criteria-title">
+            <div class="criteria-heading"><h3 id="criteria-title">Evaluation criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
+            <p id="criteria-hint" class="field-hint"></p>
+            <ol id="criteria-list" aria-label="Evaluation criteria"></ol>
+            <p id="criteria-empty" class="criteria-empty">What makes a good response? Add your first criterion below.</p>
+            <div class="criteria-composer"><label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="2" maxlength="8000" placeholder="e.g. Includes negative login scenarios with clear expected behavior."></textarea><button id="add-criterion" type="button" class="button">＋ Add criteria</button></div>
+            <p class="field-hint">Add one at a time. You can edit or remove each item before saving.</p>
+          </div>
+        </section>
       </div>
-      <div class="dialog-footer"><span id="form-error" role="alert"></span><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="submit" id="save-evaluation" class="button primary">Create evaluation</button></div>
+      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
     </form>
   </dialog>
   <div class="toast" id="toast" role="status" hidden></div>

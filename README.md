@@ -19,14 +19,14 @@ Open [TestCraft Evals](http://127.0.0.1:3000). If port 3000 is occupied, stop th
 
 ## Workshop flow
 
-1. Select **New evaluation**, then Generate ideas or Generate code.
-2. On the left, choose the output source, framework, language, grading method, and threshold. Model grade also exposes an editable judge model and criteria, one per line.
-3. Add the name, input/test intent, HTML context, and expected output. TestCraft code generation needs the original page URL. Pasted output needs what the extension actually generated.
+1. Select **New evaluation**. Step 1 has a horizontal parameter bar: **TestCraft endpoint**, output source, framework, and language. Ideas disables framework/language; code enables them.
+2. Fill **Eval name**, optional **Test description**, **HTML input**, and **Page URL**. TestCraft code generation requires the original page URL. Pasted output also needs what the extension actually generated. There is no Expected output field.
+3. Choose **Next**. Step 2 has **Evaluation method** and a **Model grader** dropdown. Use **Add criteria** to build an editable/removable list, one criterion at a time. **Back** preserves both steps. One scroll area keeps the step indicator and actions visible.
 4. **Create evaluation** saves a row in SQLite. It does not call a model.
-5. Select cases and choose **Run selected**. Runs shows progress, actual versus expected output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
+5. Select cases and choose **Run selected**. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
 6. Click a case name to inspect its settings and save a revised copy. Earlier cases and run snapshots are preserved.
 
-**Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it to exercise the local flow without credentials or network calls. Scores are calculated from actual text, not canned scenario results.
+**Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it without credentials or LLM calls. Opening the form attempts a read-only catalog request; catalog failure does not block text-based methods. Scores are calculated from actual text, not canned scenario results.
 
 ## How it contacts the LLM
 
@@ -49,11 +49,11 @@ The backend calls the API used by [test-craft-app-v1](https://github.com/TestCra
 | --- | --- | --- |
 | Generate ideas | `/api/generate-ideas` | `sourceCode`, `stream: true`, optional `model` |
 | Generate code | `/api/automate-tests` | Above + `baseUrl`, `framework`, `language`, `pom` |
-| Code from selected ideas | `/api/automate-tests-ideas` | Above + `ideas` (one input line per idea) |
+| Code from selected ideas | `/api/automate-tests-ideas` | Above + `ideas` (one selected-idea line per idea) |
 
 The adapter consumes streamed `choices[].delta.content`, including fragmented UTF-8, and requires a successful completion marker. Truncated, failed, or malformed responses are errors.
 
-**v1 limitation:** ideas and direct-code routes consume HTML, not a separate free-text instruction. Input / test intent remains evaluation context for the judge. Enable **Use input as selected test ideas** to send input lines to code generation. Framework and language are generation parameters for code and saved metadata for ideas.
+**v1 limitation:** ideas and direct-code routes consume HTML, not a separate free-text instruction. The optional Test description (`input` in the stored/API payload) remains evaluator context. Enable **Generate code from selected ideas** to reveal a separate list of ideas sent to code generation. Inapplicable parameters are disabled and not saved as misleading metadata.
 
 Configure `TESTCRAFT_BASE_URL` for your deployed or local API. With `TESTCRAFT_OPENAI_API_KEY` blank, generation depends on that API's own credentials. If set, this separate key is explicitly sent to TestCraft as `openAiApiKey`. Leave Generation model blank to use TestCraft's default.
 
@@ -61,7 +61,11 @@ Configure `TESTCRAFT_BASE_URL` for your deployed or local API. With `TESTCRAFT_O
 
 Set `OPENAI_API_KEY` in the backend `.env` and restart. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`. `JUDGE_MODEL` defaults to `gpt-4o-mini` and is overridable per evaluation. The model/provider must support Chat Completions **strict JSON-schema Structured Outputs**.
 
-The judge receives task, HTML, expected output, actual output, and criteria. It returns a score from 0–100, evidence, and a reason per criterion. The backend validates IDs, completeness, scores, and evidence; it calculates the equally weighted mean, rounded to an integer. Passing means meeting the saved threshold.
+The model grader receives optional description, HTML, page URL as context (not fetched), actual output, and the criteria array. It receives framework/language only for code. It does not need a reference response. It returns a score from 0–100, evidence, and a reason per criterion. The backend validates IDs, completeness, scores, and evidence; it calculates the equally weighted mean, rounded to an integer. All new runs use the global **80/100** policy in `src/evals/validation.mjs`. It is not a form parameter; posted threshold overrides are ignored.
+
+The dropdown uses our **GET `/api/models`** proxy for TestCraft's [GET `/api/models`](https://github.com/TestCraft-App/test-craft-api-v1/blob/dev/app/api.py). Successful catalogs are cached for five minutes and concurrent requests share one fetch, with an eight-second timeout. Neither the grader key nor a generation key is sent to the catalog, including in query strings. If unavailable, show the last catalog or only the backend-configured model, with a warning and retry action. This catalog does **not** verify model access or quota for your grader account.
+
+The verified TestCraft grading choices are `gpt-4o-mini`, `gpt-4o`, and `o3-mini`. `gpt-4-turbo` and `o1-mini` do not support the required Structured Outputs format and are disabled. Other catalog entries stay disabled until compatibility is verified, except an explicitly configured `JUDGE_MODEL` (the deployer is responsible for its compatibility). TestCraft's `model_selection_enabled` flag concerns its extension; it does not disable our independent grader.
 
 This follows the [official Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs). A judge score is not proof of runtime behavior; repeated runs can vary. Instructions treat supplied content as untrusted, but prompt-injection resistance is not guaranteed.
 
@@ -69,10 +73,12 @@ This follows the [official Structured Outputs guide](https://developers.openai.c
 
 - **Paste from TestCraft:** grade actual output copied from the extension without generating again.
 - **Backend LLM adapter:** direct OpenAI-compatible generation with this project's own prompt. It is explicitly **not the TestCraft v1 prompt**; do not present it as evaluating the extension's generator.
-- **Exact match:** 100 or 0; normalizes CRLF and trims outer whitespace. Case, punctuation, and internal whitespace remain significant.
-- **Contains:** one case-sensitive expected fragment per line, deduplicated. Score is the percentage found, rounded to an integer. This measures text presence, not semantic correctness.
+- **Exact match:** exactly one criterion containing the full text to match; 100 or 0. Normalizes CRLF and trims outer whitespace. Case, punctuation, and internal whitespace remain significant.
+- **Contains:** each criterion is a case-sensitive required text fragment, not a semantic instruction. Score is the percentage found, rounded to an integer. This measures text presence, not semantic correctness.
 
-Expected output and criteria are **never supplied to the generator**. `OPENAI_API_KEY` is never implicitly forwarded to TestCraft. Keys stay outside browser responses and saved evaluations.
+Criteria are **never supplied to the generator**. `OPENAI_API_KEY` is never implicitly forwarded to TestCraft. Keys stay outside browser responses and saved evaluations.
+
+New evaluation payloads require `criteria: string[]`: 1–20 distinct, nonempty strings, up to 8,000 characters total (exact match requires one). New cases do not store `expectedOutput`. Existing cases with string-based criteria keep their reference-based grading rules and remain readable; duplicating one converts it to the new form. Historical run snapshots are unchanged. Reruns use the current global policy and save it in their new snapshots.
 
 ## Persistence and boundaries
 
@@ -93,7 +99,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Backend tests cover persistence, interrupted recovery, validation, computed scores, TestCraft payload/stream contracts, judge schema validation, and generator/judge separation. Browser tests cover save/reload, selection/batches, results in another tab, and missing judge configuration.
+Backend tests cover persistence, interrupted recovery, criteria arrays and legacy records, the fixed policy, computed scores, model catalog caching/failure/secrecy, TestCraft payload/stream contracts, judge schema validation, and generator/judge separation. Browser tests cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, results in another tab, and missing grader configuration.
 
 Tests use temporary databases and mocked LLM responses; **they never consume model credits**. A live TestCraft + judge smoke test still needs working provider configuration.
 
@@ -102,6 +108,7 @@ Tests use temporary databases and mocked LLM responses; **they never consume mod
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/api/config` | Non-secret configuration |
+| GET | `/api/models` | TestCraft model catalog with grader compatibility and explicit fallback status |
 | GET / POST | `/api/evaluations` | List or create cases |
 | GET | `/api/evaluations/:id` | Retrieve a case |
 | POST | `/api/runs` | Start batch: `{ "evaluationIds": ["…"] }` |

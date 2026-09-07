@@ -6,12 +6,14 @@ import { Store } from './src/evals/store.mjs';
 import { Engine } from './src/evals/engine.mjs';
 import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
+import { createModelCatalog } from './src/evals/models.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 
 export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB || join(root, 'data', 'evals.sqlite'), fetchImpl = fetch } = {}) {
   const store = new Store(dbPath);
   const engine = new Engine(store, env, fetchImpl);
+  const getModels = createModelCatalog(env, fetchImpl);
   const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -35,6 +37,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw new AppError('Cross-origin requests are not allowed.', 403);
       if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json')) throw new AppError('Use application/json.', 415);
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, publicConfig(env));
+      if (req.method === 'GET' && url.pathname === '/api/models') return json(res, 200, await getModels());
       if (url.pathname === '/api/evaluations') {
         if (req.method === 'GET') {
           const runs = store.runs();

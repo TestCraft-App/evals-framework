@@ -10,13 +10,88 @@ import { Store } from '../src/evals/store.mjs';
 import { validateEvaluation } from '../src/evals/validation.mjs';
 import { generateOutput, readTestcraftStream, testcraftRequest } from '../src/evals/providers.mjs';
 import { grade } from '../src/evals/graders.mjs';
+import { createModelCatalog } from '../src/evals/models.mjs';
 
 const base = {
   name: 'Login coverage', type: 'ideas', source: 'pasted', method: 'contains', framework: 'playwright', language: 'typescript',
-  input: 'Suggest positive and negative login cases.', html: '<form><button>Sign in</button></form>', expectedOutput: 'valid user\ninvalid password',
-  actualOutput: 'A valid user signs in. An invalid password shows an error.', criteria: 'Positive coverage\nNegative coverage', threshold: 80,
+  input: 'Suggest positive and negative login cases.', html: '<form><button>Sign in</button></form>',
+  actualOutput: 'A valid user signs in. An invalid password shows an error.', criteria: ['valid user', 'invalid password'],
   model: 'generator-test', judgeModel: 'judge-test', pageUrl: 'https://example.com/login', pom: false, fromIdeas: false,
 };
+
+test('two-step payload needs no reference or description and fixes the policy at 80', () => {
+  const saved = validateEvaluation({ ...base, input: undefined, framework: undefined, language: undefined, threshold: 1, expectedOutput: 'discard this legacy field', pom: true, fromIdeas: true });
+  assert.equal(saved.input, ''); assert.equal(saved.threshold, 80); assert.equal(saved.schemaVersion, 2);
+  assert.equal('expectedOutput' in saved, false);
+  assert.equal(saved.framework, ''); assert.equal(saved.language, '');
+  assert.equal(saved.fromIdeas, false); assert.equal(saved.pom, false);
+  assert.equal(saved.model, ''); assert.equal(saved.judgeModel, '');
+  assert.deepEqual(saved.criteria, ['valid user', 'invalid password']);
+  assert.deepEqual(validateEvaluation({ ...base, criteria: [' one ', ' two '] }).criteria, ['one', 'two']);
+  assert.equal(validateEvaluation({ ...base, threshold: 100 }).threshold, 80);
+  assert.throws(() => validateEvaluation({ ...base, type: 'code', source: 'testcraft_api', pageUrl: '' }), /Page URL/);
+  assert.throws(() => validateEvaluation({ ...base, pageUrl: 'javascript:alert(1)' }), /HTTP or HTTPS/);
+  assert.throws(() => validateEvaluation({ ...base, type: 'code', source: 'testcraft_api', fromIdeas: true }), /Selected test ideas/);
+});
+
+test('criteria are distinct nonempty strings; exact match needs one literal target', () => {
+  for (const criteria of ['', 'a\nb', [], [null], [''], ['  '], ['a', ' a '], [42], ['a'.repeat(8001)], ['a'.repeat(4001), 'b'.repeat(4000)], Array.from({ length: 21 }, (_, i) => 'c' + i)]) {
+    assert.throws(() => validateEvaluation({ ...base, criteria }));
+  }
+  assert.throws(() => validateEvaluation({ ...base, method: 'exact_match' }), /exactly one/);
+  assert.throws(() => validateEvaluation({ ...base, method: 'model_grade', judgeModel: '' }), /Model grader/);
+  assert.throws(() => validateEvaluation({ ...base, method: 'model_grade', judgeModel: 'gpt-4-turbo' }), /structured grading/);
+});
+
+test('existing string-based evaluations still grade with their original reference', async () => {
+  const legacy = { ...base, criteria: 'Positive coverage\nNegative coverage', expectedOutput: 'hello\r\nworld' };
+  assert.equal((await grade({ ...legacy, method: 'exact_match' }, 'hello\nworld', {})).score, 100);
+  assert.equal((await grade(legacy, 'hello', {})).score, 50);
+  await grade({ ...legacy, method: 'model_grade' }, 'candidate', { OPENAI_API_KEY: 'test-only' }, async (_url, options) => {
+    const input = JSON.parse(JSON.parse(options.body).messages[1].content);
+    assert.equal(input.expectedOutput, legacy.expectedOutput);
+    assert.deepEqual(input.criteria.map(c => c.text), ['Positive coverage', 'Negative coverage']);
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, score: 80, evidence: 'candidate', reason: 'Evidence reviewed' })) }) } }] });
+  });
+});
+
+test('TestCraft catalog uses GET without secrets, caches and coalesces requests, and marks incompatible models', async () => {
+  let clock = 0, calls = 0, unavailable = false;
+  const getModels = createModelCatalog({ TESTCRAFT_BASE_URL: 'https://testcraft.example/', OPENAI_API_KEY: 'judge-private', TESTCRAFT_OPENAI_API_KEY: 'generation-private' }, async (url, options) => {
+    calls++; assert.equal(url, 'https://testcraft.example/api/models'); assert.equal(options.method, 'GET');
+    assert.equal(JSON.stringify(options).includes('private'), false); assert.equal(options.body, undefined);
+    if (unavailable) throw new Error('provider-private-error');
+    return Response.json({ models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }, { id: 'gpt-4o', label: 'GPT-4o' }, { id: 'gpt-4-turbo', label: 'GPT-4 Turbo' }, { id: 'unknown-new-model', label: 'Unverified model' }], default_model: 'gpt-4o-mini', model_selection_enabled: false });
+  }, () => clock);
+  const results = await Promise.all([getModels(), getModels(), getModels()]);
+  assert.equal(calls, 1); assert.equal(results[0].source, 'testcraft'); assert.equal(results[0].warning, null);
+  assert.deepEqual(results[0].models.map(m => m.graderCompatible), [true, true, false, false]);
+  await getModels(); assert.equal(calls, 1);
+  clock = 300001; unavailable = true;
+  const stale = await getModels(); assert.equal(calls, 2); assert.match(stale.warning, /last catalog/);
+  assert.deepEqual(stale.models, results[0].models); assert.equal(JSON.stringify(stale).includes('private'), false);
+});
+
+test('invalid or unavailable model catalogs offer only the configured model with an explicit warning', async () => {
+  for (const response of [new Response('private', { status: 401 }), Response.json({ models: [] }), Response.json({ models: [{ id: '<script>', label: 'bad' }] }), new Response('not json'), new Response('x'.repeat(64001))]) {
+    const getModels = createModelCatalog({ JUDGE_MODEL: 'configured-grader' }, async () => response);
+    const result = await getModels();
+    assert.equal(result.source, 'configured'); assert.match(result.warning, /unavailable/);
+    assert.deepEqual(result.models.map(m => m.id), ['configured-grader']);
+    assert.equal(JSON.stringify(result).includes('private'), false);
+  }
+});
+
+test('local models API proxies the verified TestCraft catalog and exposes no secret', async () => {
+  const app = createApp({ dbPath: ':memory:', env: { OPENAI_API_KEY: 'private-judge' }, fetchImpl: async () => Response.json({ models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] }) });
+  app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
+  try {
+    const res = await fetch(`http://127.0.0.1:${app.server.address().port}/api/models`);
+    assert.equal(res.status, 200); assert.equal(res.headers.get('cache-control'), 'no-store');
+    const body = await res.json(); assert.equal(body.models[0].id, 'gpt-4o-mini');
+    assert.equal(JSON.stringify(body).includes('private-judge'), false);
+  } finally { await new Promise(resolve => app.server.close(resolve)); }
+});
 async function waitForRun(url, id) {
   for (let count = 0; count < 100; count++) {
     const run = await (await fetch(`${url}/api/runs/${id}`)).json();
@@ -25,6 +100,21 @@ async function waitForRun(url, id) {
   }
   throw new Error('Evaluation did not finish');
 }
+
+test('reruns use the global policy without modifying saved legacy cases or historical evidence', async () => {
+  const app = createApp({ dbPath: ':memory:', env: {} });
+  app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
+  try {
+    const legacy = app.store.create({ ...base, criteria: 'Positive coverage\nNegative coverage', expectedOutput: 'valid user\ninvalid password', threshold: 20, actualOutput: 'valid user' });
+    const oldRun = { id: 'historical-run', createdAt: '2025-01-01', status: 'completed', items: [{ evaluationId: legacy.id, evaluation: legacy, status: 'passed', score: 50, checks: [], events: [] }] };
+    app.store.saveRun(oldRun);
+    const run = await waitForRun(`http://127.0.0.1:${app.server.address().port}`, app.engine.start([legacy.id]).id);
+    assert.equal(run.items[0].score, 50); assert.equal(run.items[0].status, 'failed');
+    assert.equal(run.items[0].evaluation.threshold, 80);
+    assert.equal(app.store.evaluation(legacy.id).threshold, 20);
+    assert.deepEqual(app.store.run(oldRun.id), oldRun);
+  } finally { await new Promise(resolve => app.server.close(resolve)); }
+});
 
 test('evaluations and real grading results survive server restart; batches keep independent snapshots', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-backend-'));
@@ -87,18 +177,18 @@ test('unfinished runs are marked interrupted after a restart without repeating m
 });
 
 test('exact and contains grading are computed from output, never scenario ids', async () => {
-  assert.equal((await grade({ ...base, method: 'exact_match', expectedOutput: 'hello\r\nworld' }, 'hello\nworld', {})).score, 100);
-  assert.equal((await grade({ ...base, method: 'exact_match' }, 'unrelated', {})).score, 0);
+  assert.equal((await grade({ ...base, method: 'exact_match', criteria: ['hello\r\nworld'] }, 'hello\nworld', {})).score, 100);
+  assert.equal((await grade({ ...base, method: 'exact_match', criteria: ['hello'] }, 'unrelated', {})).score, 0);
   assert.equal((await grade(base, 'invalid password', {})).score, 50);
-  assert.throws(() => validateEvaluation({ ...base, framework: 'cypress', language: 'python' }), /combination/);
+  assert.throws(() => validateEvaluation({ ...base, type: 'code', framework: 'cypress', language: 'python' }), /combination/);
 });
 
 test('TestCraft v1 uses the verified payload and handles arbitrarily fragmented UTF-8 SSE', async () => {
-  const evaluation = { ...base, type: 'code', source: 'testcraft_api', fromIdeas: true };
+  const evaluation = { ...base, type: 'code', source: 'testcraft_api', fromIdeas: true, ideas: 'Log in successfully\nReject an empty password' };
   const contract = testcraftRequest(evaluation);
   assert.equal(contract.path, '/api/automate-tests-ideas');
   assert.equal(contract.payload.sourceCode, evaluation.html);
-  assert.deepEqual(contract.payload.ideas, [evaluation.input]);
+  assert.deepEqual(contract.payload.ideas, ['Log in successfully', 'Reject an empty password']);
   assert.equal(contract.payload.expectedOutput, undefined);
   assert.equal(contract.payload.criteria, undefined);
   const streamText = 'data: ' + JSON.stringify({ choices: [{ delta: { content: 'Prueba ñ ✓' }, finish_reason: null }] }) + '\r\n\r\ndata: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n';
@@ -123,7 +213,7 @@ test('real judge request includes rubric and validates each score; missing crede
     calls++; assert.equal(url, 'https://llm.example/v1/chat/completions');
     const body = JSON.parse(options.body), input = JSON.parse(body.messages[1].content);
     assert.equal(body.response_format.json_schema.strict, true);
-    assert.equal(input.expectedOutput, evaluation.expectedOutput); assert.equal(input.actualOutput, 'candidate');
+    assert.equal('expectedOutput' in input, false); assert.equal(input.actualOutput, 'candidate');
     assert.equal(input.criteria.length, 2);
     return Response.json({ model: 'judge-test', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks: [{ id: 'c1', score: 90, evidence: 'valid user', reason: 'Covered' }, { id: 'c2', score: 30, evidence: 'No negative case', reason: 'Missing' }] }) } }] });
   };
@@ -162,7 +252,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     assert.equal(options.headers.authorization, 'Bearer judge-key');
     const input = JSON.parse(body.messages[1].content);
     assert.equal(input.actualOutput, 'valid user; invalid password');
-    assert.equal(input.expectedOutput, base.expectedOutput);
+    assert.equal('expectedOutput' in input, false);
     return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, score: 90, evidence: 'valid user; invalid password', reason: 'Both behaviors covered.' })) }) }, finish_reason: 'stop' }] });
   };
   const app = createApp({ dbPath: ':memory:', env: { TESTCRAFT_BASE_URL: 'https://testcraft.example', TESTCRAFT_OPENAI_API_KEY: 'generation-key', OPENAI_BASE_URL: 'https://judge.example/v1', OPENAI_API_KEY: 'judge-key' }, fetchImpl: mockFetch });
