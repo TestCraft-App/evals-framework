@@ -17,16 +17,52 @@ npm start
 
 Open [TestCraft Evals](http://127.0.0.1:3000). If port 3000 is occupied, stop the previous server with Ctrl+C in its terminal or choose another `PORT` in `.env`. Restart after editing backend code or `.env`; `npm run dev` watches code changes.
 
+## Automatic private workspaces — no accounts or access code
+
+Open the app URL and start working. The browser automatically creates or restores its session, with no registration, email, password or workshop code. No session secret needs to be configured. `WORKSHOP_ACCESS_CODE` is obsolete and has no effect if left in an older `.env` file.
+
+Each browser gets a **different anonymous workspace**. The server stores a hash of a random 256-bit session token; the browser keeps the token in an HttpOnly, SameSite=Strict cookie, never localStorage. Every evaluation and run is scoped to that session in SQLite, including direct links and mixed batches. Knowing someone else's evaluation/run ID does not grant access; cross-workspace requests return 404. HTML, evidence, and run snapshots are private to their owning session through the app (the backend operator can still access the database).
+
+- Reloads and new tabs in the **same browser profile and hostname** retain the workspace. Use one URL consistently: `localhost` and `127.0.0.1` have different cookies.
+- Sessions expire after **24 hours**, configurable with `WORKSHOP_SESSION_HOURS` (1–168). The expiration is fixed, not extended on every visit, and is shown under About this workspace.
+- Clearing cookies, using incognito, changing devices or letting a session expire automatically starts a new empty workspace; this is not cross-device account recovery. Existing records are not automatically deleted at expiry. Sessions issued before removal of the code remain scoped to their original owner until expiry.
+- **Anyone with the app URL can enter and consume the shared allowance.** Data isolation does not restrict admission. There is no enforced seven-person maximum or organizer dashboard. For private admission, use deployment/network access controls separately.
+- Restarting with the same workshop ID and database preserves sessions and usage. CSRF tokens are derived from each random session token, independently of any shared code. Revoke a session by removing its server-side session record, not by changing the obsolete code setting.
+- Protected POSTs require the exact Origin and a session-bound `X-CSRF-Token`. Session creation uses an empty JSON object plus the exact Origin. New sessions are limited to 20 per remote address and 100 globally per minute, persisted across restarts; reusing an existing valid cookie does not consume this limit. Forwarded IP headers are not trusted. Behind an AWS proxy, the per-address limit may be shared by all participants.
+- The UI checks for an existing session, creates one only if needed, then verifies that the cookie was retained. Browsers supporting Web Locks serialize first-visit initialization across tabs. Blocked cookies or network failures show a retry message, not a creation loop. Expired sessions reconnect automatically; paid evaluation requests are never automatically replayed.
+
+### Shared model-call allowance
+
+`WORKSHOP_MAX_MODEL_CALLS` defaults to **200 for the whole workshop**, not per participant. `WORKSHOP_ID` defaults to `workshop` and scopes the persistent usage counter; changing it intentionally starts a different workshop. Opening a fresh session, clearing cookies or restarting does not reset the allowance.
+
+| Operation | Calls counted |
+| --- | --- |
+| Save a case, view results, load the model catalog | 0 |
+| Pasted output + Rule-based method | 0 |
+| TestCraft / backend LLM generation + text grading | 1 |
+| Pasted output + Model grade | 1 |
+| Generation + Model grade | 2 |
+
+The backend atomically reserves the entire batch before accepting it, including simultaneous requests from different participants. An unaffordable batch returns 429 without starting a partial run. Every outbound model request is counted **before dispatch**; failures/timeouts still count because the provider may have processed them. Unattempted calls are released after errors or restart recovery. No credentials / no dispatched request means no consumed calls. Offline text grading still works when the allowance is exhausted; setting the limit to 0 permits only those runs.
+
+The UI displays remaining calls and reservations, refreshed after starting/finishing a run and approximately every 30 seconds. **This is not a dollar or token spending cap**, nor a limit on usage outside this app. Set appropriate provider-side restrictions and review input sizes/model choices before the workshop.
+
+### AWS deployment requirements (not deployed by this change)
+
+Use a single Node process/instance with a persistent SQLite volume, backups, and HTTPS termination. Set `HOST=0.0.0.0`, `NODE_ENV=production`, and **`APP_ORIGIN=https://your-exact-workshop-domain`**; the server refuses remote configuration without an explicit origin. HTTPS configuration sets a Secure, host-only `__Host-` session cookie, even behind a TLS-terminating proxy. The app does not trust forwarded host/protocol headers to make security decisions. Restrict direct access to the backend port at the network layer.
+
+Set LLM secrets in the backend runtime only. Keep the database outside an ephemeral deployment filesystem. GET `/api/session` is a public read-only health/session endpoint; POST creates or reuses an anonymous session; `/api/config` requires a session. The current queue/restart recovery is **single-process only**, not designed for horizontal replicas or zero-downtime overlapping workers. Add shared job processing and a suitable database before scaling that way. Application isolation and the call cap do not replace infrastructure hardening or a live provider rehearsal.
+
 ## Workshop flow
 
-1. Select **New evaluation**. Step 1 has a horizontal parameter bar: **TestCraft endpoint**, output source, framework, and language. Ideas disables framework/language; code enables them.
+1. Open the app; your workspace starts automatically. Select **New evaluation**. Step 1 has a horizontal parameter bar: **TestCraft endpoint**, output source, framework, and language. Ideas disables framework/language; code enables them.
 2. Fill **Eval name**, optional **Test description**, **HTML input**, and **Page URL**. TestCraft code generation requires the original page URL. Pasted output also needs what the extension actually generated. There is no Expected output field.
 3. Choose **Next**. Step 2 has **Evaluation method** and a **Model grader** dropdown. Use **Add criteria** to build an editable/removable list, one criterion at a time. **Back** preserves both steps. One scroll area keeps the step indicator and actions visible.
 4. **Create evaluation** saves a row in SQLite. It does not call a model.
 5. Select cases and choose **Run selected**. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
 6. Click a case name to inspect its settings and save a revised copy. Earlier cases and run snapshots are preserved.
 
-**Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it without credentials or LLM calls. Opening the form attempts a read-only catalog request; catalog failure does not block text-based methods. Scores are calculated from actual text, not canned scenario results.
+**Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it without LLM credentials or model calls. Opening the form attempts a read-only catalog request; catalog failure does not block text-based methods. Scores are calculated from actual text, not canned scenario results.
 
 ## How it contacts the LLM
 
@@ -86,7 +122,7 @@ New evaluation payloads require `criteria: string[]`: 1–20 distinct, nonempty 
 - Runs preserve inputs, parameters, output, scores, evidence, events, and errors. A restart marks unfinished runs Interrupted without silently repeating paid calls.
 - Up to 50 cases per run, two cases processed concurrently, at most 100 queued/active cases. Duplicate simultaneous runs of a case are rejected. No automatic provider retries.
 - HTML is escaped text. **Generated code is not executed.** Passing an evaluation does not mean a Playwright/Cypress/Selenium test ran or passed.
-- This is a **single local workshop workspace**, bound to `127.0.0.1`, without authentication or participant isolation. Do not expose it publicly as-is. Hosting needs access controls, quotas, and deployment-specific storage/job processing.
+- Participant workspaces are isolated by server-owned sessions. The additive database migration preserves any pre-session records as unowned; they are not automatically exposed to the first participant. Local data cleanup is an explicit operator action, never a public API route.
 - Saved HTML/input/output are plaintext and may contain sensitive data. API/judge runs transmit relevant content to the configured providers. Use synthetic fixtures and remove secrets before saving.
 - `.env`, `data`, dependencies, and test artifacts are ignored by Git.
 - Original prototype modules (`src/generator.mjs`, `src/runner.mjs`, `src/evaluator.mjs`, `src/scenarios.mjs`, `public/demo-app.html`) remain historical reference only. No active route imports or serves them.
@@ -99,7 +135,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Backend tests cover persistence, interrupted recovery, criteria arrays and legacy records, the fixed policy, computed scores, model catalog caching/failure/secrecy, TestCraft payload/stream contracts, judge schema validation, and generator/judge separation. Browser tests cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, results in another tab, and missing grader configuration.
+Backend tests cover automatic private sessions and ownership, cookie/CSRF/origin controls, rate limits, global atomic reservations, failed-call accounting, restart recovery, legacy migration, criteria arrays, the fixed policy, computed scores, catalog failure/secrecy, TestCraft streams, judge schema validation, and generator/judge separation. Browser tests use automatic sessions in an isolated test workshop and cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, results in another tab, and missing grader configuration.
 
 Tests use temporary databases and mocked LLM responses; **they never consume model credits**. A live TestCraft + judge smoke test still needs working provider configuration.
 
@@ -107,6 +143,8 @@ Tests use temporary databases and mocked LLM responses; **they never consume mod
 
 | Method | Route | Purpose |
 | --- | --- | --- |
+| GET | `/api/session` | Current session + CSRF token + allowance, or anonymous bootstrap status; no writes |
+| POST | `/api/session` | Send `{}` to create an anonymous-session cookie or reuse the current valid session |
 | GET | `/api/config` | Non-secret configuration |
 | GET | `/api/models` | TestCraft model catalog with grader compatibility and explicit fallback status |
 | GET / POST | `/api/evaluations` | List or create cases |
@@ -116,6 +154,8 @@ Tests use temporary databases and mocked LLM responses; **they never consume mod
 | GET | `/api/runs/:id` | Snapshot, progress, output, score, and evidence |
 
 The UI polls active runs; generation streaming is consumed by the backend. No frontend API keys, destructive reset route, or automatic fallback scores.
+
+Except for `/api/session`, all API routes require the cookie. Protected POSTs also require `Origin: <APP_ORIGIN or local origin>`, `Content-Type: application/json`, and `X-CSRF-Token` from the session response. The browser handles these automatically. Never put session tokens or LLM keys in URLs.
 
 ## References
 

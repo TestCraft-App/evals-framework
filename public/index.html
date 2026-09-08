@@ -11,11 +11,17 @@
 <body>
   <header class="app-header">
     <a class="brand" href="#evaluations"><span class="brand-icon" aria-hidden="true">tc</span><span>TestCraft <b>Evals</b></span></a>
-    <div class="header-right"><span class="workspace-badge">WORKSHOP WORKSPACE</span><a href="https://home.testcraft.app/" target="_blank" rel="noreferrer">TestCraft ↗</a></div>
+    <div class="header-right"><span class="workspace-badge" id="private-badge" hidden>PRIVATE WORKSPACE</span><a href="https://home.testcraft.app/" target="_blank" rel="noreferrer">TestCraft ↗</a></div>
   </header>
-  <main class="shell">
+  <section id="session-status" class="session-status" aria-live="polite">
+    <p id="session-message">Opening your private workspace…</p>
+    <p id="session-error" class="session-error" role="alert"></p>
+    <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
+  </section>
+  <main class="shell" id="workspace" hidden>
     <div class="page-heading"><div><p class="eyebrow">TESTCRAFT / EVALUATION FRAMEWORK</p><h1>Evaluation workspace</h1><p class="subtitle">Evaluate test ideas and generated code against your dataset.</p></div><span class="storage-badge" id="connection">Connecting…</span></div>
     <div class="notice" id="setup-notice" hidden></div>
+    <div class="session-strip"><span id="model-allowance" role="status"></span><details><summary>About this workspace</summary><p>No account or access code is needed. This browser keeps your session until <span id="session-expiry"></span>. Clearing cookies, changing browsers or session expiry starts a new empty workspace automatically.</p><p>Your evaluations and runs are separate from other participants. Anyone with the app URL can enter and use the shared model-call allowance, which is not a dollar limit.</p><p>Workspace ID: <code id="workspace-id"></code></p></details></div>
     <div class="error-banner" id="app-error" role="alert" hidden></div>
     <nav class="tabs" role="tablist" aria-label="Workspaces">
       <button id="evaluations-tab" role="tab" aria-selected="true" aria-controls="evaluations-panel">Evaluations <span id="eval-count">0</span></button>

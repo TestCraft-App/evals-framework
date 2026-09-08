@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
-import { createApp } from '../server.mjs';
+import { createApp, client, waitForRun, testScope } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 import { validateEvaluation } from '../src/evals/validation.mjs';
 import { generateOutput, readTestcraftStream, testcraftRequest } from '../src/evals/providers.mjs';
@@ -86,33 +86,28 @@ test('local models API proxies the verified TestCraft catalog and exposes no sec
   const app = createApp({ dbPath: ':memory:', env: { OPENAI_API_KEY: 'private-judge' }, fetchImpl: async () => Response.json({ models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] }) });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   try {
-    const res = await fetch(`http://127.0.0.1:${app.server.address().port}/api/models`);
+    const participant = await client(app);
+    const res = await participant.request('/api/models');
     assert.equal(res.status, 200); assert.equal(res.headers.get('cache-control'), 'no-store');
     const body = await res.json(); assert.equal(body.models[0].id, 'gpt-4o-mini');
     assert.equal(JSON.stringify(body).includes('private-judge'), false);
+    const config = await participant.get('/api/config');
+    assert.equal(JSON.stringify(config).includes('private-judge'), false);
   } finally { await new Promise(resolve => app.server.close(resolve)); }
 });
-async function waitForRun(url, id) {
-  for (let count = 0; count < 100; count++) {
-    const run = await (await fetch(`${url}/api/runs/${id}`)).json();
-    if (!['running','queued'].includes(run.status)) return run;
-    await new Promise(resolve => setTimeout(resolve, 20));
-  }
-  throw new Error('Evaluation did not finish');
-}
-
 test('reruns use the global policy without modifying saved legacy cases or historical evidence', async () => {
   const app = createApp({ dbPath: ':memory:', env: {} });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   try {
-    const legacy = app.store.create({ ...base, criteria: 'Positive coverage\nNegative coverage', expectedOutput: 'valid user\ninvalid password', threshold: 20, actualOutput: 'valid user' });
+    const participant = await client(app), scope = participant.scope;
+    const legacy = app.store.create({ ...base, criteria: 'Positive coverage\nNegative coverage', expectedOutput: 'valid user\ninvalid password', threshold: 20, actualOutput: 'valid user' }, scope);
     const oldRun = { id: 'historical-run', createdAt: '2025-01-01', status: 'completed', items: [{ evaluationId: legacy.id, evaluation: legacy, status: 'passed', score: 50, checks: [], events: [] }] };
-    app.store.saveRun(oldRun);
-    const run = await waitForRun(`http://127.0.0.1:${app.server.address().port}`, app.engine.start([legacy.id]).id);
+    app.store.saveRun(oldRun, scope);
+    const run = await waitForRun(participant, app.engine.start([legacy.id], scope).id);
     assert.equal(run.items[0].score, 50); assert.equal(run.items[0].status, 'failed');
     assert.equal(run.items[0].evaluation.threshold, 80);
-    assert.equal(app.store.evaluation(legacy.id).threshold, 20);
-    assert.deepEqual(app.store.run(oldRun.id), oldRun);
+    assert.equal(app.store.evaluation(legacy.id, scope).threshold, 20);
+    assert.deepEqual(app.store.run(oldRun.id, scope), oldRun);
   } finally { await new Promise(resolve => app.server.close(resolve)); }
 });
 
@@ -123,15 +118,15 @@ test('evaluations and real grading results survive server restart; batches keep 
   try {
     app = createApp({ dbPath, env: {} }); app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
     const url = `http://127.0.0.1:${app.server.address().port}`;
-    const post = (path, body) => fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    assert.deepEqual((await (await fetch(url + '/api/evaluations')).json()).evaluations, []);
+    const participant = await client(app), { post, scope } = participant;
+    assert.deepEqual((await participant.get('/api/evaluations')).evaluations, []);
     const first = await (await post('/api/evaluations', base)).json();
     const second = await (await post('/api/evaluations', { ...base, name: 'Missing negative test', actualOutput: 'valid user only' })).json();
     assert.equal((await post('/api/evaluations', { ...base, html: '', threshold: 110 })).status, 400);
     assert.equal((await post('/api/runs', { evaluationIds: [first.id, 'unknown'] })).status, 404);
     assert.equal((await post('/api/runs', { evaluationIds: [first.id, first.id] })).status, 400);
     const started = await (await post('/api/runs', { evaluationIds: [first.id, second.id] })).json();
-    const result = await waitForRun(url, started.id);
+    const result = await waitForRun(participant, started.id);
     assert.equal(result.status, 'completed');
     assert.deepEqual(result.items.map(item => [item.status, item.score]), [['passed',100],['failed',50]]);
     assert.equal(result.items[1].checks[1].evidence, 'Missing: invalid password');
@@ -141,8 +136,8 @@ test('evaluations and real grading results survive server restart; batches keep 
     assert.equal(invalidOrigin.status, 403);
     await new Promise(resolve => app.server.close(resolve)); app = null;
     const reopened = new Store(dbPath);
-    assert.equal(reopened.evaluations().length, 2);
-    assert.equal(reopened.run(result.id).items[0].score, 100); reopened.close();
+    assert.equal(reopened.evaluations(scope).length, 2);
+    assert.equal(reopened.run(result.id, scope).items[0].score, 100); reopened.close();
   } finally {
     if (app) await new Promise(resolve => app.server.close(resolve));
     await rm(dir, { recursive: true, force: true });
@@ -155,13 +150,13 @@ test('unfinished runs are marked interrupted after a restart without repeating m
   let app;
   try {
     const store = new Store(dbPath);
-    store.saveRun({ id: 'interrupted-run', status: 'running', items: [{ status: 'grading', output: 'already generated', score: null, events: [] }, { status: 'passed', score: 100, events: [] }], createdAt: '2026-01-01' });
+    store.saveRun({ id: 'interrupted-run', status: 'running', items: [{ status: 'grading', output: 'already generated', score: null, events: [] }, { status: 'passed', score: 100, events: [] }], createdAt: '2026-01-01' }, testScope);
     store.close();
     let calls = 0;
     app = createApp({ dbPath, env: {}, fetchImpl: async () => { calls++; throw new Error('Must not replay'); } });
-    assert.equal(app.store.run('interrupted-run').status, 'running', 'opening the DB alone must not interrupt another server');
+    assert.equal(app.store.run('interrupted-run', testScope).status, 'running', 'opening the DB alone must not interrupt another server');
     app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
-    const recovered = app.store.run('interrupted-run');
+    const recovered = app.store.run('interrupted-run', testScope);
     assert.equal(recovered.status, 'interrupted');
     assert.equal(recovered.items[0].status, 'error');
     assert.equal(recovered.items[0].output, 'already generated');
@@ -258,7 +253,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
   const app = createApp({ dbPath: ':memory:', env: { TESTCRAFT_BASE_URL: 'https://testcraft.example', TESTCRAFT_OPENAI_API_KEY: 'generation-key', OPENAI_BASE_URL: 'https://judge.example/v1', OPENAI_API_KEY: 'judge-key' }, fetchImpl: mockFetch });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
   const url = `http://127.0.0.1:${app.server.address().port}`;
-  const post = (path, body) => fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const participant = await client(app), { post } = participant;
   let runId;
   try {
     const evaluation = await (await post('/api/evaluations', { ...base, source: 'testcraft_api', method: 'model_grade' })).json();
@@ -266,7 +261,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     const started = await (await post('/api/runs', { evaluationIds: [evaluation.id] })).json(); runId = started.id;
     assert.equal((await post('/api/runs', { evaluationIds: [evaluation.id] })).status, 409);
     releaseGeneration();
-    const run = await waitForRun(url, runId);
+    const run = await waitForRun(participant, runId);
     assert.equal(run.items[0].status, 'passed'); assert.equal(run.items[0].score, 90);
     assert.equal(run.items[0].checks.length, 2); assert.equal(calls.length, 2);
     assert.equal(run.items[0].output, 'valid user; invalid password');
@@ -274,7 +269,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     assert.equal(JSON.stringify(run).includes('generation-key'), false);
   } finally {
     releaseGeneration();
-    if (runId) await waitForRun(url, runId);
+    if (runId) await waitForRun(participant, runId);
     await new Promise(resolve => app.server.close(resolve));
   }
 });
@@ -286,8 +281,9 @@ test('missing judge key prevents generation; provider failures remain errors wit
     app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
     const url = `http://127.0.0.1:${app.server.address().port}`;
     try {
-      const evaluation = app.store.create(validateEvaluation({ ...base, source: 'testcraft_api', method: missingJudge ? 'model_grade' : 'contains' }));
-      const run = await waitForRun(url, app.engine.start([evaluation.id]).id);
+      const participant = await client(app);
+      const evaluation = app.store.create(validateEvaluation({ ...base, source: 'testcraft_api', method: missingJudge ? 'model_grade' : 'contains' }), participant.scope);
+      const run = await waitForRun(participant, app.engine.start([evaluation.id], participant.scope).id);
       assert.equal(run.items[0].status, 'error'); assert.equal(run.items[0].score, null);
       assert.equal(calls, missingJudge ? 0 : 1);
       assert.match(run.items[0].error, missingJudge ? /OPENAI_API_KEY/ : /HTTP 429/);
@@ -302,13 +298,15 @@ test('HTTP validates malformed bodies and preserves multibyte text across reques
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
     for (const body of ['null', '{}', '{']) {
-      assert.equal((await fetch(url + '/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).status, 400);
+      const participant = await client(app);
+      assert.equal((await participant.request('/api/runs', { method: 'POST', body })).status, 400);
     }
-    assert.equal((await fetch(url + '/api/evaluations', { method: 'POST', body: '{}' })).status, 415);
+    const participant = await client(app);
+    assert.equal((await participant.request('/api/evaluations', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' })).status, 415);
     const input = 'Prueba español ñ ✓ 😀';
     const bytes = Buffer.from(JSON.stringify({ ...base, input }));
     const response = await new Promise((resolve, reject) => {
-      const req = httpRequest(url + '/api/evaluations', { method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+      const req = httpRequest(url + '/api/evaluations', { method: 'POST', headers: participant.headers }, res => {
         const chunks = [];
         res.on('data', data => chunks.push(data));
         res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));

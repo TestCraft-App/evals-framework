@@ -7,23 +7,26 @@ import { Engine } from './src/evals/engine.mjs';
 import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
+import { createSessions } from './src/evals/sessions.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 
 export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB || join(root, 'data', 'evals.sqlite'), fetchImpl = fetch } = {}) {
   const store = new Store(dbPath);
-  const engine = new Engine(store, env, fetchImpl);
+  let sessions;
+  try { sessions = createSessions(store, env); } catch (error) { store.close(); throw error; }
+  const engine = new Engine(store, env, fetchImpl, sessions.limit);
   const getModels = createModelCatalog(env, fetchImpl);
   const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));
   };
-  async function readBody(req) {
+  async function readBody(req, maxBytes = 350000) {
     const chunks = []; let bytes = 0;
     for await (const chunk of req) {
       bytes += chunk.length;
-      if (bytes > 350000) throw new AppError('Request body is too large.', 413);
+      if (bytes > maxBytes) throw new AppError('Request body is too large.', 413);
       chunks.push(chunk);
     }
     try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new AppError('Request body must be valid JSON.'); }
@@ -34,31 +37,36 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
     res.setHeader('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     try {
       const url = new URL(req.url, 'http://localhost');
-      if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) throw new AppError('Cross-origin requests are not allowed.', 403);
+      sessions.checkOrigin(req, req.method === 'POST');
       if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json')) throw new AppError('Use application/json.', 415);
+      if (url.pathname === '/api/session') {
+        if (req.method === 'GET') return json(res, 200, sessions.describe(sessions.read(req)));
+        if (req.method === 'POST') return json(res, 200, sessions.ensure(req, res, await readBody(req, 2048)));
+      }
+      const scope = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, publicConfig(env));
       if (req.method === 'GET' && url.pathname === '/api/models') return json(res, 200, await getModels());
       if (url.pathname === '/api/evaluations') {
         if (req.method === 'GET') {
-          const runs = store.runs();
-          const evaluations = store.evaluations().map(evaluation => {
+          const runs = store.runs(scope);
+          const evaluations = store.evaluations(scope).map(evaluation => {
             const latestRun = runs.find(run => run.items.some(item => item.evaluationId === evaluation.id));
             const latestItem = latestRun?.items.find(item => item.evaluationId === evaluation.id);
             return { ...evaluation, latest: latestItem ? { status: latestItem.status, score: latestItem.score, runId: latestRun.id, createdAt: latestRun.createdAt } : null };
           });
           return json(res, 200, { evaluations });
         }
-        if (req.method === 'POST') return json(res, 201, store.create(validateEvaluation(await readBody(req))));
+        if (req.method === 'POST') return json(res, 201, store.create(validateEvaluation(await readBody(req)), scope));
       }
       const evaluationMatch = url.pathname.match(/^\/api\/evaluations\/([a-z0-9-]+)$/i);
       if (evaluationMatch && req.method === 'GET') {
-        const evaluation = store.evaluation(evaluationMatch[1]);
+        const evaluation = store.evaluation(evaluationMatch[1], scope);
         if (!evaluation) throw new AppError('Evaluation not found.', 404);
         return json(res, 200, evaluation);
       }
       if (url.pathname === '/api/runs') {
-        if (req.method === 'POST') return json(res, 202, engine.start((await readBody(req))?.evaluationIds));
-        if (req.method === 'GET') return json(res, 200, { runs: store.runs().slice(0, 100).map(run => ({
+        if (req.method === 'POST') return json(res, 202, engine.start((await readBody(req))?.evaluationIds, scope));
+        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).slice(0, 100).map(run => ({
           id: run.id, createdAt: run.createdAt, status: run.status, finishedAt: run.finishedAt,
           total: run.items.length, passed: run.items.filter(item => item.status === 'passed').length,
           failed: run.items.filter(item => item.status === 'failed').length, errors: run.items.filter(item => item.status === 'error').length,
@@ -66,7 +74,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([a-z0-9-]+)$/i);
       if (runMatch && req.method === 'GET') {
-        const run = store.run(runMatch[1]);
+        const run = store.run(runMatch[1], scope);
         if (!run) throw new AppError('Run not found.', 404);
         return json(res, 200, run);
       }

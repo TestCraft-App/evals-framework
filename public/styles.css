@@ -16,6 +16,8 @@ footer{display:flex;gap:18px;align-items:center;margin:25px 0 0;border-top:1px s
 
 /* Keep the workshop legible on a projector and with browser text enlargement. */
 body{font-size:1rem}
+.session-status{max-width:640px;margin:48px auto;padding:24px;color:var(--muted);line-height:1.6}.session-error{color:#9a3434;margin:12px 0}.session-error:empty{display:none}.session-status .button{margin-top:12px}
+.session-strip{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;color:var(--muted);font-size:.8125rem}.session-strip details{margin:0;padding:0;border:0;max-width:500px}.session-strip p{margin-top:8px;line-height:1.6}.session-strip code{overflow-wrap:anywhere}
 label,input:not([type=checkbox]),select,textarea,.filters label,.filters input,.filters select,.button,.button.small,.text-button,.tabs button,table,.eval-name,.badge,.selection-bar,.check-label{font-size:.875rem}
 .subtitle,.section-heading p,.empty-state p,.dialog-heading p:last-child,.checks h4,.event-log h4,.check-title,.check p,.event-log p,.muted{font-size:.875rem}
 .header-right,.workspace-badge,.eyebrow,.dialog-heading .eyebrow,.storage-badge,.notice,.error-banner,.stats article>span,.stats small,.tabs button span,th,.eval-id,.row-meta,.table-footer,.workflow-tip,label small,.field-hint,.run-history h3,.run-history button small,.run-top p,.run-top a,.run-item,.result-title p,.output-card h4,summary,.dialog-footer>span,footer,footer a,.toast{font-size:.75rem}

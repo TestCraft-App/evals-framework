@@ -4,17 +4,49 @@ const languages = { playwright: ['typescript','javascript','python','java','csha
 const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], selected = new Set(), currentRun, currentItemId, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, duplicate = false, criteria = [], modelCatalog, modelsLoading = false, desiredJudge = '';
+let session = null, sessionTimer, sessionSetup;
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const badge = status => '<span class="badge ' + escape(status) + '">' + escape(names[status] || status) + '</span>';
 const date = value => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 function error(message) { $('app-error').textContent = message; $('app-error').hidden = !message; }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3000); }
 async function api(path, options) {
-  const res = await fetch(path, options && { ...options, headers: { 'content-type': 'application/json' } });
+  const requestSession = session;
+  const res = await fetch(path, { ...options, credentials: 'same-origin', headers: { ...(options ? { 'content-type': 'application/json' } : {}), ...(session && options?.method === 'POST' ? { 'x-csrf-token': session.csrfToken } : {}) } });
   let body;
   try { body = await res.json(); } catch { throw new Error('The server returned an unexpected response. Restart the updated backend.'); }
+  if (requestSession !== session) throw new Error('The workspace changed. Please try again.');
+  if (res.status === 401 && path !== '/api/session') void connectWorkspace();
   if (!res.ok) throw new Error(body.error || 'Request failed.');
   return body;
+}
+function showConnecting() {
+  session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
+  evaluations = []; runs = []; selected.clear(); currentRun = null; currentItemId = null; criteria = []; modelCatalog = null; modelsLoading = false;
+  $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
+  $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
+  $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
+  $('session-message').textContent = 'Opening your private workspace…';
+  $('session-error').textContent = ''; $('retry-session').hidden = true;
+}
+function renderSession() {
+  const b = session.budget;
+  $('model-allowance').textContent = `${b.remaining} / ${b.limit} model calls available · shared workshop allowance${b.reserved ? ` · ${b.reserved} reserved` : ''}`;
+  $('workspace-id').textContent = session.workspaceId;
+  $('session-expiry').textContent = new Date(session.expiresAt).toLocaleString();
+}
+function scheduleSessionCheck() {
+  clearTimeout(sessionTimer);
+  if (session) sessionTimer = setTimeout(() => refreshSession().catch(e => { error(e.message); scheduleSessionCheck(); }), 30000);
+}
+async function refreshSession() {
+  clearTimeout(sessionTimer);
+  if (!session) return;
+  const current = await api('/api/session');
+  if (!current.authenticated || current.workspaceId !== session?.workspaceId) return connectWorkspace();
+  // Preserve object identity so parallel responses from this workspace remain valid.
+  Object.assign(session, current); renderSession();
+  scheduleSessionCheck();
 }
 async function loadLibrary() {
   const data = await api('/api/evaluations'); evaluations = data.evaluations;
@@ -130,6 +162,7 @@ function addCriterion() {
   return true;
 }
 function renderModelOptions() {
+  if (!config) return;
   const models = modelCatalog?.models || [{ id: config.judgeModel, label: config.judgeModel + ' · backend configured', graderCompatible: config.judgeModelCompatible }];
   $('judge-model').innerHTML = '<option value="">Select a model</option>' + models.map(model => '<option value="' + escape(model.id) + '"' + (model.graderCompatible ? '' : ' disabled') + '>' + escape(model.label) + (model.graderCompatible ? '' : ' · unavailable for grading') + '</option>').join('');
   if (models.some(model => model.id === desiredJudge && model.graderCompatible)) $('judge-model').value = desiredJudge;
@@ -137,16 +170,18 @@ function renderModelOptions() {
   else $('judge-model').value = '';
 }
 async function loadModels() {
-  if (modelsLoading) return;
+  if (modelsLoading || !session || !config) return;
+  const requestSession = session;
   modelsLoading = true; $('models-status').textContent = 'Loading TestCraft models…'; $('retry-models').hidden = true; syncForm();
   try {
     modelCatalog = await api('/api/models'); renderModelOptions();
     $('models-status').textContent = modelCatalog.warning || 'TestCraft catalog. Models without verified structured grading support are disabled. Access depends on your backend account.';
     $('retry-models').hidden = !modelCatalog.warning;
   } catch {
+    if (requestSession !== session) return;
     $('models-status').textContent = modelCatalog ? 'Could not refresh TestCraft models. Showing the last list; account access is not verified.' : 'Could not load TestCraft models. Only the backend-configured model is listed; its account access is not verified.';
     $('retry-models').hidden = false; renderModelOptions();
-  } finally { modelsLoading = false; syncForm(); }
+  } finally { if (requestSession === session) { modelsLoading = false; syncForm(); } }
 }
 function validateStep(step) {
   const invalid = [...$('step-' + step).querySelectorAll('input,select,textarea')].find(el => !el.disabled && !el.checkValidity());
@@ -154,6 +189,7 @@ function validateStep(step) {
   setStep(step, false); invalid.focus(); invalid.reportValidity(); return false;
 }
 function openForm(example = false, existing) {
+  if (!session || !config) return;
   $('evaluation-form').reset(); $('form-error').textContent = '';
   duplicate = Boolean(existing);
   $('dialog-title').textContent = existing ? 'Inspect / duplicate evaluation' : 'New evaluation';
@@ -207,8 +243,9 @@ async function startRun(ids) {
   try {
     const run = await api('/api/runs', { method: 'POST', body: JSON.stringify({ evaluationIds: ids }) });
     selected.clear(); currentItemId = null; await loadRuns(); location.hash = 'runs/' + run.id;
+    await refreshSession();
     toast('Run created. Generation and grading continue in the backend.');
-  } catch (e) { error(e.message); }
+  } catch (e) { error(e.message); await refreshSession().catch(() => {}); }
   finally { updateSelection(); }
 }
 function renderRunList() {
@@ -233,7 +270,7 @@ function renderRunDetail() {
     + '<details><summary>Inspect saved input, HTML, and criteria</summary><pre class="context-pre">' + escape(JSON.stringify({ description: e.input, html: e.html, framework: e.framework, language: e.language, pageUrl: e.pageUrl, criteria: e.criteria, pom: e.pom, fromIdeas: e.fromIdeas, ideas: e.ideas }, null, 2)) + '</pre></details></div>';
 }
 async function pollRun(id) {
-  if (location.hash !== '#runs/' + id) return;
+  if (!session || location.hash !== '#runs/' + id) return;
   try {
     const run = await api('/api/runs/' + id);
     if (location.hash !== '#runs/' + id) return;
@@ -241,14 +278,15 @@ async function pollRun(id) {
     const serialized = JSON.stringify(run);
     if (serialized !== lastRunJson) { lastRunJson = serialized; renderRunDetail(); await loadRuns(); }
     if (activeStatuses.includes(run.status)) polling = setTimeout(() => pollRun(id), 900);
-    else { await loadLibrary(); }
+    else { await loadLibrary(); if (!sessionSetup) await refreshSession(); }
   } catch (e) {
     error(e.message);
-    if (++pollFailures < 3 && location.hash === '#runs/' + id) polling = setTimeout(() => pollRun(id), 1500);
+    if (session && ++pollFailures < 3 && location.hash === '#runs/' + id) polling = setTimeout(() => pollRun(id), 1500);
   }
 }
 async function route() {
   clearTimeout(polling); lastRunJson = null; pollFailures = 0;
+  if (!session) return;
   const isRuns = location.hash.startsWith('#runs');
   $('evaluations-panel').hidden = isRuns; $('runs-panel').hidden = !isRuns;
   $('evaluations-tab').setAttribute('aria-selected', String(!isRuns)); $('runs-tab').setAttribute('aria-selected', String(isRuns));
@@ -307,11 +345,45 @@ document.querySelector('.tabs').addEventListener('keydown', event => {
 });
 $('refresh-runs').addEventListener('click', () => { error(''); route().catch(e => error(e.message)); });
 window.addEventListener('hashchange', () => route().catch(e => error(e.message)));
-async function init() {
+async function openWorkspace() {
   config = await api('/api/config');
-  if (config.version !== 3) throw new Error('An older server is running. Restart npm start to load the two-step evaluation form.');
+  if (config.version !== 4) throw new Error('An older server is running. Restart npm start to enable automatic browser sessions.');
   $('connection').textContent = '● Backend connected';
+  $('setup-notice').hidden = true; error('');
   if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'Model grade needs OPENAI_API_KEY in the backend. You can already save evaluations and grade pasted TestCraft outputs with Exact match or Contains. Load example to try it.'; }
   await Promise.all([loadLibrary(), loadRuns()]); await route();
+  if (!session) return;
+  $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;
+  renderSession(); scheduleSessionCheck();
 }
-init().catch(e => { error(e.message); $('connection').textContent = 'Backend unavailable'; });
+async function ensureBrowserSession() {
+  let current = await api('/api/session');
+  if (!current.authenticated) {
+    await api('/api/session', { method: 'POST', body: '{}' });
+    // Verify that the browser kept the HttpOnly cookie; do not loop when cookies are blocked.
+    current = await api('/api/session');
+    if (!current.authenticated) throw new Error('Allow cookies for this site, then retry. Your browser needs a cookie to keep its private workspace.');
+  }
+  return current;
+}
+function connectWorkspace() {
+  if (sessionSetup) return sessionSetup;
+  const previousWorkspace = session?.workspaceId;
+  showConnecting();
+  sessionSetup = (async () => {
+    try {
+      // Serialize first visits across tabs in browsers supporting Web Locks.
+      session = navigator.locks ? await navigator.locks.request('testcraft-session-bootstrap', ensureBrowserSession) : await ensureBrowserSession();
+      const renewed = previousWorkspace && previousWorkspace !== session.workspaceId;
+      if (renewed) history.replaceState(null, '', '#evaluations');
+      await openWorkspace();
+      if (renewed) toast('A new browser session was created. Previous evaluations remain in the previous workspace.');
+    } catch (e) {
+      showConnecting(); $('session-message').textContent = 'Could not open your workspace.';
+      $('session-error').textContent = e.message; $('retry-session').hidden = false;
+    } finally { sessionSetup = null; }
+  })();
+  return sessionSetup;
+}
+$('retry-session').addEventListener('click', connectWorkspace);
+void connectWorkspace();
