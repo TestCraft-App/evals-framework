@@ -66,6 +66,17 @@ export class Store {
     const result = this.db.prepare(`INSERT INTO runs (id,data,owner_id,workshop_id) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE runs.owner_id=excluded.owner_id AND runs.workshop_id=excluded.workshop_id`).run(run.id, JSON.stringify(run), ...requireScope(scope));
     if (!result.changes) throw new Error('Run workspace mismatch.');
   }
+  deleteRun(id, scope) {
+    return this.transaction(() => {
+      const run = this.run(id, scope);
+      if (!run) throw new AppError('Run not found.', 404);
+      // Active jobs still persist their snapshots: deleting one would resurrect it.
+      if (!['completed', 'interrupted'].includes(run.status) || run.items.some(item => !['passed', 'failed', 'error'].includes(item.status))) throw new AppError('This run is still active. Wait for it to finish before deleting it.', 409);
+      this.db.prepare('DELETE FROM runs WHERE id=? AND owner_id=? AND workshop_id=?').run(id, ...requireScope(scope));
+      // Evaluation definitions and workshop usage are independent of run history.
+      return { deletedId: id };
+    });
+  }
   budget(workshopId, limit) {
     const used = this.db.prepare('SELECT used FROM model_usage WHERE workshop_id=?').get(workshopId)?.used || 0;
     const reserved = this.db.prepare('SELECT COALESCE(SUM(remaining),0) AS total FROM model_reservations WHERE workshop_id=?').get(workshopId).total;

@@ -28,6 +28,16 @@ label small,.field-hint,.stats small,.row-meta,.eval-id,.table-footer,footer spa
 
 /* The dialog has one scroll owner; its heading, steps and actions stay in view. */
 body.modal-open { overflow: hidden; }
+.run-top { flex-wrap: wrap; }
+.run-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.button.danger { color: #9a3434; border-color: #e2c5c2; }
+.button.danger:hover:not(:disabled) { background: #fff2f0; border-color: #bf7771; }
+.button.danger-solid { background: #a73730; border-color: #a73730; color: white; }
+.button.danger-solid:hover:not(:disabled) { background: #8b2c27; border-color: #8b2c27; }
+#delete-run-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.delete-run-body { padding: 0 26px 22px; font-size: .875rem; line-height: 1.7; color: var(--muted); }
+.delete-run-summary { margin-bottom: 12px; color: #36534b; font-weight: 600; }
+#delete-run-dialog .dialog-footer { flex-wrap: wrap; }
 html { scrollbar-gutter: stable; }
 #evaluation-dialog { width: min(960px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: hidden; }
 #evaluation-form { display: flex; flex-direction: column; max-height: calc(100dvh - 34px); }

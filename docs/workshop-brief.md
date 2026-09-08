@@ -13,6 +13,7 @@ TestCraft's browser extension is the application being evaluated. This project s
 5. Select cases and run them. The backend generates through TestCraft and applies the grader.
 6. Inspect actual output against the criteria, scores, evidence, and errors in Runs or in a separate browser tab.
 7. Save a revised copy or rerun a case; compare historical snapshots without overwriting evidence.
+8. Optional cleanup: select a finished run and use **Delete run**, then confirm. This permanently removes that run's evidence, not its evaluations, and does not restore used model calls. Active runs are protected. Keep runs you still want to compare during the workshop.
 
 ## Exercises
 

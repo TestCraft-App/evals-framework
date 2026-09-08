@@ -61,6 +61,7 @@ Set LLM secrets in the backend runtime only. Keep the database outside an epheme
 4. **Create evaluation** saves a row in SQLite. It does not call a model.
 5. Select cases and choose **Run selected**. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
 6. Click a case name to inspect its settings and save a revised copy. Earlier cases and run snapshots are preserved.
+7. To tidy up, select a finished run in **Runs → Delete run** and confirm. This permanently removes only that run's snapshots, outputs, scores, and evidence; the saved evaluations remain runnable. Cancel leaves everything unchanged. Queued/running runs cannot be deleted. The library shows the latest remaining run, or **Not run** if no history remains. Deleting history never refunds model calls.
 
 **Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it without LLM credentials or model calls. Opening the form attempts a read-only catalog request; catalog failure does not block text-based methods. Scores are calculated from actual text, not canned scenario results.
 
@@ -131,7 +132,7 @@ New evaluation payloads require `criteria: string[]`: 1–20 distinct, nonempty 
 - Runs preserve inputs, parameters, output, scores, evidence, events, and errors. A restart marks unfinished runs Interrupted without silently repeating paid calls.
 - Up to 50 cases per run, two cases processed concurrently, at most 100 queued/active cases. Duplicate simultaneous runs of a case are rejected. No automatic provider retries.
 - HTML is escaped text. **Generated code is not executed.** Passing an evaluation does not mean a Playwright/Cypress/Selenium test ran or passed.
-- Participant workspaces are isolated by server-owned sessions. The additive database migration preserves any pre-session records as unowned; they are not automatically exposed to the first participant. Local data cleanup is an explicit operator action, never a public API route.
+- Participant workspaces are isolated by server-owned sessions. Participants can delete only individual finished runs in their own workspace. The additive database migration preserves any pre-session records as unowned; they are not automatically exposed to the first participant. Global data cleanup is an explicit operator action, never a public API route.
 - Saved HTML/input/output are plaintext and may contain sensitive data. API/judge runs transmit relevant content to the configured providers. Use synthetic fixtures and remove secrets before saving.
 - `.env`, `data`, dependencies, and test artifacts are ignored by Git.
 - Original prototype modules (`src/generator.mjs`, `src/runner.mjs`, `src/evaluator.mjs`, `src/scenarios.mjs`, `public/demo-app.html`) remain historical reference only. No active route imports or serves them.
@@ -144,7 +145,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Backend tests cover automatic private sessions and ownership, cookie/CSRF/origin controls, rate limits, global atomic reservations, failed-call accounting, restart recovery, legacy migration, criteria arrays, the fixed policy, computed scores, catalog failure/secrecy, TestCraft streams, judge schema validation, and generator/judge separation. Browser tests use automatic sessions in an isolated test workshop and cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, results in another tab, and missing grader configuration.
+Backend tests cover automatic private sessions and ownership, cookie/CSRF/origin controls, rate limits, global atomic reservations, failed-call accounting, restart recovery, legacy migration, criteria arrays, the fixed policy, computed scores, catalog failure/secrecy, TestCraft streams, judge schema validation, and generator/judge separation. Run-deletion tests cover ownership, active-run protection, persistence after restart, latest-result recalculation, and unchanged call usage. Browser tests use automatic sessions in an isolated test workshop and cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, results in another tab, missing grader configuration, and deletion confirmation/cancellation/errors.
 
 Tests use temporary databases and mocked LLM responses; **they never consume model credits**. A live TestCraft + judge smoke test still needs working provider configuration.
 
@@ -161,10 +162,11 @@ Tests use temporary databases and mocked LLM responses; **they never consume mod
 | POST | `/api/runs` | Start batch: `{ "evaluationIds": ["…"] }` |
 | GET | `/api/runs` | Recent run summaries |
 | GET | `/api/runs/:id` | Snapshot, progress, output, score, and evidence |
+| DELETE | `/api/runs/:id` | Permanently delete an owned completed/interrupted run; returns `{ "deletedId": "…" }`, 404 if unavailable, 409 if still active |
 
 The UI polls active runs; generation streaming is consumed by the backend. No frontend API keys, destructive reset route, or automatic fallback scores.
 
-Except for `/api/session`, all API routes require the cookie. Protected POSTs also require `Origin: <APP_ORIGIN or local origin>`, `Content-Type: application/json`, and `X-CSRF-Token` from the session response. The browser handles these automatically. Never put session tokens or LLM keys in URLs.
+Except for `/api/session`, all API routes require the cookie. Protected mutations (POST and DELETE) also require `Origin: <APP_ORIGIN or local origin>` and `X-CSRF-Token` from the session response. POSTs require `Content-Type: application/json`; DELETE needs no body. The browser handles these automatically. Never put session tokens or LLM keys in URLs.
 
 ## References
 

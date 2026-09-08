@@ -55,7 +55,7 @@
     </section>
 
     <section id="runs-panel" role="tabpanel" aria-labelledby="runs-tab" hidden>
-      <div class="section-heading runs-heading"><div><h2>Evaluation runs</h2><p>Every run keeps its input, output, parameters, and grading evidence.</p></div><button id="refresh-runs" class="button">↻ Refresh runs</button></div>
+      <div class="section-heading runs-heading"><div><h2>Evaluation runs</h2><p>Review saved results. Select a finished run to delete it from your history.</p></div><button id="refresh-runs" class="button">↻ Refresh runs</button></div>
       <div class="runs-layout"><aside class="run-history" aria-label="Run history"><h3>RECENT RUNS</h3><div id="run-list"></div></aside><div id="run-detail" class="run-detail"><div class="empty-state"><div class="empty-icon" aria-hidden="true">▷</div><h3>No run selected</h3><p>Select evaluations in the library and choose Run selected.</p></div></div></div>
     </section>
     <footer>TestCraft Evals <span>Built for testing AI-powered testing tools.</span><a href="https://github.com/TestCraft-App/evals-framework" target="_blank" rel="noreferrer">evals-framework ↗</a></footer>
@@ -118,6 +118,17 @@
         </section>
       </div>
       <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="delete-run-dialog" role="alertdialog" aria-labelledby="delete-run-title" aria-describedby="delete-run-description">
+    <form id="delete-run-form">
+      <div class="dialog-heading"><h2 id="delete-run-title">Delete this run?</h2></div>
+      <div class="delete-run-body">
+        <p id="delete-run-summary" class="delete-run-summary"></p>
+        <p id="delete-run-description">This permanently removes this run’s outputs, scores, and evidence. Your evaluations stay saved. Used model calls are not restored. This cannot be undone.</p>
+        <p id="delete-run-error" class="session-error" role="alert"></p>
+      </div>
+      <div class="dialog-footer"><button id="cancel-delete-run" type="button" class="button" autofocus>Cancel</button><button id="confirm-delete-run" type="submit" class="button danger-solid">Delete run</button></div>
     </form>
   </dialog>
   <div class="toast" id="toast" role="status" hidden></div>

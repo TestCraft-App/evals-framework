@@ -73,6 +73,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         })) });
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([a-z0-9-]+)$/i);
+      if (runMatch && req.method === 'DELETE') return json(res, 200, store.deleteRun(runMatch[1], scope));
       if (runMatch && req.method === 'GET') {
         const run = store.run(runMatch[1], scope);
         if (!run) throw new AppError('Run not found.', 404);

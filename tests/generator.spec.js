@@ -39,6 +39,61 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await popup.close();
 });
 
+test('finished runs can be deleted with confirmation while evaluations stay runnable', async ({ page }) => {
+  await page.getByRole('button', { name: 'Load example' }).click();
+  await page.getByLabel('Eval name', { exact: true }).fill('Keep this evaluation');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
+  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await expect(page.locator('.result-score')).toContainText('100');
+  const savedRunUrl = page.url();
+  const deleteButton = page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true });
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete this run?' });
+  await deleteButton.click();
+  await expect(confirmation).toContainText('This cannot be undone');
+  await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(confirmation).not.toBeVisible();
+  await expect(page.locator('#run-list [data-run-link]')).toHaveCount(1);
+  await expect(deleteButton).toBeFocused();
+  await deleteButton.click();
+  await confirmation.getByRole('button', { name: 'Delete run', exact: true }).click();
+  await expect(confirmation).not.toBeVisible();
+  await expect(page.locator('#runs-count')).toHaveText('0');
+  await expect(page.locator('#run-detail')).toContainText('No run selected');
+  await expect(page.locator('.result-score')).toHaveCount(0);
+  await page.goto(savedRunUrl);
+  await expect(page).toHaveURL(/#runs$/);
+  await expect(page.locator('#run-detail')).toContainText('No run selected');
+  await page.getByRole('tab', { name: /^Evaluations/ }).click();
+  await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
+  await expect(page.locator('#evaluation-rows .badge.not_run')).toHaveText('Not run');
+  await expect(page.locator('#stat-passed')).toHaveText('0');
+  await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
+  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await expect(page.locator('.result-score')).toContainText('100');
+});
+
+test('failed deletion keeps the run and lets the user retry or cancel', async ({ page }) => {
+  await page.getByRole('button', { name: 'Load example' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
+  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await expect(page.locator('.result-score')).toContainText('100');
+  await page.route('**/api/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
+  await page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog');
+  await confirmation.getByRole('button', { name: 'Delete run', exact: true }).click();
+  await expect(page.locator('#delete-run-error')).toContainText('Temporary deletion failure');
+  await expect(confirmation.getByRole('button', { name: 'Delete run', exact: true })).toBeEnabled();
+  await expect(page.locator('#runs-count')).toHaveText('1');
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('body')).not.toHaveClass('modal-open');
+});
+
 test('batch selection grades each case independently and preserves HTML as inert text', async ({ page }) => {
   const base = { name: 'Batch good', type: 'code', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains', input: 'Test login', html: '<button onclick="alert(1)">Login</button><script>throw new Error("must not run")</script>', actualOutput: 'expect(page.getByRole("button")).toBeVisible()', criteria: ['expect', 'getByRole'], model: '', judgeModel: '', pageUrl: '' };
   const session = await (await page.request.get('/api/session')).json();

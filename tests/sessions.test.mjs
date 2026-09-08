@@ -100,6 +100,101 @@ test('all authenticated mutations require the matching Origin and CSRF token', a
   } finally { await close(app); }
 });
 
+test('deleting finished runs removes only their snapshots and recomputes the latest evaluation result', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:' }));
+  try {
+    const a = await client(app), saved = await save(a);
+    const first = await waitForRun(a, (await start(a, [saved.id])).id);
+    const second = await waitForRun(a, (await start(a, [saved.id])).id);
+    assert.equal((await a.get('/api/evaluations')).evaluations[0].latest.runId, second.id);
+    const response = await a.request('/api/runs/' + second.id, { method: 'DELETE' });
+    assert.equal(response.status, 200); assert.deepEqual(await response.json(), { deletedId: second.id });
+    assert.equal((await a.request('/api/runs/' + second.id)).status, 404);
+    assert.equal(app.store.db.prepare('SELECT id FROM runs WHERE id=?').get(second.id), undefined);
+    assert.deepEqual((await a.get('/api/runs')).runs.map(run => run.id), [first.id]);
+    assert.equal((await a.get('/api/evaluations')).evaluations[0].latest.runId, first.id);
+    assert.equal((await a.request('/api/runs/' + second.id, { method: 'DELETE' })).status, 404);
+    assert.equal((await a.request('/api/runs/' + first.id, { method: 'DELETE' })).status, 200);
+    assert.deepEqual((await a.get('/api/runs')).runs, []);
+    const remaining = (await a.get('/api/evaluations')).evaluations;
+    assert.equal(remaining.length, 1); assert.equal(remaining[0].id, saved.id); assert.equal(remaining[0].latest, null);
+    assert.equal((await a.get('/api/session')).budget.used, 0);
+    const rerun = await waitForRun(a, (await start(a, [saved.id])).id);
+    assert.equal(rerun.items[0].score, 100, 'saved evaluations can still be run after clearing history');
+  } finally { await close(app); }
+});
+
+test('run deletion enforces session, ownership, workshop, Origin and CSRF before changing data', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:' }));
+  try {
+    const a = await client(app), b = await client(app), saved = await save(a);
+    const run = await waitForRun(a, (await start(a, [saved.id])).id), path = '/api/runs/' + run.id;
+    assert.equal((await fetch(a.url + path, { method: 'DELETE' })).status, 401);
+    assert.equal((await b.request(path, { method: 'DELETE', body: JSON.stringify({ ownerId: a.info.workspaceId, workshopId: 'workshop' }) })).status, 404);
+    assert.throws(() => app.store.deleteRun(run.id, { ...a.scope, workshopId: 'another-workshop' }), error => error.status === 404);
+    assert.throws(() => app.store.deleteRun(run.id), /workspace scope/);
+    for (const headers of [{ 'x-csrf-token': '' }, { 'x-csrf-token': b.info.csrfToken }, { origin: '' }, { origin: 'null' }, { origin: 'https://attacker.invalid' }, { 'sec-fetch-site': 'cross-site' }]) {
+      assert.equal((await a.request(path, { method: 'DELETE', headers })).status, 403);
+    }
+    assert.equal((await a.request(path + '?delete=true')).status, 200, 'GET never deletes a run');
+    assert.equal((await a.request('/api/runs', { method: 'DELETE' })).status, 404, 'there is no bulk-reset route');
+    assert.deepEqual(await a.get(path), run);
+    assert.equal((await a.get('/api/runs')).runs.length, 1);
+    assert.equal((await a.request(path, { method: 'DELETE' })).status, 200);
+    assert.equal((await b.request(path, { method: 'DELETE' })).status, 404);
+  } finally { await close(app); }
+});
+
+test('queued and running runs cannot be deleted or lose reserved calls, but become deletable after completion', async () => {
+  let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => { calls++; await gate; return stream(); } }));
+  const accepted = [];
+  let a;
+  try {
+    a = await client(app);
+    const items = await Promise.all([save(a, generated), save(a, generated), save(a, generated)]);
+    const running = await start(a, items.slice(0, 2).map(item => item.id)); accepted.push(running.id);
+    const queued = await start(a, [items[2].id]); accepted.push(queued.id);
+    assert.equal((await a.get('/api/runs/' + running.id)).status, 'running');
+    assert.equal((await a.get('/api/runs/' + queued.id)).status, 'queued');
+    assert.equal(calls, 2);
+    const budget = (await a.get('/api/session')).budget;
+    for (const id of accepted) {
+      const denied = await a.request('/api/runs/' + id, { method: 'DELETE' });
+      assert.equal(denied.status, 409); assert.match((await denied.json()).error, /still active/);
+    }
+    assert.deepEqual((await a.get('/api/session')).budget, budget);
+    assert.equal((await a.get('/api/runs')).runs.length, 2);
+    release(); for (const id of accepted) await waitForRun(a, id);
+    for (const id of accepted) assert.equal((await a.request('/api/runs/' + id, { method: 'DELETE' })).status, 200);
+    accepted.length = 0;
+    assert.deepEqual((await a.get('/api/runs')).runs, []);
+    assert.equal(calls, 3); assert.equal((await a.get('/api/session')).budget.used, 3);
+  } finally { release(); for (const id of accepted) await waitForRun(a, id); await close(app); }
+});
+
+test('run deletion survives restart and does not refund consumed model calls or affect other participants', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'testcraft-run-delete-')), dbPath = join(dir, 'evals.sqlite');
+  let calls = 0, app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '1' }, fetchImpl: async () => { calls++; return stream(); } }));
+  try {
+    const a = await client(app), b = await client(app), saved = await save(a, generated), other = await save(b);
+    const ownRun = await waitForRun(a, (await start(a, [saved.id])).id);
+    const otherRun = await waitForRun(b, (await start(b, [other.id])).id);
+    assert.equal((await a.request('/api/runs/' + ownRun.id, { method: 'DELETE' })).status, 200);
+    assert.deepEqual(await b.get('/api/runs/' + otherRun.id), otherRun);
+    await close(app); app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '1' } }));
+    const restored = await client(app, { cookie: a.cookie });
+    assert.deepEqual((await restored.get('/api/runs')).runs, []);
+    assert.equal((await restored.request('/api/runs/' + ownRun.id)).status, 404);
+    assert.equal((await restored.get('/api/evaluations')).evaluations[0].id, saved.id);
+    assert.deepEqual(restored.info.budget, { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
+    assert.equal((await restored.post('/api/runs', { evaluationIds: [saved.id] })).status, 429);
+    const restoredB = await client(app, { cookie: b.cookie });
+    assert.equal((await restoredB.get('/api/runs')).runs[0].id, otherRun.id); assert.equal(calls, 1);
+  } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('forged, duplicated and expired cookies cannot read another workspace; tokens in URLs are ignored', async () => {
   const app = await listen(createApp({ dbPath: ':memory:' }));
   try {
@@ -277,6 +372,9 @@ test('interrupted recovery releases only unused reservations, without replaying 
     assert.equal(store.run(run.id, testScope).status, 'interrupted');
     assert.deepEqual(store.budget('workshop', 2), { limit: 2, used: 1, reserved: 0, remaining: 1, unit: 'model_calls' });
     assert.throws(() => store.consumeCall('item', 'workshop'), /No model-call allowance/);
+    assert.deepEqual(store.deleteRun(run.id, testScope), { deletedId: run.id });
+    assert.equal(store.run(run.id, testScope), undefined);
+    assert.deepEqual(store.budget('workshop', 2), { limit: 2, used: 1, reserved: 0, remaining: 1, unit: 'model_calls' });
   } finally { store.close(); }
 });
 
@@ -294,6 +392,8 @@ test('the schema migration preserves unowned legacy data without giving it to th
     assert.deepEqual((await a.get('/api/runs')).runs, []);
     assert.equal((await a.request('/api/evaluations/legacy')).status, 404);
     assert.equal((await a.request('/api/runs/legacy-run')).status, 404);
+    assert.equal((await a.request('/api/runs/legacy-run', { method: 'DELETE' })).status, 404);
+    assert.ok(app.store.db.prepare('SELECT id FROM runs WHERE id=?').get('legacy-run'));
     assert.equal(app.store.db.prepare('SELECT data FROM evaluations WHERE id=?').get('legacy').data, data);
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
