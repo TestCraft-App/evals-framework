@@ -5,12 +5,13 @@ import { criterionMethods, evaluationMethods, GRADING_VERSION, methods, needsMod
 import { grade } from '../src/evals/graders.mjs';
 import { Engine } from '../src/evals/engine.mjs';
 import { Store } from '../src/evals/store.mjs';
+import { workshopSuite } from './fixtures/pasted-grader-cases.mjs';
 
 const base = { name: 'Binary rubric', type: 'ideas', source: 'pasted', method: 'contains', html: '<button>Login</button>',
   actualOutput: 'valid user; invalid password', criteria: ['valid user', 'invalid password'], judgeModel: 'gpt-4o-mini' };
 const env = { OPENAI_API_KEY: 'test-only-no-real-requests' };
 const criterion = (text, method = 'contains', weight = 1) => ({ text, method, weight });
-const check = (id = 'c1', passed = true, evidence = 'valid user') => ({ id, passed, evidence, reason: 'The candidate demonstrates the requested behavior.' });
+const check = (id = 'c1', passed = true, evidence = [1]) => ({ id, passed, evidence, reason: 'The candidate demonstrates the requested behavior.' });
 const modelCase = (criteria = [criterion('Describes a successful login', 'model_grade')]) => ({ ...base, method: 'model_grade', criteria });
 const response = (checks, overrides = {}) => Response.json({ model: 'mock-judge', usage: { total_tokens: 12 },
   choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks }) } }], ...overrides });
@@ -124,12 +125,31 @@ test('hybrid sends only model criteria in one strict call and merges their origi
     assert.equal(request.response_format.json_schema.strict, true);
     const schema = request.response_format.json_schema.schema;
     assert.equal(schema.additionalProperties, false);
-    assert.equal(schema.properties.checks.items.additionalProperties, false);
-    assert.deepEqual(schema.properties.checks.items.required, ['id', 'passed', 'evidence', 'reason']);
-    assert.deepEqual(schema.properties.checks.items.properties.passed, { type: 'boolean' });
-    assert.equal('score' in schema.properties.checks.items.properties, false);
-    assert.deepEqual(schema.properties.checks.items.properties.id.enum, ['c2', 'c4']);
+    const [passSchema, failSchema] = schema.properties.checks.items.anyOf;
+    for (const branch of [passSchema, failSchema]) {
+      assert.equal(branch.additionalProperties, false);
+      assert.deepEqual(branch.required, ['id', 'passed', 'evidence', 'reason']);
+      assert.equal('score' in branch.properties, false);
+      assert.deepEqual(branch.properties.id.enum, ['c2', 'c4']);
+    }
+    assert.deepEqual(passSchema.properties.passed, { type: 'boolean', enum: [true] });
+    assert.deepEqual(failSchema.properties.passed, { type: 'boolean', enum: [false] });
+    assert.equal(passSchema.properties.evidence.type, 'array');
+    assert.equal(passSchema.properties.evidence.minItems, 1);
+    assert.equal(passSchema.properties.evidence.maxItems, 1);
+    assert.deepEqual(passSchema.properties.evidence.items, { type: 'integer', minimum: 1, maximum: 1 });
+    assert.equal(schema.properties.checks.minItems, 2);
+    assert.equal(schema.properties.checks.maxItems, 2);
+    for (const textSchema of [failSchema.properties.evidence, failSchema.properties.reason, passSchema.properties.reason]) {
+      assert.equal(textSchema.type, 'string');
+      assert.ok(textSchema.description.length > 0);
+      const pattern = new RegExp(textSchema.pattern);
+      for (const empty of ['', ' ', '\t\r\n', '\u00a0', '\u2003']) assert.equal(pattern.test(empty), false);
+      for (const text of ['Missing assertion.', '\nEvidence on another line\n', 'Falta una aserción.']) assert.equal(pattern.test(text), true);
+    }
     const input = JSON.parse(request.messages[1].content);
+    assert.deepEqual(input.actualOutputLines, [{ line: 1, text: base.actualOutput }]);
+    assert.equal('actualOutput' in input, false);
     assert.deepEqual(input.criteria, [{ id: 'c2', text: 'Describes a successful login' }, { id: 'c4', text: 'Describes missing coverage' }]);
     assert.equal(request.messages[1].content.includes('local-only'), false);
     assert.match(request.messages[0].content, /untrusted data/);
@@ -175,21 +195,70 @@ test('judge requires exact ID coverage and rejects duplicate, missing, unknown, 
   }
 });
 
-test('passed model evidence must occur literally in candidate output; only line endings normalize', async () => {
-  const output = '  valid user\r\ninvalid password  ';
+test('passing evidence is extracted from valid original lines, not copied or invented by the model', async () => {
+  const output = '  valid user\r\n\r\ninvalid password  ';
   const evaluation = modelCase();
-  for (const evidence of ['valid user\ninvalid password', 'valid user', '  valid user']) {
-    const result = await grade(evaluation, output, env, async () => response([check('c1', true, evidence)]));
-    assert.equal(result.score, 100);
+  const cited = await grade(evaluation, output, env, async () => response([check('c1', true, [3, 1, 1])]));
+  assert.equal(cited.score, 100);
+  assert.equal(cited.checks[0].evidence, 'L1:   valid user\nL3: invalid password  ');
+  assert.deepEqual(cited.checks[0].evidenceLines, [1, 3]);
+  assert.equal(cited.checks[0].evidenceSource, 'output_lines');
+  for (const evidence of ['', 'valid user', 'Invented assertion', [], [0], [-1], [4], [1.5], ['1'], [null], {}, [1, 1, 1, 1]]) {
+    await assert.rejects(grade(evaluation, output, env, async () => response([check('c1', true, evidence)])), /valid source line numbers/);
   }
-  for (const evidence of ['Valid user', 'valid  user', 'valid user invalid password', '"valid user"', '`valid user`', 'valid…password',
-    'valid user\rinvalid password', '   valid user', 'Login', 'Describes a successful login', 'Invented passing assertion']) {
-    await assert.rejects(grade(evaluation, output, env, async () => response([check('c1', true, evidence)])), /verbatim excerpt/);
-  }
+  await assert.rejects(grade(evaluation, output, env, async () => response([check('c1', true, [2])])), /only blank lines/);
   const failed = await grade(evaluation, output, env, async () => response([check('c1', false, 'The required assertion is absent.')]));
   assert.equal(failed.score, 0);
   assert.equal(failed.passCount, 0);
-  await assert.rejects(grade(evaluation, output, env, async () => response([check('c1', false, '')])), /missing evidence/);
+  await assert.rejects(grade(evaluation, output, env, async () => response([check('c1', false, '')])), /empty evidence.*c1/);
+});
+
+test('weak workshop output receives a justified Fail, not an error, when behavior is absent', async t => {
+  const evaluation = workshopSuite.evaluations.find(item => item.name.startsWith('04'));
+  const evidence = 'There is no field entry, submission, or assertion of the required login outcomes.';
+  const reason = 'Navigation and an assertion on a constant do not implement the requested scenarios.';
+  const fixture = setupEngine(t, { limit: 1, fetchImpl: async (_url, options) => {
+    const request = JSON.parse(options.body);
+    const input = JSON.parse(request.messages[1].content);
+    assert.equal(input.actualOutputLines.map(line => line.text).join('\n'), evaluation.actualOutput);
+    assert.match(request.messages[0].content, /absence.*evidence/i);
+    assert.match(request.response_format.json_schema.schema.properties.checks.items.anyOf[1].properties.evidence.description, /failed/i);
+    return response([{ id: 'c1', passed: false, evidence, reason }]);
+  } });
+  const { run } = await runCase(fixture, validateEvaluation(evaluation));
+  assert.equal(run.items[0].status, 'failed');
+  assert.equal(run.items[0].score, 0);
+  assert.equal(run.items[0].checks[0].evidence, evidence);
+  assert.equal(run.items[0].checks[0].reason, reason);
+  assert.equal(fixture.calls.length, 1);
+  assert.equal(fixture.budget().used, 1);
+});
+
+test('invalid grader fields report safe, specific errors without retries, raw responses, or invented grades', async t => {
+  const cases = [
+    { field: 'evidence', value: '', message: /empty evidence.*c1/ },
+    { field: 'evidence', value: ' \n\t ', message: /empty evidence.*c1/ },
+    { field: 'evidence', value: null, message: /evidence.*c1.*text/ },
+    { field: 'reason', value: '', message: /empty reason.*c1/ },
+    { field: 'reason', value: 5, message: /reason.*c1.*text/ },
+    { field: 'passed', value: 'false', message: /passed.*c1.*boolean/ },
+    { field: 'id', value: 7, message: /check 1.*id.*text/ },
+    { field: 'extra', value: 'PRIVATE_PROVIDER_CONTENT', message: /check 1.*exactly/ },
+  ];
+  for (const invalid of cases) await t.test(`${invalid.field}: ${JSON.stringify(invalid.value)}`, async t => {
+    const fixture = setupEngine(t, { limit: 1, fetchImpl: async () => response([
+      { id: 'c1', passed: false, evidence: 'PRIVATE_PROVIDER_CONTENT', reason: 'PRIVATE_PROVIDER_CONTENT', [invalid.field]: invalid.value },
+    ]) });
+    const { run } = await runCase(fixture, modelCase());
+    const item = run.items[0];
+    assert.equal(item.status, 'error');
+    assert.equal(item.score, null);
+    assert.deepEqual(item.checks, []);
+    assert.match(item.error, invalid.message);
+    assert.equal(JSON.stringify(run).includes('PRIVATE_PROVIDER_CONTENT'), false);
+    assert.equal(fixture.calls.length, 1);
+    assert.deepEqual(fixture.budget(), { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
+  });
 });
 
 test('invalid JSON, refusals, and incomplete judge responses are errors', async () => {
@@ -324,13 +393,13 @@ test('hybrid judge preflight prevents paid generation when credentials, model, o
   }
 });
 
-test('fabricated judge evidence errors the run, charges one attempt, and releases reservations', async t => {
-  const fixture = setupEngine(t, { limit: 1, fetchImpl: async () => response([check('c2', true, 'Fabricated assertion')]) });
+test('out-of-range judge evidence errors the run, charges one attempt, and releases reservations', async t => {
+  const fixture = setupEngine(t, { limit: 1, fetchImpl: async () => response([check('c2', true, [999])]) });
   const { run } = await runCase(fixture, validateEvaluation({ ...base, method: 'hybrid', criteria: [criterion('valid user'), criterion('Positive behavior', 'model_grade')] }));
   assert.equal(run.items[0].status, 'error');
   assert.equal(run.items[0].score, null);
   assert.deepEqual(run.items[0].checks, []);
-  assert.match(run.items[0].error, /verbatim excerpt/);
+  assert.match(run.items[0].error, /valid source line numbers/);
   assert.equal(fixture.calls.length, 1);
   assert.deepEqual(fixture.budget(), { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
 });

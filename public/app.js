@@ -143,8 +143,7 @@ function syncForm() {
   const definition = config?.evaluationMethods?.[method];
   const judge = formNeedsGrader();
   if (source === 'llm' && !$('model').value) $('model').value = config?.model || 'gpt-4o-mini';
-  $('actual-field').hidden = source !== 'pasted'; $('actual-output').disabled = source !== 'pasted'; $('actual-output').required = source === 'pasted';
-  $('model').disabled = source === 'pasted'; $('model').required = source === 'llm';
+  $('model').disabled = false; $('model').required = source === 'llm';
   $('judge-model').disabled = !judge || modelsLoading; $('judge-model').required = judge;
   $('models-feedback').hidden = !judge;
   $('criterion-method-field').hidden = method !== 'hybrid';
@@ -154,10 +153,10 @@ function syncForm() {
   const fromIdeas = !$('from-ideas').disabled && $('from-ideas').checked;
   $('ideas-field').hidden = !fromIdeas; $('ideas').required = fromIdeas; $('ideas').disabled = !fromIdeas;
   $('code-params-hint').hidden = code;
-  $('source-hint').textContent = source === 'pasted' ? 'Grade an actual output copied from the extension. No generation call.'
-    : source === 'llm' ? 'Calls a separate backend prompt adapter. This is not the TestCraft v1 generation pipeline.'
+  $('source-hint').textContent = source === 'llm' ? 'Calls a separate backend prompt adapter. This is not the TestCraft v1 generation pipeline.'
     : code ? `Calls ${fromIdeas ? '/api/automate-tests-ideas' : '/api/automate-tests'} with the HTML and code parameters. Description is evaluator context.`
     : 'Calls /api/generate-ideas with the HTML. Description is evaluator context, not an extra instruction to TestCraft.';
+  if (editing?.source === 'pasted') $('source-hint').textContent += ' Saving this older evaluation switches to generation (1 additional model call per run). Previous runs stay unchanged.';
   $('method-hint').textContent = definition?.description || '';
   $('method-limitation').textContent = definition?.limitation || '';
   $('grading-cost').textContent = judge ? 'Grading: 1 model call for all model criteria' + (!config?.llmReady ? ' · Model grader not configured' : '') : 'Grading: 0 model calls · Deterministic for the same output and criteria';
@@ -257,18 +256,18 @@ function openForm(example = false, existing) {
   criteria = [];
   setLanguages('typescript');
   const sample = {
-    name: 'Login form · negative test coverage', type: 'ideas', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains',
+    name: 'Login form · negative test coverage', type: 'ideas', source: 'testcraft_api', framework: 'playwright', language: 'typescript', method: 'contains',
     input: 'Generate positive and negative test ideas for the login form.', pageUrl: 'https://example.com/login',
     html: '<form aria-label="Sign in">\n  <label for="email">Email</label>\n  <input id="email" type="email" required>\n  <label for="password">Password</label>\n  <input id="password" type="password" required>\n  <button type="submit">Sign in</button>\n</form>',
     criteria: ['valid credentials', 'invalid email', 'empty password'],
-    actualOutput: 'Positive Tests:\n- Sign in with valid credentials and verify the account page is shown.\n\nNegative Tests:\n- Submit an invalid email and verify email validation is displayed.\n- Submit an empty password and verify the required-field message.',
   };
   const data = existing || (example ? sample : null);
   if (data) {
-    for (const key of ['name','type','source','input','html','model']) if (data[key] !== undefined) $(key).value = data[key];
+    for (const key of ['name','type','input','html','model']) if (data[key] !== undefined) $(key).value = data[key];
+    $('source').value = data.source === 'llm' ? 'llm' : 'testcraft_api';
     if (languages[data.framework]) $('framework').value = data.framework;
     setLanguages(data.language);
-    for (const [key,id] of [['pageUrl','page-url'],['actualOutput','actual-output']]) if (data[key] !== undefined) $(id).value = data[key];
+    if (data.pageUrl !== undefined) $('page-url').value = data.pageUrl;
     $('pom').checked = !!data.pom; $('from-ideas').checked = !!data.fromIdeas;
     $('ideas').value = data.ideas ?? (data.fromIdeas ? data.input : '') ?? '';
     criteria = criterionObjects(data);
@@ -373,7 +372,7 @@ async function loadWorkshop() {
   try {
     const imported = await api('/api/workshop-suite', { method: 'POST', body: '{}' });
     await loadLibrary(); $('filter-suite').value = imported.suite.id; renderSuites(); renderLibrary();
-    toast('Workshop suite ready. Loading examples does not call an LLM.');
+    toast('Workshop templates ready. Select Run to generate and evaluate with TestCraft.');
   } catch (e) { if (requestSession === session) error(e.message); }
   finally { $('workshop-button').disabled = false; }
 }
@@ -578,7 +577,7 @@ async function openWorkspace() {
   if (config.version !== 8 || !config.evaluationMethods?.hybrid) throw new Error('This page needs the updated backend. Restart the local server or refresh after deployment.');
   $('connection').textContent = '● Backend connected';
   $('setup-notice').hidden = true; error('');
-  if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can already save evaluations and use Rule-based grading with pasted outputs. Load example to try it.'; }
+  if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
   await Promise.all([loadLibrary(), loadRuns()]); await route();
   if (!session) return;
   $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;

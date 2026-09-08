@@ -161,11 +161,13 @@ export class Store {
   }
   importWorkshop(bundle, scope) {
     return this.transaction(() => {
-      const existing = this.suites(scope).find(suite => suite.seedKey === 'workshop-v1');
+      // A new input-only seed must never silently change older pasted cases into
+      // paid generation or overwrite participant edits and run snapshots.
+      const existing = this.suites(scope).find(suite => suite.seedKey === 'workshop-v2-live');
       if (existing) return { created: false, suite: existing, evaluations: this.evaluations(scope).filter(evaluation => evaluation.suiteId === existing.id) };
       requireObject(bundle, ['name', 'evaluations']);
       if (!Array.isArray(bundle.evaluations) || !bundle.evaluations.length) throw new AppError('Workshop import requires evaluations.');
-      const suite = { ...this.createSuite({ name: bundle.name }, scope), seedKey: 'workshop-v1' };
+      const suite = { ...this.createSuite({ name: bundle.name }, scope), seedKey: 'workshop-v2-live' };
       this.db.prepare('UPDATE suites SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(suite), suite.id, ...requireScope(scope));
       const evaluations = bundle.evaluations.map(data => this.#insertEvaluation(validateEvaluation({ ...data, suiteId: suite.id }), scope));
       return { created: true, suite, evaluations };

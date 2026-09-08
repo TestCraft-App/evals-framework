@@ -37,10 +37,10 @@ Each browser gets a **different anonymous workspace**. The server stores a hash 
 
 | Operation | Calls counted |
 | --- | --- |
-| Save a case, view results, load the model catalog | 0 |
-| Pasted output + Rule-based method | 0 |
+| Save a case, load example/suite, view results, load the model catalog | 0 |
+| Legacy pasted output + Rule-based method (backend compatibility only) | 0 |
 | TestCraft / backend LLM generation + text grading | 1 |
-| Pasted output + LLM as a judge | 1 |
+| Legacy pasted output + LLM as a judge (backend compatibility only) | 1 |
 | Generation + LLM as a judge | 2 |
 
 The backend atomically reserves the entire batch before accepting it, including simultaneous requests from different participants. An unaffordable batch returns 429 without starting a partial run. Every outbound model request is counted **before dispatch**; failures/timeouts still count because the provider may have processed them. Unattempted calls are released after errors or restart recovery. No credentials / no dispatched request means no consumed calls. Offline text grading still works when the allowance is exhausted; setting the limit to 0 permits only those runs.
@@ -62,25 +62,26 @@ GET `/healthz` checks database access without creating a session or contacting a
 ## Workshop flow
 
 1. Open the app; your workspace starts automatically. Select **New evaluation**. Step 1 has a horizontal parameter bar: **TestCraft endpoint**, output source, framework, and language. Ideas disables framework/language; code enables them.
-2. Fill **Eval name**, optional **Test description**, **HTML input**, and **Page URL**. TestCraft code generation requires the original page URL. Pasted output also needs what the extension actually generated. There is no Expected output field.
+2. Fill **Eval name**, optional **Test description**, **HTML input**, and **Page URL**. TestCraft code generation requires the original page URL. There is no Expected output or TestCraft output field: responses are generated on Run, not supplied when creating a case.
 3. Choose **Next**. Step 2 supports Rule-based → Contains / Does not contain / Exact match; Model-based → LLM as a judge; and **Hybrid** → a method per criterion. The grader dropdown is needed only when at least one criterion uses a model. Use **Add criteria** and optionally enable **Custom weights**. Every criterion returns Pass/Fail with evidence and a reason. Switching to Hybrid preserves the existing criteria and their methods; other method drafts remain separate. **Back** preserves both steps. One scroll area keeps the actions visible.
 4. **Create evaluation** saves a row in SQLite. It does not call a model.
-5. Select cases and choose **Run selected**. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
+5. Select cases and choose **Run selected**. Each run generates a fresh response through the selected source, then grades it. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
 6. Click a case name to edit it. **Save** updates the same case and increments its revision; **Save as new** saves the edited draft as a new case. **Duplicate** copies the saved definition without its run history. Earlier runs keep immutable snapshots, and old results are not shown as results of a newer revision. A stale Save returns a conflict instead of overwriting another tab's changes.
 7. To tidy up, select a finished run in **Runs → Delete run** and confirm. This permanently removes only that run's snapshots, outputs, scores, and evidence; the saved evaluations remain runnable. Cancel leaves everything unchanged. Queued/running runs cannot be deleted. The library shows the latest remaining run, or **Not run** if no history remains. Deleting history never refunds model calls.
 
-**Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it without LLM credentials or model calls. Opening the form attempts a read-only catalog request; catalog failure does not block text-based methods. Scores are calculated from actual text, not canned scenario results.
+**Load example** fills the ordinary form with synthetic login HTML, parameters, and Contains criteria. Its source is TestCraft v1 API, with no supplied answer. Saving makes no model call; Run needs working TestCraft generation and consumes one generation attempt. Opening the form attempts a read-only model catalog request. Literal criteria are teaching examples, not a guaranteed score.
 
 **Suites** are private, flat folders: create or rename a suite, assign evaluations in the form, and filter the library by suite. Deleting a suite moves its evaluations to Unfiled; it does not delete cases or runs. **Delete evaluation** requires confirmation and removes only the saved definition, never historical run snapshots or usage. Active runs block evaluation deletion.
 
-**Load workshop suite** imports eight explicitly synthetic SauceDemo-inspired exercises, without calling an LLM. Repeated clicks reuse the imported suite without overwriting edits. Five cases run with local rules; three use a model grader (one call each). See [the one-hour workshop guide](docs/workshop-exercises.md). They are teaching fixtures, not captured TestCraft output or executable tests verified against the live page.
+**Load workshop suite** imports eight input-only templates into **SauceDemo · TestCraft workshop**, without calling an LLM or creating runs. All use the same TestCraft generation flow as manual creation. Five grade with local rules; three add one model-grader call each. A full run uses **8 generation + 3 grading = 11** attempts. See [the one-hour workshop guide](docs/workshop-exercises.md). HTML is synthetic and simplified, not captured live SauceDemo HTML; no responses or grades are preloaded.
+
+The new `workshop-v2-live` seed imports separately from the previous pasted-output suite. Repeated loads reuse this new suite without overwriting participant edits. Old evaluations and runs remain untouched. The form has no pasted-source option; opening an old pasted case warns that **Save** or **Save as new** switches the saved definition to generation, adding one model call per run. Cancel makes no change. Historical run snapshots always keep their original output.
 
 ## How it contacts the LLM
 
 ```text
 Evaluation run
   ├─ Generate: TestCraft v1 API → TestCraft's configured LLM
-  │            OR paste output copied from the extension
   │            OR optional independent backend LLM adapter
   └─ Grade: Rule-based → local text checks
             OR Model-based → LLM as a judge → OPENAI_BASE_URL
@@ -111,7 +112,11 @@ Previously labeled **Model grade**, this is the same rubric-based evaluator (`me
 
 Set `OPENAI_API_KEY` in the backend `.env` and restart. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`. `JUDGE_MODEL` defaults to `gpt-4o-mini` and is overridable per evaluation. The model/provider must support Chat Completions **strict JSON-schema Structured Outputs**.
 
-The model grader receives optional description, HTML, page URL as context (not fetched), actual output, and only the model-based criteria. It receives framework/language only for code. It does not need a reference response. The strict response contains a boolean `passed`, evidence, and a reason for each ID—not a numeric score. The backend checks exact IDs, booleans, complete coverage, and nonempty explanations. A passed criterion must cite a verbatim excerpt from the actual output; invented evidence is a provider error, not a grade. This verifies the excerpt exists, not that the judge's reasoning is correct.
+The model grader receives optional description, HTML, page URL as context (not fetched), the actual output as numbered lines, and only the model-based criteria. It receives framework/language only for code. It does not need a reference response. The strict response contains a boolean `passed`, evidence, and a reason for each ID—not a numeric score. The backend checks exact IDs, booleans, complete coverage, and nonempty explanations.
+
+For **Pass**, the model returns 1–40 source line numbers (bounded by the actual line count), not copied code. The backend validates the references, extracts the original text, and displays it with `L1: …` labels. Stored checks include `evidenceLines` and `evidenceSource: "output_lines"`; only line endings normalize, and whitespace within each source line is preserved. Out-of-range references or exclusively blank lines are provider errors. This guarantees where the displayed excerpt came from, not that the judge chose relevant lines or reasoned correctly.
+
+For **Fail**, the model must describe the missing or contradicted behavior in nonempty evidence text and explain its verdict in `reason`. The JSON schema enforces those text requirements, including when no relevant behavior exists. Saved failed checks label their evidence source as `model_explanation`. Invalid provider responses produce field-specific errors without exposing the rejected content; no score is fabricated and no paid request is automatically retried. Existing run snapshots are unchanged.
 
 All model criteria share **one** model call. Rules run locally. The server calculates `100 × sum(passed weights) / sum(all weights)`, with every weight defaulting to 1. Optional weights range from 0.01 to 100. Overall Pass uses the fixed **80/100** policy; UI rounding must not change that decision. The threshold is not a form parameter and posted overrides are ignored. A rubric can still pass overall with individual failed criteria; choose weights deliberately and inspect each verdict.
 
@@ -123,7 +128,7 @@ This follows the [official Structured Outputs guide](https://developers.openai.c
 
 ### Other sources and methods
 
-- **Paste from TestCraft:** grade actual output copied from the extension without generating again.
+- **Legacy pasted records:** retained by the backend for existing definitions and historical runs, not offered in the creation UI, Load example, or the new workshop suite.
 - **Backend LLM adapter:** direct OpenAI-compatible generation with this project's own prompt. It is explicitly **not the TestCraft v1 prompt**; do not present it as evaluating the extension's generator.
 - **Exact match:** exactly one criterion containing the full text to match; 100 or 0. Normalizes CRLF and trims outer whitespace. Case, punctuation, and internal whitespace remain significant.
 - **Contains:** each criterion is a case-sensitive required text fragment, not a semantic instruction. Presence passes, absence fails. This measures text presence, not semantic correctness.
@@ -163,7 +168,7 @@ npm run test:e2e
 
 Backend tests cover automatic private sessions and ownership, cookie/CSRF/origin controls, rate limits, global atomic reservations, failed-call accounting, restart recovery, legacy migration, criteria arrays, the fixed policy, computed scores, catalog failure/secrecy, TestCraft streams, judge schema validation, and generator/judge separation. Run-deletion tests cover ownership, active-run protection, persistence after restart, latest-result recalculation, and unchanged call usage. Browser tests use automatic sessions in an isolated test workshop and cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, results in another tab, missing grader configuration, and deletion confirmation/cancellation/errors.
 
-Tests use temporary databases and mocked LLM responses; **they never consume model credits**. A live TestCraft + judge smoke test still needs working provider configuration.
+Tests use temporary databases and mocked LLM responses; **they never consume model credits**. Creation-flow tests check that manual/example payloads match, templates contain no answers, loading makes no generation calls, and Run uses the real adapter with injected provider responses. Historical pasted-answer fixtures live only in `tests/fixtures`, outside the Docker runtime. A live TestCraft + judge smoke test still needs working provider configuration.
 
 ## API
 

@@ -1,19 +1,20 @@
-// Teaching data only. All HTML and outputs are synthetic, simplified examples
-// inspired by SauceDemo, never captured TestCraft responses or live page HTML.
-// The page URL is context only; these fixtures are not an executable application.
-const pageUrl = 'https://www.saucedemo.com/';
+// Input-only teaching templates. Run sends this HTML to TestCraft; responses and
+// grading results belong to runs and are never preloaded in this runtime fixture.
+const pageUrl = 'https://www.saucedemo.com';
 const html = `<!doctype html>
 <!-- Synthetic, simplified fixture inspired by SauceDemo; not live HTML.
-     Templates illustrate alternate states, not a working login implementation. -->
+     These templates illustrate alternate states, not a working application.
+     Fictional workshop_user / workshop_password succeeds; wrong_password fails.
+     A missing password illustrates the required-password error below. -->
 <html lang="en">
   <head><title>Synthetic SauceDemo workshop fixture</title></head>
   <body>
     <form aria-label="Login">
       <label for="user-name">Username</label>
-      <input id="user-name" name="username" type="text">
+      <input id="user-name" name="username" data-test="username" type="text">
       <label for="password">Password</label>
-      <input id="password" name="password" type="password">
-      <button type="submit">Login</button>
+      <input id="password" name="password" data-test="password" type="password">
+      <button data-test="login-button" type="submit">Login</button>
     </form>
     <template data-workshop-state="success" data-example-path="/inventory.html">
       <h1>Products</h1>
@@ -27,145 +28,103 @@ const html = `<!doctype html>
   </body>
 </html>`;
 
-const ideasTask = 'Synthetic, simplified SauceDemo-inspired task: propose successful login, invalid password, and missing password scenarios, each with actions and an expected result. The illustrated success state uses /inventory.html and a Products heading; the other templates specify error text. Treat these as workshop assumptions, not verified live behavior.';
-const codeTask = 'Synthetic, simplified SauceDemo-inspired task: write Playwright TypeScript tests for successful login, invalid password, and missing password. Use the supplied controls and illustrated alternate states. Assume workshop_user / workshop_password succeeds; wrong_password is invalid. These are fictional credentials. Assert the success URL and Products heading, or the appropriate visible error. The HTML has no runtime; this exercise reviews code as text and does not run it against the page URL.';
+// Descriptions are grader context, not TestCraft generator prompts. The v1
+// routes receive HTML and code settings; only fromIdeas also sends selected ideas.
+const ideasContext = 'Grader context for synthetic, simplified SauceDemo-inspired HTML: review generated login ideas for grounded actions, successful login, invalid password, and missing password coverage with observable expected results. Credentials and alternate states in the HTML are fictional workshop assumptions. This description is not sent to TestCraft; changing it does not direct generation.';
+const codeContext = 'Grader context for synthetic, simplified SauceDemo-inspired HTML: review generated Playwright TypeScript code against the supplied controls and illustrated states. Fictional credentials and success/error behavior are specified in the HTML. Assess code as text; no generated test is executed and the page URL is not verified against this fixture. This description is not sent to TestCraft; HTML and, when enabled, selected ideas direct generation.';
+const selectedIdeas = [
+  'Test successful login with workshop_user / workshop_password: fill Username and Password, submit Login, and assert /inventory.html and a visible Products heading.',
+  'Test an invalid password with workshop_user / wrong_password: submit Login and assert a visible alert with Invalid credentials (synthetic).',
+  'Test a missing password: fill Username with workshop_user, leave Password empty, submit Login, and assert a visible alert with Password is required (synthetic).',
+].join('\n');
 
-const completeIdeas = `Synthetic, simplified example inspired by SauceDemo; not captured TestCraft output.
-1. With valid credentials (workshop_user / workshop_password), fill Username and Password and click Login; expect /inventory.html and a visible Products heading.
-2. With an invalid password (wrong_password), fill both fields and click Login; expect a visible alert reading "Invalid credentials (synthetic).".
-3. With a missing password, fill Username, leave Password empty and click Login; expect a visible alert reading "Password is required (synthetic).".`;
-
-const incompleteIdeas = `Synthetic, simplified example inspired by SauceDemo; not captured TestCraft output.
-1. With valid credentials (workshop_user / workshop_password), fill Username and Password and click Login; expect /inventory.html and a visible Products heading.`;
-
-const weakCode = `// Synthetic, simplified example inspired by SauceDemo; not captured TestCraft output.
-// Checklist words only: getByRole toHaveURL toBeVisible
-import { test, expect } from '@playwright/test';
-
-test('login placeholder', async ({ page }) => {
-  await page.goto('https://www.saucedemo.com/');
-  expect(true).toBe(true);
-});`;
-
-const strongCode = `// Synthetic, simplified example inspired by SauceDemo; not captured TestCraft output.
-// Fictional credentials and alternate states; this code has not been executed.
-import { test, expect } from '@playwright/test';
-
-test.beforeEach(async ({ page }) => {
-  await page.goto('https://www.saucedemo.com/');
-  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('workshop_user');
-});
-
-test('successful login', async ({ page }) => {
-  await page.getByLabel('Password', { exact: true }).fill('workshop_password');
-  await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await expect(page).toHaveURL('https://www.saucedemo.com/inventory.html');
-  await expect(page.getByRole('heading', { name: 'Products', exact: true })).toBeVisible();
-});
-
-test('invalid password', async ({ page }) => {
-  await page.getByLabel('Password', { exact: true }).fill('wrong_password');
-  await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByRole('alert')).toHaveText('Invalid credentials (synthetic).');
-});
-
-test('missing password', async ({ page }) => {
-  await page.getByLabel('Password', { exact: true }).fill('');
-  await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByRole('alert')).toHaveText('Password is required (synthetic).');
-});`;
-
-const semanticCriterion = 'The code implements all three requested login scenarios with executable field entry and submission, and meaningful awaited assertions for the illustrated success URL and heading or the appropriate visible error. Selectors must be supported by the supplied synthetic fixture. Comments listing API names, navigation alone, and assertions on constants do not establish these behaviors. Assess the code as an artifact; do not claim it ran or that the live site matches the fixture.';
-
-// Named, plain-data export for the server's suite loader. Validation supplies
-// schemaVersion 3, the evaluation family, and the fixed passing threshold.
+// Validation supplies schemaVersion 3, the evaluation family, and the fixed
+// passing threshold. These definitions follow the same save/run flow as manual input.
 export const workshopSuite = {
-  name: 'SauceDemo · Workshop',
+  name: 'SauceDemo · TestCraft workshop',
   evaluations: [
     {
-      name: '01 · Ideas baseline · complete coverage',
-      type: 'ideas', framework: '', language: '', source: 'pasted', method: 'contains',
+      name: '01 · Ideas · login controls',
+      type: 'ideas', framework: '', language: '', source: 'testcraft_api', method: 'contains',
       model: '', judgeModel: '', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: ideasTask, html, actualOutput: completeIdeas,
+      input: ideasContext, html,
       criteria: [
-        { text: 'valid credentials', method: 'contains', weight: 1 },
-        { text: 'invalid password', method: 'contains', weight: 1 },
-        { text: 'missing password', method: 'contains', weight: 1 },
+        { text: 'Username', method: 'contains', weight: 1 },
+        { text: 'Password', method: 'contains', weight: 1 },
+        { text: 'Login', method: 'contains', weight: 1 },
       ],
     },
     {
-      name: '02 · Ideas baseline · incomplete coverage',
-      type: 'ideas', framework: '', language: '', source: 'pasted', method: 'contains',
+      name: '02 · Ideas · error states',
+      type: 'ideas', framework: '', language: '', source: 'testcraft_api', method: 'contains',
       model: '', judgeModel: '', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: ideasTask, html, actualOutput: incompleteIdeas,
+      input: ideasContext, html,
       criteria: [
-        { text: 'valid credentials', method: 'contains', weight: 1 },
-        { text: 'invalid password', method: 'contains', weight: 1 },
-        { text: 'missing password', method: 'contains', weight: 1 },
+        { text: 'Invalid credentials', method: 'contains', weight: 1 },
+        { text: 'Password is required', method: 'contains', weight: 1 },
       ],
     },
     {
-      name: '03 · Code · keyword false positive',
-      type: 'code', framework: 'playwright', language: 'typescript', source: 'pasted', method: 'contains',
+      name: '03 · Code · Playwright structure',
+      type: 'code', framework: 'playwright', language: 'typescript', source: 'testcraft_api', method: 'contains',
       model: '', judgeModel: '', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: codeTask, html, actualOutput: weakCode,
+      input: codeContext, html,
       criteria: [
-        { text: 'getByRole', method: 'contains', weight: 1 },
-        { text: 'toHaveURL', method: 'contains', weight: 1 },
-        { text: 'toBeVisible', method: 'contains', weight: 1 },
+        { text: '@playwright/test', method: 'contains', weight: 1 },
+        { text: 'page.goto(', method: 'contains', weight: 1 },
+        { text: 'expect(', method: 'contains', weight: 1 },
       ],
     },
     {
-      name: '04 · Code · judge the same weak output',
-      type: 'code', framework: 'playwright', language: 'typescript', source: 'pasted', method: 'model_grade',
+      name: '04 · Code · behavior review',
+      type: 'code', framework: 'playwright', language: 'typescript', source: 'testcraft_api', method: 'model_grade',
       model: '', judgeModel: 'gpt-4o-mini', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: codeTask, html, actualOutput: weakCode,
+      input: codeContext, html,
       criteria: [
-        { text: semanticCriterion, method: 'model_grade', weight: 1 },
+        { text: 'Login tests contain executable field entry and submission using selectors supported by the supplied HTML. Comments, navigation alone, or invented controls do not establish the behavior.', method: 'model_grade', weight: 1 },
+        { text: 'Implemented login scenarios contain meaningful awaited assertions for the illustrated success URL and Products heading or the relevant visible error. Assertions on constants and claims that the live site was tested do not establish these outcomes.', method: 'model_grade', weight: 1 },
       ],
     },
     {
-      name: '05 · Code · forbidden fragments',
-      type: 'code', framework: 'playwright', language: 'typescript', source: 'pasted', method: 'not_contains',
+      name: '05 · Code · waiting and placeholders',
+      type: 'code', framework: 'playwright', language: 'typescript', source: 'testcraft_api', method: 'not_contains',
       model: '', judgeModel: '', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: codeTask, html, actualOutput: strongCode,
+      input: codeContext, html,
       criteria: [
         { text: 'waitForTimeout', method: 'not_contains', weight: 1 },
         { text: 'TODO', method: 'not_contains', weight: 1 },
       ],
     },
     {
-      name: '06 · Code · hybrid strong candidate',
-      type: 'code', framework: 'playwright', language: 'typescript', source: 'pasted', method: 'hybrid',
-      model: '', judgeModel: 'gpt-4o-mini', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: codeTask, html, actualOutput: strongCode,
+      name: '06 · Code · selected login scenarios',
+      type: 'code', framework: 'playwright', language: 'typescript', source: 'testcraft_api', method: 'hybrid',
+      model: '', judgeModel: 'gpt-4o-mini', pageUrl, pom: false, fromIdeas: true, ideas: selectedIdeas,
+      input: codeContext, html,
       criteria: [
-        { text: 'getByRole', method: 'contains', weight: 10 },
-        { text: 'toBeVisible', method: 'contains', weight: 10 },
-        { text: semanticCriterion, method: 'model_grade', weight: 80 },
+        { text: '@playwright/test', method: 'contains', weight: 10 },
+        { text: 'waitForTimeout', method: 'not_contains', weight: 10 },
+        { text: 'The code implements all three selected login ideas with executable field entry and submission, HTML-supported selectors, and meaningful awaited assertions for the success URL and heading or the appropriate visible error. Comments listing scenarios or API names are insufficient. Evaluate the artifact without claiming execution or verified live behavior.', method: 'model_grade', weight: 80 },
       ],
     },
     {
-      name: '07 · Code · hybrid weak candidate',
-      type: 'code', framework: 'playwright', language: 'typescript', source: 'pasted', method: 'hybrid',
+      name: '07 · Ideas · grounded coverage',
+      type: 'ideas', framework: '', language: '', source: 'testcraft_api', method: 'hybrid',
       model: '', judgeModel: 'gpt-4o-mini', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: codeTask, html, actualOutput: weakCode,
+      input: ideasContext, html,
       criteria: [
-        { text: 'getByRole', method: 'contains', weight: 10 },
-        { text: 'toBeVisible', method: 'contains', weight: 10 },
-        { text: semanticCriterion, method: 'model_grade', weight: 80 },
+        { text: 'CAPTCHA', method: 'not_contains', weight: 20 },
+        { text: 'The ideas cover successful login, an invalid password, and a missing password as distinct scenarios, each with concrete actions and an observable expected outcome grounded in the supplied HTML and its illustrated states. Do not treat invented controls or unsupported authentication features as existing behavior.', method: 'model_grade', weight: 80 },
       ],
     },
     {
-      name: '08 · Fixed label · exact match limits',
-      type: 'ideas', framework: '', language: '', source: 'pasted', method: 'exact_match',
-      model: '', judgeModel: '', pageUrl, pom: false, fromIdeas: false, ideas: '',
-      input: 'Synthetic, simplified SauceDemo-inspired formatting exercise: return only the fixed workshop label SYNTHETIC_SAUCEDEMO_LOGIN. This invented label is not captured TestCraft output and is not a normal free-form test idea.',
-      html, actualOutput: 'SYNTHETIC_SAUCEDEMO_LOGIN',
+      name: '08 · Code · page object structure',
+      type: 'code', framework: 'playwright', language: 'typescript', source: 'testcraft_api', method: 'contains',
+      model: '', judgeModel: '', pageUrl, pom: true, fromIdeas: true, ideas: selectedIdeas,
+      input: `${codeContext} Page Object Model is enabled; literal structure checks are only a starting point for reviewing reuse and behavior.`, html,
       criteria: [
-        { text: 'SYNTHETIC_SAUCEDEMO_LOGIN', method: 'exact_match', weight: 1 },
+        { text: 'class', method: 'contains', weight: 1 },
+        { text: '@playwright/test', method: 'contains', weight: 1 },
+        { text: 'expect(', method: 'contains', weight: 1 },
       ],
     },
   ],

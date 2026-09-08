@@ -141,7 +141,7 @@ test('hybrid rules with custom weights calculate Pass/Fail without a grader call
   await expect(page.locator('.check .badge.failed')).toHaveCount(1);
   await expect(page.locator('.score-explanation')).toContainText('Passed weight 3 / 6');
   const session = await (await page.request.get('/api/session')).json();
-  expect(session.budget.used).toBe(0);
+  expect(session.budget.used).toBe(1); // Generation, with no judge call.
 });
 
 test('hybrid model criteria enable the model dropdown and retain method-specific text', async ({ page }) => {
