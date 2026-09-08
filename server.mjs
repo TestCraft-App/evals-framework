@@ -8,6 +8,7 @@ import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
 import { createSessions } from './src/evals/sessions.mjs';
+import { loadRuntimeSecrets } from './src/runtime/secrets.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 
@@ -17,6 +18,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
   try { sessions = createSessions(store, env); } catch (error) { store.close(); throw error; }
   const engine = new Engine(store, env, fetchImpl, sessions.limit);
   const getModels = createModelCatalog(env, fetchImpl);
+  let stopping = false, shutdownPromise;
   const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -38,6 +40,18 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
     try {
       const url = new URL(req.url, 'http://localhost');
       sessions.checkOrigin(req, req.method === 'POST');
+      if (env.APP_ORIGIN?.startsWith('https://')) res.setHeader('strict-transport-security', 'max-age=31536000');
+      if (req.method === 'GET' && url.pathname === '/healthz') {
+        store.db.prepare('SELECT 1').get();
+        return json(res, engine.accepting && !stopping ? 200 : 503, {
+          status: engine.accepting && !stopping ? 'ok' : 'draining', idle: engine.idle,
+          release: /^[a-f0-9]{40}$/.test(env.APP_RELEASE || '') ? env.APP_RELEASE : 'local',
+        });
+      }
+      if (stopping && !['GET', 'HEAD'].includes(req.method)) {
+        res.setHeader('retry-after', '10');
+        throw new AppError('The server is restarting. Retry shortly.', 503);
+      }
       if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json')) throw new AppError('Use application/json.', 415);
       if (url.pathname === '/api/session') {
         if (req.method === 'GET') return json(res, 200, sessions.describe(sessions.read(req)));
@@ -94,14 +108,42 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
   // A failed second start on an occupied port must not interrupt the live server's runs.
   server.once('listening', () => store.recoverInterruptedRuns());
   server.on('close', () => store.close());
-  return { server, store, engine };
+  function shutdown() {
+    if (shutdownPromise) return shutdownPromise;
+    stopping = true;
+    shutdownPromise = engine.drain().then(() => new Promise((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve());
+      server.closeIdleConnections();
+    }));
+    return shutdownPromise;
+  }
+  return { server, store, engine, shutdown };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try { process.loadEnvFile(join(root, '.env')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  try { await loadRuntimeSecrets(process.env); }
+  catch (error) { console.error(error.message); process.exit(1); }
   const port = Number(process.env.PORT || 3000);
   const host = process.env.HOST || '127.0.0.1';
-  const { server, store } = createApp();
+  const { server, store, engine, shutdown } = createApp();
+  let shuttingDown = false;
+  const stop = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log('Finishing accepted evaluations before shutdown.');
+    const deadline = setTimeout(() => {
+      console.error('Shutdown deadline reached. Unfinished runs will be marked interrupted on restart.');
+      process.exit(1);
+    }, 180000);
+    shutdown().then(() => { clearTimeout(deadline); process.exitCode = 0; }, () => process.exit(1));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  if (process.platform !== 'win32') {
+    process.on('SIGUSR2', () => { void engine.drain(); });
+    process.on('SIGCONT', () => { if (!shuttingDown) engine.resume(); });
+  }
   server.on('error', error => {
     console.error(error.code === 'EADDRINUSE' ? `Port ${port} is already in use. Stop the previous server or set PORT in .env.` : error.message);
     if (!server.listening) store.close();

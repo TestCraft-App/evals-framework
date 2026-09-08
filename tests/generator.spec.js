@@ -149,7 +149,7 @@ test('wizard validates each step, preserves edits on Back, and saves criteria as
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('#step-2')).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Model grader' })).toHaveValue('gpt-4o-mini');
-  await expect(page.locator('#judge-model option[value="gpt-4-turbo"]')).toBeDisabled();
+  await expect(page.locator('#judge-model option[value="gpt-4-turbo"]')).toHaveJSProperty('disabled', true);
   await page.getByRole('combobox', { name: 'Model grader' }).selectOption('gpt-4o');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#form-error')).toContainText('Add at least one');

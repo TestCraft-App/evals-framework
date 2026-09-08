@@ -48,7 +48,7 @@ html { scrollbar-gutter: stable; }
 .step-number { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border: 1px solid #bacbc6; border-radius: 50%; font-size: .875rem; }
 .wizard-steps [aria-current=step] { color: var(--teal-dark); font-weight: 650; }
 .wizard-steps [aria-current=step] .step-number { color: white; background: var(--teal); border-color: var(--teal); }
-#wizard-body { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; min-height: 0; }
+#wizard-body { position: relative; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; min-height: 0; }
 .parameter-panel { padding: 20px 26px; background: #f3f8f6; border-bottom: 1px solid var(--line); }
 .parameter-panel h3, .criteria-section h3 { font-size: .9375rem; margin-bottom: 14px; }
 .parameter-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
@@ -101,5 +101,5 @@ html { scrollbar-gutter: stable; }
   .criteria-composer { flex-direction: column; }
   #evaluation-dialog .dialog-footer { flex-wrap: wrap; }
   #evaluation-dialog .dialog-footer > span:not(:empty) { flex-basis: 100%; }
-  .wizard-actions { margin-left: auto; flex-wrap: wrap; }
+  .wizard-actions { margin-left: auto; flex-wrap: wrap; max-width: 100%; }
 }

@@ -4,8 +4,16 @@ import { generateOutput } from './providers.mjs';
 import { grade } from './graders.mjs';
 
 export class Engine {
-  constructor(store, env, fetchImpl = fetch, limit = 200) { this.store = store; this.env = env; this.fetchImpl = fetchImpl; this.limit = limit; this.queue = []; this.active = 0; this.inFlight = new Set(); }
+  constructor(store, env, fetchImpl = fetch, limit = 200) { this.store = store; this.env = env; this.fetchImpl = fetchImpl; this.limit = limit; this.queue = []; this.active = 0; this.inFlight = new Set(); this.accepting = true; this.idleWaiters = new Set(); }
+  get idle() { return this.active === 0 && this.queue.length === 0; }
+  drain() {
+    this.accepting = false;
+    if (this.idle) return Promise.resolve();
+    return new Promise(resolve => this.idleWaiters.add(resolve));
+  }
+  resume() { this.accepting = true; }
   start(ids, scope) {
+    if (!this.accepting) throw new AppError('The server is preparing an update. Existing runs will finish; try starting a new run shortly.', 503);
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new AppError('Select between 1 and 50 distinct evaluations.');
     if (this.queue.length + this.active + ids.length > 100) throw new AppError('Run queue is full. Wait for the active runs to finish.', 429);
     const evaluations = ids.map(id => { const value = this.store.evaluation(id, scope); if (!value) throw new AppError('Evaluation not found.', 404); return { ...value, threshold: PASS_THRESHOLD }; });
@@ -20,6 +28,10 @@ export class Engine {
     while (this.active < 2 && this.queue.length) {
       const job = this.queue.shift(); this.active++;
       this.execute(job).catch(error => console.error('Evaluation persistence failure:', error.message)).finally(() => { this.inFlight.delete(job.item.evaluationId); this.active--; this.pump(); });
+    }
+    if (this.idle) {
+      for (const resolve of this.idleWaiters) resolve();
+      this.idleWaiters.clear();
     }
   }
   async execute({ run, item, scope }) {

@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!server.mjs
+!src/
+!src/evals/
+!src/evals/**
+!src/runtime/
+!src/runtime/**
+!public/
+!public/index.html
+!public/app.js
+!public/styles.css

@@ -1,12 +1,12 @@
 # TestCraft Evals
 
-A local evaluation framework for TestCraft test-idea and automation-code generation. Define a dataset, generate outputs through TestCraft v1, and inspect grading evidence.
+An evaluation framework for TestCraft test-idea and automation-code generation. Define a dataset, generate outputs through TestCraft v1, and inspect grading evidence.
 
 Target repository: [TestCraft-App/evals-framework](https://github.com/TestCraft-App/evals-framework). The original local folder remains `playwright-code-generator` so existing terminals and project links keep working. The package is now `testcraft-evals-framework`.
 
 ## Start locally
 
-Requires **Node.js 22.13 or newer**, including its built-in SQLite support. No separate database server or production dependencies.
+Requires **Node.js 22.13 or newer**, including its built-in SQLite support. Production uses Node.js 24 and the official AWS Secrets Manager SDK; no separate database server is needed.
 
 ```powershell
 npm install
@@ -49,9 +49,15 @@ The UI displays remaining calls and reservations, refreshed after starting/finis
 
 ### AWS deployment requirements (not deployed by this change)
 
+The [AWS deployment guide](docs/aws-deployment.md) describes the initial setup, required IAM permissions, GitHub variables and operational checks. The Docker image, deployment scripts and GitHub Actions workflow are prepared; cloud provisioning and pipeline activation are separate steps. `AWS_DEPLOY_ENABLED` must remain unset until the approved infrastructure is ready. Local data and `.env` are never packaged into the image.
+
 Use a single Node process/instance with a persistent SQLite volume, backups, and HTTPS termination. Set `HOST=0.0.0.0`, `NODE_ENV=production`, and **`APP_ORIGIN=https://your-exact-workshop-domain`**; the server refuses remote configuration without an explicit origin. HTTPS configuration sets a Secure, host-only `__Host-` session cookie, even behind a TLS-terminating proxy. The app does not trust forwarded host/protocol headers to make security decisions. Restrict direct access to the backend port at the network layer.
 
 Set LLM secrets in the backend runtime only. Keep the database outside an ephemeral deployment filesystem. GET `/api/session` is a public read-only health/session endpoint; POST creates or reuses an anonymous session; `/api/config` requires a session. The current queue/restart recovery is **single-process only**, not designed for horizontal replicas or zero-downtime overlapping workers. Add shared job processing and a suitable database before scaling that way. Application isolation and the call cap do not replace infrastructure hardening or a live provider rehearsal.
+
+In AWS mode, set `AWS_SECRET_ARN` and `AWS_REGION`. At startup the backend reads `AWSCURRENT` using the instance role. The JSON secret may contain only `OPENAI_API_KEY` and `TESTCRAFT_OPENAI_API_KEY`; malformed/unavailable secrets stop startup without printing their contents. Missing keys clear any stale local value. Rotation takes effect after a restart. Neither the secret values nor permanent AWS credentials belong in GitHub variables, Docker build arguments or the browser.
+
+GET `/healthz` checks database access without creating a session or contacting a model. It returns only readiness, whether the engine is idle, and a validated release identifier, with `Cache-Control: no-store`. On Linux, `SIGUSR2` pauses new runs while already accepted jobs finish; `SIGCONT` reopens admission if an update is cancelled. `SIGTERM`/`SIGINT` wait for accepted work before closing SQLite, with a three-minute emergency shutdown deadline. The deployment script drains first and cancels/resumes if it takes more than ten minutes, instead of force-stopping a busy queue. Updating the one instance still causes a short interruption; it is not zero-downtime hosting.
 
 ## Workshop flow
 
@@ -153,6 +159,7 @@ Tests use temporary databases and mocked LLM responses; **they never consume mod
 
 | Method | Route | Purpose |
 | --- | --- | --- |
+| GET | `/healthz` | Public readiness check; no sessions, secrets or model calls |
 | GET | `/api/session` | Current session + CSRF token + allowance, or anonymous bootstrap status; no writes |
 | POST | `/api/session` | Send `{}` to create an anonymous-session cookie or reuse the current valid session |
 | GET | `/api/config` | Non-secret configuration |
