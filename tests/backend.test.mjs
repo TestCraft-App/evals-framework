@@ -14,7 +14,7 @@ import { createModelCatalog } from '../src/evals/models.mjs';
 import { evaluationMethods, methods } from '../src/evals/methods.mjs';
 
 test('method catalog distinguishes families from implementations and derives family on the server', () => {
-  assert.deepEqual(methods, ['model_grade', 'contains', 'not_contains', 'exact_match']);
+  assert.deepEqual(methods, ['model_grade', 'contains', 'not_contains', 'exact_match', 'hybrid']);
   assert.equal(evaluationMethods.model_grade.family, 'model_based');
   assert.equal(evaluationMethods.model_grade.label, 'LLM as a judge');
   for (const method of ['contains', 'not_contains', 'exact_match']) {
@@ -37,13 +37,13 @@ const base = {
 
 test('two-step payload needs no reference or description and fixes the policy at 80', () => {
   const saved = validateEvaluation({ ...base, input: undefined, framework: undefined, language: undefined, threshold: 1, expectedOutput: 'discard this legacy field', pom: true, fromIdeas: true });
-  assert.equal(saved.input, ''); assert.equal(saved.threshold, 80); assert.equal(saved.schemaVersion, 2);
+  assert.equal(saved.input, ''); assert.equal(saved.threshold, 80); assert.equal(saved.schemaVersion, 3);
   assert.equal('expectedOutput' in saved, false);
   assert.equal(saved.framework, ''); assert.equal(saved.language, '');
   assert.equal(saved.fromIdeas, false); assert.equal(saved.pom, false);
   assert.equal(saved.model, ''); assert.equal(saved.judgeModel, '');
-  assert.deepEqual(saved.criteria, ['valid user', 'invalid password']);
-  assert.deepEqual(validateEvaluation({ ...base, criteria: [' one ', ' two '] }).criteria, ['one', 'two']);
+  assert.deepEqual(saved.criteria, ['valid user', 'invalid password'].map(text => ({ text, method: 'contains', weight: 1 })));
+  assert.deepEqual(validateEvaluation({ ...base, criteria: [' one ', ' two '] }).criteria.map(c => c.text), ['one', 'two']);
   assert.equal(validateEvaluation({ ...base, threshold: 100 }).threshold, 80);
   assert.throws(() => validateEvaluation({ ...base, type: 'code', source: 'testcraft_api', pageUrl: '' }), /Page URL/);
   assert.throws(() => validateEvaluation({ ...base, pageUrl: 'javascript:alert(1)' }), /HTTP or HTTPS/);
@@ -67,7 +67,7 @@ test('existing string-based evaluations still grade with their original referenc
     const input = JSON.parse(JSON.parse(options.body).messages[1].content);
     assert.equal(input.expectedOutput, legacy.expectedOutput);
     assert.deepEqual(input.criteria.map(c => c.text), ['Positive coverage', 'Negative coverage']);
-    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, score: 80, evidence: 'candidate', reason: 'Evidence reviewed' })) }) } }] });
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, passed: true, evidence: 'candidate', reason: 'Evidence reviewed' })) }) } }] });
   });
 });
 
@@ -214,7 +214,7 @@ test('Does not contain scores absent fragments locally with explicit per-fragmen
 
 test('an unknown grader never silently falls back to a paid model judge', async () => {
   let calls = 0;
-  for (const method of ['unknown', 'rule_based', '__proto__']) await assert.rejects(grade({ ...base, method }, 'output', { OPENAI_API_KEY: 'test-only' }, async () => { calls++; }), /Unsupported evaluation method/);
+  for (const method of ['unknown', 'rule_based', '__proto__']) await assert.rejects(grade({ ...base, method }, 'output', { OPENAI_API_KEY: 'test-only' }, async () => { calls++; }), /Invalid evaluation method/);
   assert.equal(calls, 0);
 });
 
@@ -241,7 +241,7 @@ test('TestCraft v1 uses the verified payload and handles arbitrarily fragmented 
   await assert.rejects(readTestcraftStream(new Response('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')), /complete output/);
 });
 
-test('real judge request includes rubric and validates each score; missing credentials never produce fake grades', async () => {
+test('real judge request includes rubric and validates each verdict; missing credentials never produce fake grades', async () => {
   const evaluation = { ...base, method: 'model_grade' };
   let calls = 0;
   const mockFetch = async (url, options) => {
@@ -250,10 +250,10 @@ test('real judge request includes rubric and validates each score; missing crede
     assert.equal(body.response_format.json_schema.strict, true);
     assert.equal('expectedOutput' in input, false); assert.equal(input.actualOutput, 'candidate');
     assert.equal(input.criteria.length, 2);
-    return Response.json({ model: 'judge-test', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks: [{ id: 'c1', score: 90, evidence: 'valid user', reason: 'Covered' }, { id: 'c2', score: 30, evidence: 'No negative case', reason: 'Missing' }] }) } }] });
+    return Response.json({ model: 'judge-test', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks: [{ id: 'c1', passed: true, evidence: 'candidate', reason: 'Covered' }, { id: 'c2', passed: false, evidence: 'No negative case', reason: 'Missing' }] }) } }] });
   };
   const result = await grade(evaluation, 'candidate', { OPENAI_API_KEY: 'test-only', OPENAI_BASE_URL: 'https://llm.example/v1' }, mockFetch);
-  assert.equal(result.score, 60); assert.equal(calls, 1);
+  assert.equal(result.score, 50); assert.equal(calls, 1);
   await assert.rejects(grade(evaluation, 'candidate', {}, mockFetch), /OPENAI_API_KEY/);
   assert.equal(calls, 1);
   await assert.rejects(grade(evaluation, 'candidate', { OPENAI_API_KEY: 'test' }, async () => Response.json({ choices: [{ message: { content: '{"checks":[]}' } }] })), /each criterion/);
@@ -288,7 +288,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     const input = JSON.parse(body.messages[1].content);
     assert.equal(input.actualOutput, 'valid user; invalid password');
     assert.equal('expectedOutput' in input, false);
-    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, score: 90, evidence: 'valid user; invalid password', reason: 'Both behaviors covered.' })) }) }, finish_reason: 'stop' }] });
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, passed: true, evidence: 'valid user; invalid password', reason: 'Both behaviors covered.' })) }) }, finish_reason: 'stop' }] });
   };
   const app = createApp({ dbPath: ':memory:', env: { TESTCRAFT_BASE_URL: 'https://testcraft.example', TESTCRAFT_OPENAI_API_KEY: 'generation-key', OPENAI_BASE_URL: 'https://judge.example/v1', OPENAI_API_KEY: 'judge-key' }, fetchImpl: mockFetch });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
@@ -302,7 +302,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     assert.equal((await post('/api/runs', { evaluationIds: [evaluation.id] })).status, 409);
     releaseGeneration();
     const run = await waitForRun(participant, runId);
-    assert.equal(run.items[0].status, 'passed'); assert.equal(run.items[0].score, 90);
+    assert.equal(run.items[0].status, 'passed'); assert.equal(run.items[0].score, 100);
     assert.equal(run.items[0].checks.length, 2); assert.equal(calls.length, 2);
     assert.equal(run.items[0].output, 'valid user; invalid password');
     assert.equal(JSON.stringify(run).includes('judge-key'), false);

@@ -3,7 +3,7 @@ export class AppError extends Error {
 }
 
 export const frameworks = { playwright: ['typescript', 'javascript', 'python', 'java', 'csharp'], cypress: ['typescript', 'javascript'], selenium: ['javascript', 'python', 'java', 'csharp'] };
-import { evaluationMethods, methods } from './methods.mjs';
+import { criterionMethods, evaluationMethods, methods, needsModelGrader } from './methods.mjs';
 export { methods } from './methods.mjs';
 export const sources = ['pasted', 'testcraft_api', 'llm'];
 export const PASS_THRESHOLD = 80;
@@ -20,6 +20,36 @@ function choice(value, options, field) {
   return value;
 }
 
+// Return new objects without modifying saved definitions or historical run snapshots.
+// Scalar definitions predate criteria lists: rules used expectedOutput, while
+// model graders used newline-separated rubric text and an optional reference.
+export function normalizeCriteria(evaluation, { allowLegacy = true } = {}) {
+  if (!evaluation || typeof evaluation !== 'object' || Array.isArray(evaluation)) throw new AppError('Expected an evaluation object.');
+  const method = choice(evaluation.method, methods, 'evaluation method');
+  let values = evaluation.criteria;
+  if (!Array.isArray(values) && allowLegacy && method !== 'hybrid') {
+    const reference = method === 'model_grade' ? values : evaluation.expectedOutput ?? values;
+    if (typeof reference === 'string') {
+      values = method === 'exact_match' ? [reference] : [...new Set(reference.split(/\r?\n/).map(value => value.trim()).filter(Boolean))];
+    }
+  }
+  if (!Array.isArray(values) || !values.length || values.length > 20) throw new AppError('Add between 1 and 20 criteria as a list.');
+  const criteria = Array.from(values, value => {
+    const legacyString = typeof value === 'string';
+    if (!legacyString && (!value || typeof value !== 'object' || Array.isArray(value))) throw new AppError('Each criterion must be text or an object with text, method, and an optional weight.');
+    const criterionMethod = choice(legacyString ? method : value.method, criterionMethods, 'criterion method');
+    if (method !== 'hybrid' && criterionMethod !== method) throw new AppError('Each criterion method must match the evaluation method unless it is hybrid.');
+    const text = string(legacyString ? value : value.text, 'Each criterion', 8000);
+    const weight = legacyString || value.weight === undefined ? 1 : value.weight;
+    if (!Number.isFinite(weight) || weight < 0.01 || weight > 100) throw new AppError('Each criterion weight must be a finite number from 0.01 to 100.');
+    return { text, method: criterionMethod, weight };
+  });
+  if (criteria.reduce((sum, criterion) => sum + criterion.text.length, 0) > 8000) throw new AppError('Keep all criteria within 8000 characters.');
+  if (new Set(criteria.map(criterion => JSON.stringify([criterion.method, criterion.text]))).size !== criteria.length) throw new AppError('Each criterion must have a distinct method and text.');
+  if (method === 'exact_match' && criteria.length !== 1) throw new AppError('Exact match requires exactly one criterion containing the complete text to match.');
+  return criteria;
+}
+
 export function validateEvaluation(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('Expected an evaluation object.');
   const type = choice(body.type, ['ideas', 'code'], 'TestCraft endpoint');
@@ -27,14 +57,12 @@ export function validateEvaluation(body) {
   const language = type === 'code' ? choice(body.language, frameworks[framework], 'framework/language combination') : '';
   const method = choice(body.method, methods, 'evaluation method');
   const source = choice(body.source, sources, 'output source');
-  if (!Array.isArray(body.criteria) || !body.criteria.length || body.criteria.length > 20) throw new AppError('Add between 1 and 20 criteria as a list of strings.');
-  const criteria = body.criteria.map(value => string(value, 'Each criterion', 8000));
-  if (criteria.join('').length > 8000) throw new AppError('Keep all criteria within 8000 characters.');
-  if (new Set(criteria).size !== criteria.length) throw new AppError('Each criterion must be distinct.');
-  if (method === 'exact_match' && criteria.length !== 1) throw new AppError('Exact match requires exactly one criterion containing the complete text to match.');
+  const criteria = normalizeCriteria(body, { allowLegacy: false });
   const model = source === 'pasted' ? '' : string(body.model, 'Generation model', 120, source === 'llm');
-  const judgeModel = method === 'model_grade' ? string(body.judgeModel, 'Model grader', 120) : '';
+  const judgeModel = needsModelGrader({ method, criteria }) ? string(body.judgeModel, 'Model grader', 120) : '';
   if (unsupportedGraderModel(judgeModel)) throw new AppError('This model does not support structured grading. Choose another model grader.');
+  const suiteId = string(body.suiteId, 'Suite ID', 36, false);
+  if (suiteId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suiteId)) throw new AppError('Suite ID must be a UUID or empty for an unfiled evaluation.');
   const pageUrl = string(body.pageUrl, 'Page URL', 2000, false);
   if (source === 'testcraft_api' && type === 'code' && !pageUrl) throw new AppError('Page URL is required for TestCraft code generation.');
   if (body.pom !== undefined && typeof body.pom !== 'boolean') throw new AppError('POM must be a boolean.');
@@ -45,7 +73,7 @@ export function validateEvaluation(body) {
   }
   const fromIdeas = type === 'code' && source === 'testcraft_api' && (body.fromIdeas ?? false);
   return {
-    schemaVersion: 2, name: string(body.name, 'Name', 140), type, framework, language, method, evaluationFamily: evaluationMethods[method].family, source, threshold: PASS_THRESHOLD,
+    schemaVersion: 3, name: string(body.name, 'Name', 140), suiteId, type, framework, language, method, evaluationFamily: evaluationMethods[method].family, source, threshold: PASS_THRESHOLD,
     input: string(body.input, 'Test description', 16000, false), html: string(body.html, 'HTML', 100000),
     actualOutput: source === 'pasted' ? string(body.actualOutput, 'TestCraft output', 60000) : '',
     ideas: fromIdeas ? string(body.ideas, 'Selected test ideas', 16000) : '',
