@@ -1,7 +1,7 @@
 import { test as base, expect } from '@playwright/test';
 import { once } from 'node:events';
 import { createApp } from '../server.mjs';
-import { workshopSuite } from '../src/evals/workshop.mjs';
+import { workshopSuite } from './fixtures/pasted-grader-cases.mjs';
 
 const evidence = 'The code has no field entry or submission for any of the requested login scenarios.';
 const reason = 'Navigation and an assertion on true do not verify a login outcome.';

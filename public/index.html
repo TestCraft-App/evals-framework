@@ -87,7 +87,7 @@
             <h3>Parameters</h3>
             <div class="parameter-row">
               <label>TestCraft endpoint<select id="type" name="type"><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-              <label>Output source<select id="source" name="source"><option value="testcraft_api">TestCraft v1 API</option><option value="pasted">Paste from TestCraft</option><option value="llm">Backend LLM adapter</option></select></label>
+              <label>Output source<select id="source" name="source"><option value="testcraft_api">TestCraft v1 API</option><option value="llm">Backend LLM adapter</option></select></label>
               <label>Framework<select id="framework" name="framework" aria-describedby="code-params-hint"><option value="playwright">Playwright</option><option value="cypress">Cypress</option><option value="selenium">Selenium</option></select></label>
               <label>Language<select id="language" name="language" aria-describedby="code-params-hint"></select></label>
             </div>
@@ -105,7 +105,6 @@
             <label>HTML input<textarea name="html" id="html" class="code-input" rows="5" maxlength="100000" required spellcheck="false" placeholder="Paste the selected element or page HTML from TestCraft…"></textarea><small>Context only. HTML and scripts are never rendered or executed.</small></label>
             <label>Page URL<input name="pageUrl" id="page-url" type="url" maxlength="2000" placeholder="https://www.saucedemo.com/"><small>Required for TestCraft code generation; optional for ideas.</small></label>
             <label id="ideas-field" hidden>Selected test ideas<textarea name="ideas" id="ideas" rows="3" maxlength="16000" placeholder="One test idea per line"></textarea></label>
-            <label id="actual-field" hidden>TestCraft output<textarea name="actualOutput" id="actual-output" class="code-input" rows="5" maxlength="60000" placeholder="Paste the actual ideas or code produced by the extension."></textarea></label>
           </div>
         </section>
         <section id="step-2" aria-label="Evaluation method and criteria" hidden>

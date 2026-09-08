@@ -5,7 +5,7 @@ import { criterionMethods, evaluationMethods, GRADING_VERSION, methods, needsMod
 import { grade } from '../src/evals/graders.mjs';
 import { Engine } from '../src/evals/engine.mjs';
 import { Store } from '../src/evals/store.mjs';
-import { workshopSuite } from '../src/evals/workshop.mjs';
+import { workshopSuite } from './fixtures/pasted-grader-cases.mjs';
 
 const base = { name: 'Binary rubric', type: 'ideas', source: 'pasted', method: 'contains', html: '<button>Login</button>',
   actualOutput: 'valid user; invalid password', criteria: ['valid user', 'invalid password'], judgeModel: 'gpt-4o-mini' };

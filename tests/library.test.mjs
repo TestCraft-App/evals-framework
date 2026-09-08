@@ -326,7 +326,7 @@ test('workshop import is private, idempotent across restart, preserves edits and
     assert.deepEqual(responses.map(res => res.status).sort(), [200, 201]);
     const imported = await responses.find(res => res.status === 201).json(), retry = await responses.find(res => res.status === 200).json();
     assert.deepEqual(Object.keys(imported).sort(), ['evaluations', 'suite']);
-    assert.equal(imported.suite.seedKey, 'workshop-v1'); assert.equal(retry.suite.id, imported.suite.id);
+    assert.equal(imported.suite.seedKey, 'workshop-v2-live'); assert.equal(retry.suite.id, imported.suite.id);
     assert.notEqual(imported.suite.id, existingGroup.id); assert.equal(imported.evaluations.length, workshopSuite.evaluations.length);
     assert.deepEqual(retry.evaluations.map(e => e.id).sort(), imported.evaluations.map(e => e.id).sort());
     for (const evaluation of imported.evaluations) {
@@ -355,6 +355,29 @@ test('workshop import is private, idempotent across restart, preserves edits and
     assert.equal(reimport.evaluations.length, workshopSuite.evaluations.length);
     assert.deepEqual(await restored.get('/api/evaluations/' + first.id), unlinked);
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('the live workshop import leaves earlier pasted suites, edits and run snapshots untouched', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  try {
+    const person = await client(app);
+    const originalSuite = await suite(person, 'Participant renamed the old workshop');
+    const oldSuite = { ...originalSuite, seedKey: 'workshop-v1' };
+    app.store.db.prepare('UPDATE suites SET data=? WHERE id=?').run(JSON.stringify(oldSuite), oldSuite.id);
+    const oldEvaluation = await save(person, { ...base, name: 'Participant edited old example', suiteId: oldSuite.id });
+    const oldRun = await run(person, oldEvaluation.id);
+    const imported = await result(person.post('/api/workshop-suite', {}), 201);
+    assert.equal(imported.suite.seedKey, 'workshop-v2-live');
+    assert.notEqual(imported.suite.id, oldSuite.id);
+    assert.ok(imported.evaluations.every(e => e.source === 'testcraft_api' && e.actualOutput === ''));
+    assert.deepEqual(await person.get('/api/suites/' + oldSuite.id), oldSuite);
+    assert.deepEqual(await person.get('/api/evaluations/' + oldEvaluation.id), oldEvaluation);
+    assert.deepEqual(await person.get('/api/runs/' + oldRun.id), oldRun);
+    const repeated = await result(person.post('/api/workshop-suite', {}), 200);
+    assert.equal(repeated.suite.id, imported.suite.id);
+    assert.equal(app.store.suites(person.scope).length, 2);
+    assert.equal((await person.get('/api/session')).budget.used, 0);
+  } finally { await close(app); }
 });
 
 test('workshop import rejects custom bodies and rolls back the suite and all fixtures on failure', async () => {
