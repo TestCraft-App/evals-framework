@@ -17,7 +17,6 @@ footer{display:flex;gap:18px;align-items:center;margin:25px 0 0;border-top:1px s
 /* Keep the workshop legible on a projector and with browser text enlargement. */
 body{font-size:1rem}
 .session-status{max-width:640px;margin:48px auto;padding:24px;color:var(--muted);line-height:1.6}.session-error{color:#9a3434;margin:12px 0}.session-error:empty{display:none}.session-status .button{margin-top:12px}
-.session-strip{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;color:var(--muted);font-size:.8125rem}.session-strip details{margin:0;padding:0;border:0;max-width:500px}.session-strip p{margin-top:8px;line-height:1.6}.session-strip code{overflow-wrap:anywhere}
 label,input:not([type=checkbox]),select,textarea,.filters label,.filters input,.filters select,.button,.button.small,.text-button,.tabs button,table,.eval-name,.badge,.selection-bar,.check-label{font-size:.875rem}
 .subtitle,.section-heading p,.empty-state p,.dialog-heading p:last-child,.checks h4,.event-log h4,.check-title,.check p,.event-log p,.muted{font-size:.875rem}
 .header-right,.workspace-badge,.eyebrow,.dialog-heading .eyebrow,.storage-badge,.notice,.error-banner,.stats article>span,.stats small,.tabs button span,th,.eval-id,.row-meta,.table-footer,.workflow-tip,label small,.field-hint,.run-history h3,.run-history button small,.run-top p,.run-top a,.run-item,.result-title p,.output-card h4,summary,.dialog-footer>span,footer,footer a,.toast{font-size:.75rem}
@@ -25,6 +24,30 @@ label,input:not([type=checkbox]),select,textarea,.filters label,.filters input,.
 .output-card pre,.context-pre,.check blockquote,.code-input{font-size:.8125rem}
 label small,.field-hint,.stats small,.row-meta,.eval-id,.table-footer,footer span{color:#647b71}
 .page-heading{margin-bottom:20px}.shell{padding-top:28px}
+.app-header { height: 64px; }
+.app-header .brand { gap: 10px; font-size: 19px; }
+.app-header .brand-icon { width: 34px; height: 34px; border-radius: 9px; font-size: 21px; }
+.app-header .header-right { gap: 20px; }
+.app-header .workspace-badge { letter-spacing: 0; }
+.page-heading { gap: 14px; flex-wrap: wrap; }
+.page-heading h1 { font-size: 28px; letter-spacing: -.8px; }
+.usage-badge { color: var(--muted); font-size: .8125rem; line-height: 1.5; }
+.section-heading > .actions { max-width: 100%; min-width: 0; flex-shrink: 1; }
+.table-scroll { position: relative; }
+.app-footer { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 16px 0; margin-top: 24px; font-size: .8125rem; }
+.app-footer .footer-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; min-width: 0; }
+.app-footer span { display: inline; }
+.app-footer .connection-status { color: var(--muted); white-space: nowrap; }
+.app-footer a { margin-left: auto; flex: none; font-size: inherit; white-space: nowrap; }
+.workspace-details { margin: 0; padding: 0; border: 0; max-width: 540px; }
+.workspace-details summary { font-size: .8125rem; }
+.workspace-details p { margin-top: 10px; line-height: 1.6; }
+.workspace-details code { overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .app-header .header-right { gap: 0; }
+  .page-heading h1 { font-size: 26px; }
+  .app-footer .footer-meta { gap: 10px; }
+}
 
 /* The dialog has one scroll owner; its heading, steps and actions stay in view. */
 body.modal-open { overflow: hidden; }
@@ -87,9 +110,37 @@ html { scrollbar-gutter: stable; }
 .criteria-composer .button { min-height: 42px; }
 #models-feedback { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 #models-feedback .text-button { padding: 0; }
+.suite-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; padding: 0 24px 20px; }
+.suite-toolbar > label { min-width: 200px; max-width: 360px; flex: 1; }
+.suite-toolbar .text-button { min-height: 38px; }
+.row-actions { display: flex; gap: 4px; align-items: center; }
+.actions { flex-wrap: wrap; }
+.weights-toggle { margin-top: 14px; margin-bottom: 0; font-weight: 400; }
+.criterion-method-field { max-width: 220px; margin-top: 18px; }
+#criteria-list.weighted li { grid-template-columns: 24px minmax(0, 1fr) 72px 28px; }
+#criteria-list.hybrid li { grid-template-columns: 24px minmax(0, 1fr) 150px 28px; }
+#criteria-list.hybrid.weighted li { grid-template-columns: 24px minmax(0, 1fr) 150px 72px 28px; }
+#criteria-list select, #criteria-list input { margin: 0; padding: 4px 6px; font-size: .8125rem; min-width: 0; }
+.criterion-kind, .criterion-weight { min-width: 0; }
+#criteria-list li > .icon-button { grid-column: -2 / -1; }
+.score-explanation { font-size: .875rem; line-height: 1.6; color: var(--muted); margin-bottom: 14px; }
+.check-title b { overflow-wrap: anywhere; min-width: 0; }
+.check-title .badge { align-self: start; white-space: nowrap; }
+.check .check-meta { color: var(--teal); font-size: .8125rem; }
+.compact-dialog { width: min(480px, calc(100% - 24px)); }
+.compact-body { padding: 20px 24px; font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
+.compact-dialog .dialog-heading h2 { font-size: 21px; }
+.wizard-actions { flex-wrap: wrap; }
+#evaluation-dialog .dialog-footer { flex-wrap: wrap; }
+#evaluation-dialog .dialog-footer > span:not(:empty) { flex-basis: 100%; max-width: 100%; }
 @media (max-width: 760px) {
   .parameter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .generation-options { align-items: start; gap: 18px; }
+  #criteria-list.hybrid li, #criteria-list.hybrid.weighted li { grid-template-columns: 24px minmax(0, 1fr) 72px 28px; }
+  #criteria-list.hybrid textarea { grid-column: 2 / 4; }
+  #criteria-list.hybrid .icon-button { grid-row: 1; }
+  #criteria-list.hybrid .criterion-kind { grid-column: 2; grid-row: 2; }
+  #criteria-list.hybrid .criterion-weight { grid-column: 3; grid-row: 2; }
 }
 @media (max-width: 520px) {
   #evaluation-dialog { width: calc(100% - 16px); max-height: calc(100dvh - 16px); }

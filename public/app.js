@@ -1,14 +1,23 @@
 const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Generate code', model_grade: 'LLM as a judge', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Does not contain', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
+names.hybrid = 'Hybrid';
 const languages = { playwright: ['typescript','javascript','python','java','csharp'], cypress: ['typescript','javascript'], selenium: ['javascript','python','java','csharp'] };
 const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], selected = new Set(), currentRun, currentItemId, polling, lastRunJson, pollFailures = 0, toastTimer;
-let formStep = 1, duplicate = false, criteria = [], modelCatalog, modelsLoading = false, desiredJudge = '';
+let formStep = 1, editing = null, savingEvaluation = false, criteria = [], modelCatalog, modelsLoading = false, desiredJudge = '';
+let suites = [], suiteEditing = null, savingSuite = false, libraryDeleteTarget = null, deletingLibrary = false;
 let session = null, sessionTimer, sessionSetup;
 let currentMethod = null, methodDrafts = new Map(), familyChoices = {};
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
 const canDeleteRun = run => ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
 const familyLabel = method => config?.evaluationMethods?.[method]?.familyLabel || (method === 'model_grade' ? 'Model-based' : 'Rule-based');
+const criterionObjects = evaluation => {
+  const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
+};
+const formNeedsGrader = () => $('method').value === 'model_grade' || ($('method').value === 'hybrid' && criteria.some(c => c.method === 'model_grade'));
+const scoreText = value => Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '—';
+function lockBody() { document.body.classList.toggle('modal-open', !!document.querySelector('dialog[open]')); }
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const badge = status => '<span class="badge ' + escape(status) + '">' + escape(names[status] || status) + '</span>';
 const date = value => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -27,10 +36,13 @@ async function api(path, options) {
 }
 function showConnecting() {
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
-  evaluations = []; runs = []; selected.clear(); currentRun = null; currentItemId = null; criteria = []; modelCatalog = null; modelsLoading = false;
+  evaluations = []; runs = []; suites = []; editing = null; selected.clear(); currentRun = null; currentItemId = null; criteria = []; modelCatalog = null; modelsLoading = false;
   methodDrafts.clear(); currentMethod = null; familyChoices = {};
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
+  ['suite-dialog', 'delete-library-dialog'].forEach(id => $(id).close());
+  suiteEditing = null; libraryDeleteTarget = null; savingEvaluation = false; savingSuite = false; deletingLibrary = false;
+  $('filter-suite').value = ''; renderSuites();
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
   $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
   $('session-message').textContent = 'Opening your private workspace…';
@@ -38,7 +50,8 @@ function showConnecting() {
 }
 function renderSession() {
   const b = session.budget;
-  $('model-allowance').textContent = `${b.remaining} / ${b.limit} model calls available · shared workshop allowance${b.reserved ? ` · ${b.reserved} reserved` : ''}`;
+  $('model-allowance').textContent = `${b.remaining} / ${b.limit} calls left${b.reserved ? ` · ${b.reserved} reserved` : ''}`;
+  $('model-allowance').title = 'Shared model-call allowance for the workshop, not a dollar limit.';
   $('workspace-id').textContent = session.workspaceId;
   $('session-expiry').textContent = new Date(session.expiresAt).toLocaleString();
 }
@@ -56,9 +69,9 @@ async function refreshSession() {
   scheduleSessionCheck();
 }
 async function loadLibrary() {
-  const request = ++libraryRequest, data = await api('/api/evaluations');
+  const request = ++libraryRequest, [data, groups] = await Promise.all([api('/api/evaluations'), api('/api/suites')]);
   if (request !== libraryRequest) return;
-  evaluations = data.evaluations;
+  evaluations = data.evaluations; suites = groups.suites; renderSuites();
   selected = new Set([...selected].filter(id => evaluations.some(e => e.id === id)));
   renderLibrary();
 }
@@ -73,6 +86,7 @@ function visibleEvaluations() {
     const status = e.latest?.status || 'not_run';
     return (!query || (e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
       && (!$('filter-type').value || e.type === $('filter-type').value)
+      && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
       && (!$('filter-method').value || e.method === $('filter-method').value || config.evaluationMethods[e.method]?.family === $('filter-method').value)
       && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
   }).sort((a,b) => $('sort').value === 'name' ? a.name.localeCompare(b.name) : $('sort').value === 'score' ? (b.latest?.score ?? -1) - (a.latest?.score ?? -1) : b.createdAt.localeCompare(a.createdAt));
@@ -85,11 +99,11 @@ function renderLibrary() {
   $('stat-score').textContent = scored.length ? Math.round(scored.reduce((sum,e) => sum + e.latest.score, 0) / scored.length) + '%' : '—';
   const visible = visibleEvaluations();
   $('evaluation-rows').innerHTML = visible.map(e => '<tr><td class="checkbox-cell"><input type="checkbox" aria-label="Select ' + escape(e.name) + '" data-select="' + e.id + '"' + (selected.has(e.id) ? ' checked' : '') + '></td>'
-    + '<td><button class="eval-name" data-inspect="' + e.id + '" title="Inspect or duplicate">' + escape(e.name) + '</button><div class="eval-id">EV-' + e.id.slice(0,8).toUpperCase() + '</div></td>'
+    + '<td><button class="eval-name" data-inspect="' + e.id + '" title="Edit evaluation">' + escape(e.name) + '</button><div class="eval-id">' + escape(suites.find(s => s.id === e.suiteId)?.name || 'Unfiled') + ' · v' + (e.revision || 1) + '</div></td>'
     + '<td>' + badge(e.type) + '</td><td>' + (e.type === 'ideas' ? '<span class="muted">Not applicable</span>' : escape(names[e.framework]) + '<span class="row-meta">' + escape(names[e.language]) + '</span>') + '</td>'
     + '<td>' + escape(names[e.method]) + '<span class="row-meta">' + escape(familyLabel(e.method)) + '</span></td><td>' + escape(names[e.source]) + '</td><td>' + badge(e.latest?.status || 'not_run') + '</td>'
-    + '<td class="score">' + (Number.isFinite(e.latest?.score) ? e.latest.score + '%' : '—') + '</td><td>' + escape(date(e.createdAt)) + '</td>'
-    + '<td>' + (e.latest ? '<button class="text-button" data-run-link="' + e.latest.runId + '">View run ↗</button>' : '<button class="text-button" data-run-one="' + e.id + '">Run →</button>') + '</td></tr>').join('');
+    + '<td class="score">' + (Number.isFinite(e.latest?.score) ? scoreText(e.latest.score) + '%' : '—') + '</td><td>' + escape(date(e.createdAt)) + '</td>'
+    + '<td><div class="row-actions">' + (e.latest ? '<button class="text-button" data-run-link="' + e.latest.runId + '">View run ↗</button>' : '<button class="text-button" data-run-one="' + e.id + '">Run →</button>') + '<button class="text-button" data-inspect="' + e.id + '" aria-label="Edit ' + escape(e.name) + '">Edit</button><button class="text-button" data-duplicate-evaluation="' + e.id + '" aria-label="Duplicate ' + escape(e.name) + '">Duplicate</button><button class="text-button danger" data-delete-evaluation="' + e.id + '" aria-label="Delete ' + escape(e.name) + '">Delete</button></div></td></tr>').join('');
   $('empty-library').hidden = visible.length > 0;
   $('empty-library').querySelector('h3').textContent = evaluations.length ? 'No evaluations match these filters.' : 'Your first evaluation starts here.';
   $('filtered-count').textContent = visible.length + ' of ' + evaluations.length + ' evaluations';
@@ -111,25 +125,29 @@ function setLanguages(preferred = $('language').value) {
 function selectMethod(method, preserveDraft = true) {
   const definition = config.evaluationMethods[method];
   if (!definition) return;
-  if (preserveDraft && currentMethod) methodDrafts.set(currentMethod, { criteria: [...criteria], draft: $('criterion-draft').value });
+  const previous = currentMethod;
+  if (preserveDraft && currentMethod) methodDrafts.set(currentMethod, { criteria: structuredClone(criteria), draft: $('criterion-draft').value });
   $('method-family').value = definition.family;
   $('method').innerHTML = Object.entries(config.evaluationMethods).filter(([, value]) => value.family === definition.family).map(([id, value]) => '<option value="' + escape(id) + '">' + escape(value.label) + '</option>').join('');
   $('method').value = method;
   familyChoices[definition.family] = method; currentMethod = method;
   if (preserveDraft) {
-    const savedDraft = methodDrafts.get(method);
-    criteria = [...(savedDraft?.criteria || [])]; $('criterion-draft').value = savedDraft?.draft || '';
+    const savedDraft = methodDrafts.get(method) || (method === 'hybrid' ? methodDrafts.get(previous) : null);
+    criteria = structuredClone(savedDraft?.criteria || []); $('criterion-draft').value = savedDraft?.draft || '';
+    if (method === 'hybrid' && previous && previous !== 'hybrid') $('criterion-method').value = previous;
   }
   renderCriteria(); syncForm();
 }
 function syncForm() {
   const source = $('source').value, method = $('method').value, code = $('type').value === 'code';
   const definition = config?.evaluationMethods?.[method];
+  const judge = formNeedsGrader();
   if (source === 'llm' && !$('model').value) $('model').value = config?.model || 'gpt-4o-mini';
   $('actual-field').hidden = source !== 'pasted'; $('actual-output').disabled = source !== 'pasted'; $('actual-output').required = source === 'pasted';
   $('model').disabled = source === 'pasted'; $('model').required = source === 'llm';
-  $('judge-model').disabled = method !== 'model_grade' || modelsLoading; $('judge-model').required = method === 'model_grade';
-  $('models-feedback').hidden = method !== 'model_grade';
+  $('judge-model').disabled = !judge || modelsLoading; $('judge-model').required = judge;
+  $('models-feedback').hidden = !judge;
+  $('criterion-method-field').hidden = method !== 'hybrid';
   $('framework').disabled = !code; $('language').disabled = !code;
   $('pom').disabled = !code || source !== 'testcraft_api'; $('from-ideas').disabled = !code || source !== 'testcraft_api';
   $('page-url').required = source === 'testcraft_api' && code;
@@ -142,9 +160,9 @@ function syncForm() {
     : 'Calls /api/generate-ideas with the HTML. Description is evaluator context, not an extra instruction to TestCraft.';
   $('method-hint').textContent = definition?.description || '';
   $('method-limitation').textContent = definition?.limitation || '';
-  $('grading-cost').textContent = method === 'model_grade' ? 'Grading: 1 model call · Non-deterministic' + (!config?.llmReady ? ' · Requires OPENAI_API_KEY in the backend' : '') : 'Grading: 0 model calls · Deterministic for the same output and criteria';
+  $('grading-cost').textContent = judge ? 'Grading: 1 model call for all model criteria' + (!config?.llmReady ? ' · Model grader not configured' : '') : 'Grading: 0 model calls · Deterministic for the same output and criteria';
   $('criteria-hint').textContent = definition?.criteriaHint || '';
-  $('criterion-draft').placeholder = definition?.placeholder || '';
+  $('criterion-draft').placeholder = (method === 'hybrid' ? config?.evaluationMethods?.[$('criterion-method').value] : definition)?.placeholder || '';
   $('criteria-empty').textContent = method === 'model_grade' ? 'What makes a good response? Add your first quality criterion.' : method === 'not_contains' ? 'Add the first text fragment that must not appear.' : method === 'exact_match' ? 'Add the complete text that the output must match.' : 'Add the first text fragment that must appear.';
   updateCriteriaState();
   resizeTextareas();
@@ -163,7 +181,8 @@ function setStep(step, focus = true) {
     else $('step-indicator-' + n).removeAttribute('aria-current');
   }
   $('back-step').hidden = step === 1;
-  $('save-evaluation').textContent = step === 1 ? 'Next →' : duplicate ? 'Save as new evaluation' : 'Create evaluation';
+  $('save-evaluation').textContent = step === 1 ? 'Next →' : editing ? 'Save' : 'Create evaluation';
+  $('save-as-new').hidden = step === 1 || !editing;
   $('form-error').textContent = ''; $('wizard-body').scrollTop = 0;
   resizeTextareas();
   if (focus) $(step === 1 ? 'name' : 'method-family').focus();
@@ -175,15 +194,23 @@ function updateCriteriaState() {
   $('add-criterion').disabled = full;
 }
 function renderCriteria() {
-  $('criteria-list').innerHTML = criteria.map((value, index) => '<li><span class="criterion-number" aria-hidden="true">' + (index + 1) + '</span><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value) + '</textarea><button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></li>').join('');
+  const hybrid = $('method').value === 'hybrid', weighted = $('use-weights').checked;
+  $('criteria-list').classList.toggle('weighted', weighted); $('criteria-list').classList.toggle('hybrid', hybrid);
+  $('criteria-list').innerHTML = criteria.map((value, index) => '<li><span class="criterion-number" aria-hidden="true">' + (index + 1) + '</span><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea>'
+    + (hybrid ? '<label class="criterion-kind"><span class="sr-only">Method for criterion ' + (index + 1) + '</span><select data-criterion-method="' + index + '">' + ['model_grade', 'contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (value.method === method ? ' selected' : '') + '>' + escape(names[method]) + '</option>').join('') + '</select></label>' : '')
+    + (weighted ? '<label class="criterion-weight"><span class="sr-only">Weight for criterion ' + (index + 1) + '</span><input type="number" aria-label="Weight for criterion ' + (index + 1) + '" data-criterion-weight="' + index + '" min="0.01" max="100" step="0.01" required value="' + escape(value.weight) + '"></label>' : '')
+    + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></li>').join('');
+  $('score-formula').textContent = weighted ? 'Score = passed weight / total weight × 100. A larger weight gives that criterion more influence.' : 'Score = passed criteria / total criteria × 100. Every criterion returns Pass or Fail.';
   updateCriteriaState(); resizeTextareas();
 }
 function addCriterion() {
   const value = $('criterion-draft').value.trim();
   if (!value) { $('form-error').textContent = 'Write a criterion before adding it.'; $('criterion-draft').focus(); return false; }
   if (criteria.length >= ($('method').value === 'exact_match' ? 1 : 20)) { $('form-error').textContent = $('method').value === 'exact_match' ? 'Exact match uses exactly one criterion.' : 'Use at most 20 criteria.'; return false; }
-  if (criteria.join('').length + value.length > 8000) { $('form-error').textContent = 'Keep all criteria within 8000 characters.'; return false; }
-  criteria.push(value); $('criterion-draft').value = ''; $('form-error').textContent = ''; renderCriteria();
+  if (criteria.map(c => c.text).join('').length + value.length > 8000) { $('form-error').textContent = 'Keep all criteria within 8000 characters.'; return false; }
+  const method = $('method').value === 'hybrid' ? $('criterion-method').value : $('method').value;
+  if (criteria.some(c => c.method === method && c.text.trim() === value)) { $('form-error').textContent = 'This criterion is already in the list.'; return false; }
+  criteria.push({ text: value, method, weight: 1 }); $('criterion-draft').value = ''; $('form-error').textContent = ''; renderCriteria(); syncForm();
   if (!$('criterion-draft').disabled) $('criterion-draft').focus();
   else $('criterion-' + (criteria.length - 1)).focus();
   return true;
@@ -219,8 +246,13 @@ function openForm(example = false, existing) {
   if (!session || !config) return;
   $('evaluation-form').reset(); $('form-error').textContent = '';
   currentMethod = null; methodDrafts.clear(); familyChoices = {};
-  duplicate = Boolean(existing);
-  $('dialog-title').textContent = existing ? 'Inspect / duplicate evaluation' : 'New evaluation';
+  editing = existing ? structuredClone(existing) : null;
+  $('dialog-title').textContent = existing ? 'Edit evaluation' : 'New evaluation';
+  $('edit-version').hidden = !editing;
+  $('edit-version').textContent = editing ? 'Version ' + (editing.revision || 1) + ' · Previous runs keep their original inputs and results.' : '';
+  $('duplicate-evaluation').hidden = !editing; $('delete-evaluation').hidden = !editing;
+  setSavingEvaluation(false); renderSuites();
+  $('evaluation-suite').value = existing?.suiteId || (suites.some(s => s.id === $('filter-suite').value) ? $('filter-suite').value : '');
   $('model').value = ''; desiredJudge = existing?.judgeModel || config.judgeModel;
   criteria = [];
   setLanguages('typescript');
@@ -239,7 +271,8 @@ function openForm(example = false, existing) {
     for (const [key,id] of [['pageUrl','page-url'],['actualOutput','actual-output']]) if (data[key] !== undefined) $(id).value = data[key];
     $('pom').checked = !!data.pom; $('from-ideas').checked = !!data.fromIdeas;
     $('ideas').value = data.ideas ?? (data.fromIdeas ? data.input : '') ?? '';
-    criteria = Array.isArray(data.criteria) ? [...data.criteria] : data.method === 'exact_match' ? [data.expectedOutput || ''] : (data.method === 'contains' ? data.expectedOutput || '' : data.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    criteria = criterionObjects(data);
+    $('use-weights').checked = criteria.some(c => c.weight !== 1);
   }
   selectMethod(data?.method || 'model_grade', false); renderModelOptions(); syncForm(); setStep(1, false);
   $('evaluation-dialog').showModal(); document.body.classList.add('modal-open'); resizeTextareas(); $('name').focus();
@@ -247,6 +280,7 @@ function openForm(example = false, existing) {
 }
 async function saveEvaluation(event) {
   event.preventDefault(); $('form-error').textContent = '';
+  if (savingEvaluation) return;
   if (!validateStep(1)) return;
   if (formStep === 1) { setStep(2); return; }
   if ($('criterion-draft').value.trim() && !addCriterion()) return;
@@ -255,16 +289,93 @@ async function saveEvaluation(event) {
     $('form-error').textContent = $('method').value === 'exact_match' ? 'Exact match needs exactly one criterion. Edit or remove the extra items.' : 'Add at least one evaluation criterion.';
     $('criterion-draft').focus(); return;
   }
-  if ($('method').value === 'model_grade' && (modelsLoading || !$('judge-model').value)) { $('form-error').textContent = 'Wait for the models to load, then select a model grader.'; return; }
-  $('save-evaluation').disabled = true;
+  if (formNeedsGrader() && (modelsLoading || !$('judge-model').value)) { $('form-error').textContent = 'Wait for the models to load, then select a model grader.'; return; }
+  const target = editing, requestSession = session, asNew = event.submitter?.id === 'save-as-new';
+  setSavingEvaluation(true);
   const payload = Object.fromEntries(new FormData($('evaluation-form')));
-  payload.criteria = criteria.map(value => value.trim());
+  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: $('use-weights').checked ? value.weight : 1 }));
   payload.pom = !$('pom').disabled && $('pom').checked; payload.fromIdeas = !$('from-ideas').disabled && $('from-ideas').checked;
+  if (target && !asNew) payload.revision = target.revision || 1;
+  if (asNew && payload.name === target.name) payload.name = payload.name.slice(0, 133) + ' (copy)';
+  let saved = false;
   try {
-    await api('/api/evaluations', { method: 'POST', body: JSON.stringify(payload) });
-    $('evaluation-dialog').close(); await loadLibrary(); toast('Evaluation saved. Select it to run.');
-  } catch (e) { $('form-error').textContent = e.message; }
-  finally { $('save-evaluation').disabled = false; }
+    await api('/api/evaluations' + (target && !asNew ? '/' + target.id : ''), { method: target && !asNew ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    saved = true; $('evaluation-dialog').close(); await loadLibrary(); toast(target && !asNew ? 'Changes saved. Run this version to evaluate it.' : 'Evaluation saved. Select it to run.');
+  } catch (e) { if (requestSession === session) { if (saved) error('Saved, but the library could not refresh. Reload the page.'); else $('form-error').textContent = e.status === 409 ? e.message + ' Your draft is preserved. Save as new, or reopen the evaluation to load its latest version.' : e.message; } }
+  finally { if (requestSession === session) setSavingEvaluation(false); }
+}
+function setSavingEvaluation(busy) {
+  savingEvaluation = busy;
+  ['save-evaluation','save-as-new','duplicate-evaluation','delete-evaluation','close-dialog','cancel-dialog','back-step'].forEach(id => { $(id).disabled = busy; });
+}
+function renderSuites() {
+  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">Unfiled</option>'], ['evaluation-suite', '<option value="">Unfiled</option>']]) {
+    const current = $(id).value;
+    $(id).innerHTML = empty + suites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
+    if ([...$(id).options].some(o => o.value === current)) $(id).value = current;
+  }
+  const hasSuite = suites.some(s => s.id === $('filter-suite').value);
+  $('rename-suite').disabled = !hasSuite; $('delete-suite').disabled = !hasSuite;
+}
+function openSuiteForm(existing = null) {
+  suiteEditing = existing; $('suite-form').reset(); $('suite-error').textContent = '';
+  $('suite-title').textContent = existing ? 'Rename suite' : 'New suite'; $('suite-name').value = existing?.name || '';
+  $('suite-dialog').showModal(); lockBody(); $('suite-name').focus();
+}
+async function saveSuite(event) {
+  event.preventDefault(); if (savingSuite || !$('suite-form').reportValidity()) return;
+  const target = suiteEditing, requestSession = session;
+  savingSuite = true; $('save-suite').disabled = true; $('cancel-suite').disabled = true; $('suite-error').textContent = '';
+  let saved = false;
+  try {
+    const result = await api('/api/suites' + (target ? '/' + target.id : ''), { method: target ? 'PUT' : 'POST', body: JSON.stringify({ name: $('suite-name').value.trim(), ...(target ? { revision: target.revision || 1 } : {}) }) });
+    saved = true; $('suite-dialog').close(); await loadLibrary(); $('filter-suite').value = result.id; renderSuites(); renderLibrary(); toast('Suite saved.');
+  } catch (e) { if (requestSession === session) { if (saved) error('Suite saved. Reload to refresh the library.'); else $('suite-error').textContent = e.message; } }
+  finally { if (requestSession === session) { savingSuite = false; $('save-suite').disabled = false; $('cancel-suite').disabled = false; } }
+}
+async function duplicateEvaluation(id) {
+  if (savingEvaluation) return;
+  const requestSession = session; setSavingEvaluation(true); error('');
+  let copy;
+  try {
+    const original = evaluations.find(e => e.id === id);
+    copy = await api('/api/evaluations/' + id + '/duplicate', { method: 'POST', body: JSON.stringify(original ? { name: original.name.slice(0, 133) + ' (copy)' } : {}) });
+    await loadLibrary();
+    $('evaluation-dialog').close(); openForm(false, copy); toast('Duplicate created. Edit it to make a variant.');
+  } catch (e) { if (requestSession === session) error(copy ? 'Duplicate saved, but the library could not refresh. Reload the page.' : e.message); }
+  finally { if (requestSession === session) setSavingEvaluation(false); }
+}
+function askDeleteLibrary(kind, record) {
+  if (!record || deletingLibrary || savingEvaluation) return;
+  libraryDeleteTarget = { kind, record, session };
+  $('delete-library-title').textContent = kind === 'suite' ? 'Delete suite?' : 'Delete evaluation?';
+  $('delete-library-name').textContent = record.name;
+  $('delete-library-description').textContent = kind === 'suite' ? 'Only this folder is removed. Its evaluations move to Unfiled; all runs remain saved.' : 'This definition will be permanently removed. Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
+  $('delete-library-error').textContent = ''; $('confirm-delete-library').textContent = kind === 'suite' ? 'Delete suite' : 'Delete evaluation';
+  $('delete-library-dialog').showModal(); lockBody(); $('cancel-delete-library').focus();
+}
+async function deleteLibrary(event) {
+  event.preventDefault(); const target = libraryDeleteTarget;
+  if (!target || target.session !== session || deletingLibrary) return;
+  deletingLibrary = true; $('confirm-delete-library').disabled = true; $('cancel-delete-library').disabled = true; $('delete-library-error').textContent = '';
+  let deleted = false;
+  try {
+    await api('/api/' + (target.kind === 'suite' ? 'suites' : 'evaluations') + '/' + target.record.id, { method: 'DELETE' });
+    deleted = true; $('delete-library-dialog').close();
+    if (target.kind === 'evaluation' && editing?.id === target.record.id) $('evaluation-dialog').close();
+    await loadLibrary(); toast(target.kind === 'suite' ? 'Suite deleted. Its evaluations are now unfiled.' : 'Evaluation deleted. Previous runs are unchanged.');
+  } catch (e) { if (target.session === session) { if (deleted) error('Deleted. Reload to refresh the library.'); else $('delete-library-error').textContent = e.message; } }
+  finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; } }
+}
+async function loadWorkshop() {
+  if ($('workshop-button').disabled) return;
+  const requestSession = session; $('workshop-button').disabled = true; error('');
+  try {
+    const imported = await api('/api/workshop-suite', { method: 'POST', body: '{}' });
+    await loadLibrary(); $('filter-suite').value = imported.suite.id; renderSuites(); renderLibrary();
+    toast('Workshop suite ready. Loading examples does not call an LLM.');
+  } catch (e) { if (requestSession === session) error(e.message); }
+  finally { $('workshop-button').disabled = false; }
 }
 async function startRun(ids) {
   error(''); $('run-selected').disabled = true;
@@ -291,12 +402,12 @@ function renderRunDetail() {
   const active = activeStatuses.includes(item.status);
   $('run-detail').innerHTML = '<div class="run-top"><div><h3>Run ' + run.id.slice(0,8) + ' ' + badge(run.status) + '</h3><p>' + escape(date(run.createdAt)) + ' · ' + run.items.length + ' saved evaluation snapshots</p></div><div class="run-actions"><a href="#runs/' + run.id + '" target="_blank" rel="noopener">Open in new tab ↗</a><button class="button small danger" data-delete-run="' + run.id + '"' + (canDeleteRun(run) ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '>Delete run</button></div></div>'
     + '<div class="run-items">' + run.items.map(x => '<button class="run-item ' + (x.id === item.id ? 'active' : '') + '" data-item="' + x.id + '">' + escape(x.evaluation.name) + ' · ' + escape(names[x.status] || x.status) + '</button>').join('') + '</div>'
-    + '<div class="result-body"><div class="result-title"><div><h3>' + escape(e.name) + '</h3><p>' + escape(names[e.type]) + ' · ' + escape(familyLabel(e.method)) + ' / ' + escape(names[e.method]) + '</p></div><div class="result-score">' + (Number.isFinite(item.score) ? item.score + '<small> / 100</small>' : '—') + '</div></div>'
+    + '<div class="result-body"><div class="result-title"><div><h3>' + escape(e.name) + '</h3><p>' + escape(names[e.type]) + ' · ' + escape(familyLabel(e.method)) + ' / ' + escape(names[e.method]) + ' · v' + (e.revision || 1) + '</p></div><div class="result-score">' + (Number.isFinite(item.score) ? scoreText(item.score) + '<small> / 100</small>' : '—') + '</div></div>'
     + (active ? '<p class="muted"><span class="spinner" aria-hidden="true"></span>' + escape(names[item.status]) + '… Results update automatically.</p>' : '<p>' + badge(item.status) + ' <span class="muted">' + (item.durationMs ?? 0) + ' ms</span></p>')
     + (item.error ? '<div class="error-banner" role="alert">' + escape(item.error) + '</div>' : '')
-    + '<div class="comparison"><section class="output-card"><h4>' + (Array.isArray(e.criteria) ? 'EVALUATION CRITERIA' : 'LEGACY REFERENCE') + '</h4><pre>' + escape(Array.isArray(e.criteria) ? e.criteria.map((criterion, index) => (index + 1) + '. ' + criterion).join('\n\n') : e.expectedOutput) + '</pre></section><section class="output-card"><h4>ACTUAL OUTPUT</h4><pre>' + escape(item.output ?? 'Waiting for output…') + '</pre></section></div>'
+    + '<div class="comparison"><section class="output-card"><h4>EVALUATION CRITERIA</h4><pre>' + escape(criterionObjects(e).map((c, index) => (index + 1) + '. ' + c.text + '\n   ' + (names[c.method] || c.method) + ' · weight ' + c.weight).join('\n\n')) + '</pre></section><section class="output-card"><h4>ACTUAL OUTPUT</h4><pre>' + escape(item.output ?? 'Waiting for output…') + '</pre></section></div>'
     + '<p class="muted">Source: ' + escape(item.outputSource || names[e.source]) + (item.generationModel ? ' · Generation model: ' + escape(item.generationModel) : '') + (item.judgeModel ? ' · Model grader: ' + escape(item.judgeModel) : '') + '</p>'
-    + '<div class="checks"><h4>Criteria and evidence</h4>' + (item.checks.length ? item.checks.map(check => '<article class="check"><div class="check-title"><b>' + escape(check.criterion) + '</b><span>' + check.score + '/100</span></div><p>' + escape(check.reason) + '</p><blockquote>' + escape(check.evidence) + '</blockquote></article>').join('') : '<p class="muted">' + (item.error ? 'Grading did not complete. No score has been fabricated.' : 'Checks will appear when grading finishes.') + '</p>') + '</div>'
+    + '<div class="checks"><h4>Criteria and evidence</h4>' + (item.checks.length ? (item.checks.every(c => typeof c.passed === 'boolean') ? '<p class="score-explanation">' + item.checks.filter(c => c.passed).length + ' / ' + item.checks.length + ' passed · Passed weight ' + scoreText(item.checks.reduce((sum, c) => sum + (c.passed ? c.weight : 0), 0)) + ' / ' + scoreText(item.checks.reduce((sum, c) => sum + c.weight, 0)) + ' × 100</p>' : '<p class="score-explanation">Historical numeric grading. Rerun this evaluation to use Pass/Fail criteria.</p>') + item.checks.map(check => '<article class="check"><div class="check-title"><b>' + escape(check.criterion) + '</b>' + (typeof check.passed === 'boolean' ? '<span class="badge ' + (check.passed ? 'passed' : 'failed') + '">' + (check.passed ? 'Pass' : 'Fail') + '</span>' : '<span>' + scoreText(check.score) + '/100</span>') + '</div><p class="check-meta">' + escape(names[check.method || e.method] || check.method || e.method) + (check.weight ? ' · Weight ' + escape(check.weight) : '') + '</p><p>' + escape(check.reason) + '</p><blockquote>' + escape(check.evidence) + '</blockquote></article>').join('') : '<p class="muted">' + (item.error ? 'Grading did not complete. No score has been fabricated.' : 'Checks will appear when grading finishes.') + '</p>') + '</div>'
     + '<div class="event-log"><h4>Run activity</h4>' + item.events.map(event => '<p><time>' + escape(new Date(event.at).toLocaleTimeString()) + '</time>' + escape(event.message) + '</p>').join('') + '</div>'
     + '<details><summary>Inspect saved input, HTML, and criteria</summary><pre class="context-pre">' + escape(JSON.stringify({ description: e.input, html: e.html, framework: e.framework, language: e.language, pageUrl: e.pageUrl, criteria: e.criteria, pom: e.pom, fromIdeas: e.fromIdeas, ideas: e.ideas }, null, 2)) + '</pre></details></div>';
 }
@@ -387,8 +498,23 @@ async function route() {
 $('evaluation-form').addEventListener('submit', saveEvaluation);
 ['new-button','empty-create'].forEach(id => $(id).addEventListener('click', () => openForm()));
 $('example-button').addEventListener('click', () => openForm(true));
+$('workshop-button').addEventListener('click', loadWorkshop);
+$('new-suite').addEventListener('click', () => openSuiteForm());
+$('rename-suite').addEventListener('click', () => openSuiteForm(suites.find(s => s.id === $('filter-suite').value)));
+$('delete-suite').addEventListener('click', () => askDeleteLibrary('suite', suites.find(s => s.id === $('filter-suite').value)));
+$('suite-form').addEventListener('submit', saveSuite);
+$('cancel-suite').addEventListener('click', () => { if (!savingSuite) $('suite-dialog').close(); });
+$('suite-dialog').addEventListener('cancel', event => { if (savingSuite) event.preventDefault(); });
+$('suite-dialog').addEventListener('close', lockBody);
+$('delete-library-form').addEventListener('submit', deleteLibrary);
+$('cancel-delete-library').addEventListener('click', () => { if (!deletingLibrary) $('delete-library-dialog').close(); });
+$('delete-library-dialog').addEventListener('cancel', event => { if (deletingLibrary) event.preventDefault(); });
+$('delete-library-dialog').addEventListener('close', lockBody);
+$('duplicate-evaluation').addEventListener('click', () => { if (editing) void duplicateEvaluation(editing.id); });
+$('delete-evaluation').addEventListener('click', () => askDeleteLibrary('evaluation', editing));
 ['close-dialog','cancel-dialog'].forEach(id => $(id).addEventListener('click', () => $('evaluation-dialog').close()));
-$('evaluation-dialog').addEventListener('close', () => document.body.classList.remove('modal-open'));
+$('evaluation-dialog').addEventListener('close', lockBody);
+$('evaluation-dialog').addEventListener('cancel', event => { if (savingEvaluation) event.preventDefault(); });
 $('delete-run-form').addEventListener('submit', deleteRun);
 $('cancel-delete-run').addEventListener('click', () => { if (!deletingRun) $('delete-run-dialog').close(); });
 $('delete-run-dialog').addEventListener('cancel', event => { if (deletingRun) event.preventDefault(); });
@@ -396,26 +522,33 @@ $('delete-run-dialog').addEventListener('close', () => { deleteTarget = null; do
 $('back-step').addEventListener('click', () => setStep(1));
 ['type','source','from-ideas'].forEach(id => $(id).addEventListener('change', syncForm));
 $('method').addEventListener('change', () => selectMethod($('method').value));
-$('method-family').addEventListener('change', () => selectMethod(familyChoices[$('method-family').value] || ($('method-family').value === 'model_based' ? 'model_grade' : 'contains')));
+$('method-family').addEventListener('change', () => selectMethod(familyChoices[$('method-family').value] || ({ model_based: 'model_grade', rule_based: 'contains', hybrid: 'hybrid' }[$('method-family').value])));
+$('criterion-method').addEventListener('change', syncForm);
+$('use-weights').addEventListener('change', renderCriteria);
 $('judge-model').addEventListener('change', () => { desiredJudge = $('judge-model').value; });
 $('retry-models').addEventListener('click', loadModels);
 $('add-criterion').addEventListener('click', addCriterion);
 $('criterion-draft').addEventListener('keydown', event => {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && $('method').value !== 'exact_match') { event.preventDefault(); addCriterion(); }
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && $('method').value !== 'exact_match' && !($('method').value === 'hybrid' && $('criterion-method').value === 'exact_match')) { event.preventDefault(); addCriterion(); }
 });
 $('criteria-list').addEventListener('input', event => {
-  if (event.target.dataset.criterion !== undefined) criteria[Number(event.target.dataset.criterion)] = event.target.value;
+  if (event.target.dataset.criterion !== undefined) criteria[Number(event.target.dataset.criterion)].text = event.target.value;
+  if (event.target.dataset.criterionWeight !== undefined) criteria[Number(event.target.dataset.criterionWeight)].weight = event.target.value === '' ? '' : Number(event.target.value);
+});
+$('criteria-list').addEventListener('change', event => {
+  if (event.target.dataset.criterionMethod !== undefined) { criteria[Number(event.target.dataset.criterionMethod)].method = event.target.value; syncForm(); }
 });
 $('criteria-list').addEventListener('click', event => {
   const button = event.target.closest('[data-remove-criterion]');
   if (!button) return;
-  const index = Number(button.dataset.removeCriterion); criteria.splice(index, 1); renderCriteria();
+  const index = Number(button.dataset.removeCriterion); criteria.splice(index, 1); renderCriteria(); syncForm();
   ($('criterion-' + Math.min(index, criteria.length - 1)) || $('criterion-draft')).focus();
 });
 $('evaluation-form').addEventListener('input', resizeTextareas);
 new ResizeObserver(resizeTextareas).observe($('wizard-body'));
 $('framework').addEventListener('change', () => setLanguages());
 ['search','filter-type','filter-method','filter-status','sort'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
+$('filter-suite').addEventListener('change', () => { selected.clear(); renderSuites(); renderLibrary(); });
 $('select-all').addEventListener('change', () => { visibleEvaluations().forEach(e => $('select-all').checked ? selected.add(e.id) : selected.delete(e.id)); renderLibrary(); });
 $('clear-selection').addEventListener('click', () => { selected.clear(); renderLibrary(); });
 $('run-selected').addEventListener('click', () => startRun([...selected]));
@@ -424,6 +557,8 @@ document.addEventListener('click', event => {
   const el = event.target.closest('button');
   if (!el) return;
   if (el.dataset.inspect) openForm(false, evaluations.find(e => e.id === el.dataset.inspect));
+  if (el.dataset.duplicateEvaluation) void duplicateEvaluation(el.dataset.duplicateEvaluation);
+  if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));
   if (el.dataset.runLink) location.hash = 'runs/' + el.dataset.runLink;
   if (el.dataset.runOne) startRun([el.dataset.runOne]);
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
@@ -440,7 +575,7 @@ $('refresh-runs').addEventListener('click', () => { error(''); route().catch(e =
 window.addEventListener('hashchange', () => route().catch(e => error(e.message)));
 async function openWorkspace() {
   config = await api('/api/config');
-  if (config.version !== 7 || !config.evaluationMethods) throw new Error('An older server is running. Restart npm start to enable run deletion.');
+  if (config.version !== 8 || !config.evaluationMethods?.hybrid) throw new Error('This page needs the updated backend. Restart the local server or refresh after deployment.');
   $('connection').textContent = '● Backend connected';
   $('setup-notice').hidden = true; error('');
   if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can already save evaluations and use Rule-based grading with pasted outputs. Load example to try it.'; }

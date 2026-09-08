@@ -8,6 +8,7 @@ import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
 import { createSessions } from './src/evals/sessions.mjs';
+import { workshopSuite } from './src/evals/workshop.mjs';
 import { loadRuntimeSecrets } from './src/runtime/secrets.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -33,6 +34,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
     }
     try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new AppError('Request body must be valid JSON.'); }
   }
+  const validateEvaluationBody = body => validateEvaluation(typeof body?.suiteId === 'string' ? { ...body, suiteId: body.suiteId.trim() } : body);
   const server = createServer(async (req, res) => {
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('referrer-policy', 'same-origin');
@@ -52,7 +54,9 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         res.setHeader('retry-after', '10');
         throw new AppError('The server is restarting. Retry shortly.', 503);
       }
-      if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json')) throw new AppError('Use application/json.', 415);
+      const jsonRequest = ['POST', 'PUT', 'PATCH'].includes(req.method) || (req.method === 'DELETE' &&
+        (req.headers['content-type'] !== undefined || req.headers['transfer-encoding'] !== undefined || Number(req.headers['content-length']) > 0));
+      if (jsonRequest && !/^application\/json\s*(?:;|$)/i.test(req.headers['content-type'] || '')) throw new AppError('Use application/json.', 415);
       if (url.pathname === '/api/session') {
         if (req.method === 'GET') return json(res, 200, sessions.describe(sessions.read(req)));
         if (req.method === 'POST') return json(res, 200, sessions.ensure(req, res, await readBody(req, 2048)));
@@ -60,23 +64,52 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       const scope = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, publicConfig(env));
       if (req.method === 'GET' && url.pathname === '/api/models') return json(res, 200, await getModels());
+      if (req.method === 'POST' && url.pathname === '/api/workshop-suite') {
+        const body = await readBody(req, 2048);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('Workshop import expects an empty JSON object.');
+        const { created, ...result } = store.importWorkshop(workshopSuite, scope);
+        return json(res, created ? 201 : 200, result);
+      }
+      if (url.pathname === '/api/suites') {
+        if (req.method === 'GET') return json(res, 200, { suites: store.suites(scope) });
+        if (req.method === 'POST') return json(res, 201, store.createSuite(await readBody(req, 2048), scope));
+      }
+      const suiteMatch = url.pathname.match(/^\/api\/suites\/([a-z0-9-]+)$/i);
+      if (suiteMatch) {
+        const suite = store.suite(suiteMatch[1], scope);
+        if (!suite) throw new AppError('Suite not found.', 404);
+        if (req.method === 'GET') return json(res, 200, suite);
+        if (req.method === 'PUT') return json(res, 200, store.updateSuite(suite.id, await readBody(req, 2048), scope));
+        if (req.method === 'DELETE') return json(res, 200, store.deleteSuite(suite.id, scope));
+      }
       if (url.pathname === '/api/evaluations') {
         if (req.method === 'GET') {
           const runs = store.runs(scope);
           const evaluations = store.evaluations(scope).map(evaluation => {
-            const latestRun = runs.find(run => run.items.some(item => item.evaluationId === evaluation.id));
-            const latestItem = latestRun?.items.find(item => item.evaluationId === evaluation.id);
+            const matches = item => item.evaluationId === evaluation.id && item.evaluation && (item.evaluation.revision ?? 1) === evaluation.revision;
+            const latestRun = runs.find(run => run.items.some(matches));
+            const latestItem = latestRun?.items.find(matches);
             return { ...evaluation, latest: latestItem ? { status: latestItem.status, score: latestItem.score, runId: latestRun.id, createdAt: latestRun.createdAt } : null };
           });
           return json(res, 200, { evaluations });
         }
-        if (req.method === 'POST') return json(res, 201, store.create(validateEvaluation(await readBody(req)), scope));
+        if (req.method === 'POST') return json(res, 201, store.create(validateEvaluationBody(await readBody(req)), scope));
       }
       const evaluationMatch = url.pathname.match(/^\/api\/evaluations\/([a-z0-9-]+)$/i);
-      if (evaluationMatch && req.method === 'GET') {
+      if (evaluationMatch) {
         const evaluation = store.evaluation(evaluationMatch[1], scope);
         if (!evaluation) throw new AppError('Evaluation not found.', 404);
-        return json(res, 200, evaluation);
+        if (req.method === 'GET') return json(res, 200, evaluation);
+        if (req.method === 'PUT') {
+          const body = await readBody(req);
+          return json(res, 200, store.updateEvaluation(evaluation.id, validateEvaluationBody(body), body.revision, scope));
+        }
+        if (req.method === 'DELETE') return json(res, 200, store.deleteEvaluation(evaluation.id, scope));
+      }
+      const duplicateMatch = url.pathname.match(/^\/api\/evaluations\/([a-z0-9-]+)\/duplicate$/i);
+      if (duplicateMatch && req.method === 'POST') {
+        if (!store.evaluation(duplicateMatch[1], scope)) throw new AppError('Evaluation not found.', 404);
+        return json(res, 201, store.duplicateEvaluation(duplicateMatch[1], await readBody(req, 2048), scope));
       }
       if (url.pathname === '/api/runs') {
         if (req.method === 'POST') return json(res, 202, engine.start((await readBody(req))?.evaluationIds, scope));
