@@ -24,11 +24,11 @@ Open the app URL and start working. The browser automatically creates or restore
 Each browser gets a **different anonymous workspace**. The server stores a hash of a random 256-bit session token; the browser keeps the token in an HttpOnly, SameSite=Strict cookie, never localStorage. Every evaluation and run is scoped to that session in SQLite, including direct links and mixed batches. Knowing someone else's evaluation/run ID does not grant access; cross-workspace requests return 404. HTML, evidence, and run snapshots are private to their owning session through the app (the backend operator can still access the database).
 
 - Reloads and new tabs in the **same browser profile and hostname** retain the workspace. Use one URL consistently: `localhost` and `127.0.0.1` have different cookies.
-- Sessions expire after **24 hours**, configurable with `WORKSHOP_SESSION_HOURS` (1–168). The expiration is fixed, not extended on every visit, and is shown under About this workspace.
+- Sessions expire after **24 hours**, configurable with `WORKSHOP_SESSION_HOURS` (1–168). The expiration is fixed, not extended on every visit, and is shown under Session details in the footer.
 - Clearing cookies, using incognito, changing devices or letting a session expire automatically starts a new empty workspace; this is not cross-device account recovery. Existing records are not automatically deleted at expiry. Sessions issued before removal of the code remain scoped to their original owner until expiry.
 - **Anyone with the app URL can enter and consume the shared allowance.** Data isolation does not restrict admission. There is no enforced seven-person maximum or organizer dashboard. For private admission, use deployment/network access controls separately.
 - Restarting with the same workshop ID and database preserves sessions and usage. CSRF tokens are derived from each random session token, independently of any shared code. Revoke a session by removing its server-side session record, not by changing the obsolete code setting.
-- Protected POSTs require the exact Origin and a session-bound `X-CSRF-Token`. Session creation uses an empty JSON object plus the exact Origin. New sessions are limited to 20 per remote address and 100 globally per minute, persisted across restarts; reusing an existing valid cookie does not consume this limit. Forwarded IP headers are not trusted. Behind an AWS proxy, the per-address limit may be shared by all participants.
+- Protected mutations require the exact Origin and a session-bound `X-CSRF-Token`. Session creation uses an empty JSON object plus the exact Origin. New sessions are limited to 20 per remote address and 100 globally per minute, persisted across restarts; reusing an existing valid cookie does not consume this limit. Forwarded IP headers are not trusted. Behind an AWS proxy, the per-address limit may be shared by all participants.
 - The UI checks for an existing session, creates one only if needed, then verifies that the cookie was retained. Browsers supporting Web Locks serialize first-visit initialization across tabs. Blocked cookies or network failures show a retry message, not a creation loop. Expired sessions reconnect automatically; paid evaluation requests are never automatically replayed.
 
 ### Shared model-call allowance
@@ -63,13 +63,17 @@ GET `/healthz` checks database access without creating a session or contacting a
 
 1. Open the app; your workspace starts automatically. Select **New evaluation**. Step 1 has a horizontal parameter bar: **TestCraft endpoint**, output source, framework, and language. Ideas disables framework/language; code enables them.
 2. Fill **Eval name**, optional **Test description**, **HTML input**, and **Page URL**. TestCraft code generation requires the original page URL. Pasted output also needs what the extension actually generated. There is no Expected output field.
-3. Choose **Next**. Step 2 separates **Evaluation family** from **Method**: Rule-based → Contains / Does not contain / Exact match; Model-based → LLM as a judge. The **Model grader** dropdown is disabled for rules. Each method explains its input, limitations and grading-call cost. Use **Add criteria** to build its list. Switching methods keeps independent drafts, so quality rubrics are not reinterpreted as literal strings; only the selected method is saved. **Back** preserves both steps. One scroll area keeps the step indicator and actions visible.
+3. Choose **Next**. Step 2 supports Rule-based → Contains / Does not contain / Exact match; Model-based → LLM as a judge; and **Hybrid** → a method per criterion. The grader dropdown is needed only when at least one criterion uses a model. Use **Add criteria** and optionally enable **Custom weights**. Every criterion returns Pass/Fail with evidence and a reason. Switching to Hybrid preserves the existing criteria and their methods; other method drafts remain separate. **Back** preserves both steps. One scroll area keeps the actions visible.
 4. **Create evaluation** saves a row in SQLite. It does not call a model.
 5. Select cases and choose **Run selected**. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
-6. Click a case name to inspect its settings and save a revised copy. Earlier cases and run snapshots are preserved.
+6. Click a case name to edit it. **Save** updates the same case and increments its revision; **Save as new** saves the edited draft as a new case. **Duplicate** copies the saved definition without its run history. Earlier runs keep immutable snapshots, and old results are not shown as results of a newer revision. A stale Save returns a conflict instead of overwriting another tab's changes.
 7. To tidy up, select a finished run in **Runs → Delete run** and confirm. This permanently removes only that run's snapshots, outputs, scores, and evidence; the saved evaluations remain runnable. Cancel leaves everything unchanged. Queued/running runs cannot be deleted. The library shows the latest remaining run, or **Not run** if no history remains. Deleting history never refunds model calls.
 
 **Load example** fills an unsaved, synthetic login example using pasted output and Contains. Save and run it without LLM credentials or model calls. Opening the form attempts a read-only catalog request; catalog failure does not block text-based methods. Scores are calculated from actual text, not canned scenario results.
+
+**Suites** are private, flat folders: create or rename a suite, assign evaluations in the form, and filter the library by suite. Deleting a suite moves its evaluations to Unfiled; it does not delete cases or runs. **Delete evaluation** requires confirmation and removes only the saved definition, never historical run snapshots or usage. Active runs block evaluation deletion.
+
+**Load workshop suite** imports eight explicitly synthetic SauceDemo-inspired exercises, without calling an LLM. Repeated clicks reuse the imported suite without overwriting edits. Five cases run with local rules; three use a model grader (one call each). See [the one-hour workshop guide](docs/workshop-exercises.md). They are teaching fixtures, not captured TestCraft output or executable tests verified against the live page.
 
 ## How it contacts the LLM
 
@@ -80,6 +84,7 @@ Evaluation run
   │            OR optional independent backend LLM adapter
   └─ Grade: Rule-based → local text checks
             OR Model-based → LLM as a judge → OPENAI_BASE_URL
+            OR Hybrid → both, aggregated by criterion weight
                   ↓
            SQLite: output + score + evidence
 ```
@@ -106,7 +111,9 @@ Previously labeled **Model grade**, this is the same rubric-based evaluator (`me
 
 Set `OPENAI_API_KEY` in the backend `.env` and restart. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`. `JUDGE_MODEL` defaults to `gpt-4o-mini` and is overridable per evaluation. The model/provider must support Chat Completions **strict JSON-schema Structured Outputs**.
 
-The model grader receives optional description, HTML, page URL as context (not fetched), actual output, and the criteria array. It receives framework/language only for code. It does not need a reference response. It returns a score from 0–100, evidence, and a reason per criterion. The backend validates IDs, completeness, scores, and evidence; it calculates the equally weighted mean, rounded to an integer. All new runs use the global **80/100** policy in `src/evals/validation.mjs`. It is not a form parameter; posted threshold overrides are ignored.
+The model grader receives optional description, HTML, page URL as context (not fetched), actual output, and only the model-based criteria. It receives framework/language only for code. It does not need a reference response. The strict response contains a boolean `passed`, evidence, and a reason for each ID—not a numeric score. The backend checks exact IDs, booleans, complete coverage, and nonempty explanations. A passed criterion must cite a verbatim excerpt from the actual output; invented evidence is a provider error, not a grade. This verifies the excerpt exists, not that the judge's reasoning is correct.
+
+All model criteria share **one** model call. Rules run locally. The server calculates `100 × sum(passed weights) / sum(all weights)`, with every weight defaulting to 1. Optional weights range from 0.01 to 100. Overall Pass uses the fixed **80/100** policy; UI rounding must not change that decision. The threshold is not a form parameter and posted overrides are ignored. A rubric can still pass overall with individual failed criteria; choose weights deliberately and inspect each verdict.
 
 The dropdown uses our **GET `/api/models`** proxy for TestCraft's [GET `/api/models`](https://github.com/TestCraft-App/test-craft-api-v1/blob/dev/app/api.py). Successful catalogs are cached for five minutes and concurrent requests share one fetch, with an eight-second timeout. Neither the grader key nor a generation key is sent to the catalog, including in query strings. If unavailable, show the last catalog or only the backend-configured model, with a warning and retry action. This catalog does **not** verify model access or quota for your grader account.
 
@@ -119,8 +126,9 @@ This follows the [official Structured Outputs guide](https://developers.openai.c
 - **Paste from TestCraft:** grade actual output copied from the extension without generating again.
 - **Backend LLM adapter:** direct OpenAI-compatible generation with this project's own prompt. It is explicitly **not the TestCraft v1 prompt**; do not present it as evaluating the extension's generator.
 - **Exact match:** exactly one criterion containing the full text to match; 100 or 0. Normalizes CRLF and trims outer whitespace. Case, punctuation, and internal whitespace remain significant.
-- **Contains:** each criterion is a case-sensitive required text fragment, not a semantic instruction. Score is the percentage found, rounded to an integer. This measures text presence, not semantic correctness.
-- **Does not contain:** each criterion is a case-sensitive forbidden fragment, such as `waitForTimeout` or `TODO`. An absent fragment scores 100; a present fragment scores 0; the overall score is their rounded mean. Comments count as text too, and differently written equivalents are not detected. This is not a parser, safety guarantee, or proof that the code works. It shares the existing global pass policy, so an individual failing check does not necessarily fail a many-criterion evaluation.
+- **Contains:** each criterion is a case-sensitive required text fragment, not a semantic instruction. Presence passes, absence fails. This measures text presence, not semantic correctness.
+- **Does not contain:** each criterion is a case-sensitive forbidden fragment, such as `waitForTimeout` or `TODO`. Absence passes; presence fails. Comments count as text too, and differently written equivalents are not detected. This is not a parser, safety guarantee, or proof that the code works.
+- **Hybrid:** combine these rules and model-graded criteria in one definition. Each keeps its method, weight, evidence, and verdict. A Hybrid containing only rules uses no model grader or grading calls. Generation usage is independent.
 
 These three text operations belong to **Rule-based** evaluation: the same output and criteria always produce the same grade, with no grader-model call. This says nothing about determinism of the upstream TestCraft generation. The terminology aligns with the distinction between [string checks and model graders](https://developers.openai.com/api/docs/guides/graders). The app implements its own graders; it is not delegating them to OpenAI's Evals API.
 
@@ -130,7 +138,9 @@ Criteria are **never supplied to the generator**. `OPENAI_API_KEY` is never impl
 
 The non-secret method catalog is returned in `/api/config`. The backend derives `evaluationFamily` from the validated `method`; client-supplied family overrides are ignored. Earlier cases/runs without the extra family field still display correctly, and unknown method IDs are rejected rather than silently sent to a paid judge.
 
-New evaluation payloads require `criteria: string[]`: 1–20 distinct, nonempty strings, up to 8,000 characters total (exact match requires one). New cases do not store `expectedOutput`. Existing cases with string-based criteria keep their reference-based grading rules and remain readable; duplicating one converts it to the new form. Historical run snapshots are unchanged. Reruns use the current global policy and save it in their new snapshots.
+New schema version 3 definitions store `criteria: [{ text, method, weight }]`: 1–20 nonempty criteria, up to 8,000 text characters total, with distinct method/text pairs. Uniform methods require matching criterion methods; Hybrid permits mixing. Exact match as the overall method requires one criterion. Legacy `string[]` creation payloads normalize to objects with weight 1. Historical scalar/reference definitions remain readable and rerun through the compatible normalizer. Existing results are never rewritten; their numeric checks are labeled historical in the UI. Reruns use the current binary grading version and global policy.
+
+Library API: `GET/POST /api/suites`, `GET/PUT/DELETE /api/suites/:id`, `PUT/DELETE /api/evaluations/:id`, `POST /api/evaluations/:id/duplicate`, and `POST /api/workshop-suite {}`. Evaluation PUT expects the complete creation payload plus the current `revision`. Suite PUT expects `{ name, revision }`; a stale revision returns 409. All IDs are scoped to the current session. Workshop import is atomic and idempotent for the existing seeded suite; deleting the suite allows a fresh import without touching the unfiled originals.
 
 ## Persistence and boundaries
 
@@ -138,7 +148,7 @@ New evaluation payloads require `criteria: string[]`: 1–20 distinct, nonempty 
 - Runs preserve inputs, parameters, output, scores, evidence, events, and errors. A restart marks unfinished runs Interrupted without silently repeating paid calls.
 - Up to 50 cases per run, two cases processed concurrently, at most 100 queued/active cases. Duplicate simultaneous runs of a case are rejected. No automatic provider retries.
 - HTML is escaped text. **Generated code is not executed.** Passing an evaluation does not mean a Playwright/Cypress/Selenium test ran or passed.
-- Participant workspaces are isolated by server-owned sessions. Participants can delete only individual finished runs in their own workspace. The additive database migration preserves any pre-session records as unowned; they are not automatically exposed to the first participant. Global data cleanup is an explicit operator action, never a public API route.
+- Participant workspaces are isolated by server-owned sessions, including suite CRUD and evaluation mutations. The additive database migration preserves any pre-session records as unowned; they are not automatically exposed to the first participant. Global data cleanup is an explicit operator action, never a public API route.
 - Saved HTML/input/output are plaintext and may contain sensitive data. API/judge runs transmit relevant content to the configured providers. Use synthetic fixtures and remove secrets before saving.
 - `.env`, `data`, dependencies, and test artifacts are ignored by Git.
 - Original prototype modules (`src/generator.mjs`, `src/runner.mjs`, `src/evaluator.mjs`, `src/scenarios.mjs`, `public/demo-app.html`) remain historical reference only. No active route imports or serves them.
