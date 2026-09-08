@@ -7,7 +7,7 @@ import { createApp } from '../server.mjs';
 export const test = base.extend({
   generationOutput: ['Generated ideas: valid credentials; invalid email; empty password.', { option: true }],
   generationCalls: async ({}, use) => { await use([]); },
-  baseURL: async ({ generationOutput, generationCalls }, use) => {
+  browserApp: async ({ generationOutput, generationCalls }, use) => {
     const app = createApp({
       dbPath: ':memory:',
       env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', WORKSHOP_MAX_MODEL_CALLS: '200', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
@@ -18,8 +18,9 @@ export const test = base.extend({
       },
     });
     app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
-    try { await use(`http://127.0.0.1:${app.server.address().port}`); }
+    try { await use(app); }
     finally { await app.shutdown(); }
   },
+  baseURL: async ({ browserApp }, use) => { await use(`http://127.0.0.1:${browserApp.server.address().port}`); },
 });
 export { expect };

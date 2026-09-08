@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AppError, validateEvaluation } from './validation.mjs';
 import { needsModelGrader } from './methods.mjs';
+import { canDeleteRun } from './runs.mjs';
 
 function requireScope(scope) {
   if (!scope?.ownerId || !scope?.workshopId) throw new Error('A private workspace scope is required.');
@@ -184,7 +185,7 @@ export class Store {
       const run = this.run(id, scope);
       if (!run) throw new AppError('Run not found.', 404);
       // Active jobs still persist their snapshots: deleting one would resurrect it.
-      if (!['completed', 'interrupted'].includes(run.status) || run.items.some(item => !['passed', 'failed', 'error'].includes(item.status))) throw new AppError('This run is still active. Wait for it to finish before deleting it.', 409);
+      if (!canDeleteRun(run)) throw new AppError('This run is still active. Wait for it to finish before deleting it.', 409);
       this.db.prepare('DELETE FROM runs WHERE id=? AND owner_id=? AND workshop_id=?').run(id, ...requireScope(scope));
       // Evaluation definitions and workshop usage are independent of run history.
       return { deletedId: id };

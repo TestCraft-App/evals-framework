@@ -11,9 +11,9 @@ TestCraft's browser extension is the application being evaluated. This project s
 3. Choose Next. Step 2: choose the evaluation family and concrete method. Rule-based offers Contains, Does not contain and Exact match; Model-based offers LLM as a judge, with a model dropdown. Add literal fragments for rules or observable quality criteria for the judge. Each method preserves its own draft while editing. No separate reference-response field or configurable percentage is required.
 4. Save the case; repeat to build a dataset.
 5. Select cases and run them. The backend generates through TestCraft and applies the grader.
-6. Inspect actual output against the criteria, scores, evidence, and errors in Runs or in a separate browser tab.
+6. Inspect actual output against the criteria, scores, evidence, and errors on the run's full-page detail or in a separate browser tab. **Back to runs** opens the table: search by date-based name or ID, filter status/model, and sort using column headers. Scores average available evaluation scores; partial coverage is labeled. Active runs update automatically. **Create Run** is a disabled placeholder; use **Run selected** in Evaluations.
 7. Save a revised copy or rerun a case; compare historical snapshots without overwriting evidence.
-8. Optional cleanup: select a finished run and use **Delete run**, then confirm. This permanently removes that run's evidence, not its evaluations, and does not restore used model calls. Active runs are protected. Keep runs you still want to compare during the workshop.
+8. Optional cleanup: use a finished run's delete icon in the table or **Delete run** in detail, then confirm. This permanently removes that run's evidence, not its evaluations, and does not restore used model calls. Active runs are protected. Keep runs you still want to compare during the workshop.
 
 ## Exercises
 

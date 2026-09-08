@@ -57,8 +57,26 @@
     </section>
 
     <section id="runs-panel" role="tabpanel" aria-labelledby="runs-tab" hidden>
-      <div class="section-heading runs-heading"><h2>Evaluation runs</h2><button id="refresh-runs" class="button">↻ Refresh runs</button></div>
-      <div class="runs-layout"><aside class="run-history" aria-label="Run history"><h3>RECENT RUNS</h3><div id="run-list"></div></aside><div id="run-detail" class="run-detail"><div class="empty-state"><div class="empty-icon" aria-hidden="true">▷</div><h3>No run selected</h3><p>Select evaluations in the library and choose Run selected.</p></div></div></div>
+      <section id="runs-list-page">
+        <div class="section-heading runs-heading"><h2 tabindex="-1" id="runs-title">Runs</h2><button id="create-run" class="button primary" disabled title="Run creation is coming soon">＋ Create Run</button></div>
+        <div class="filters">
+          <label class="search-field">Search runs<input id="run-search" type="search" placeholder="Search by name or ID…"></label>
+          <label>Status<select id="run-status"><option value="">All statuses</option><option value="active">In progress</option><option value="completed">Complete</option><option value="interrupted">Interrupted</option></select></label>
+          <label>Model<select id="run-model"><option value="">All models</option></select></label>
+        </div>
+        <div class="table-scroll"><table class="runs-table" aria-label="Runs"><thead><tr>
+          <th aria-sort="none"><button data-run-sort="name">Run name</button></th>
+          <th aria-sort="descending"><button data-run-sort="createdAt">Date</button></th>
+          <th aria-sort="none"><button data-run-sort="models">Models</button></th>
+          <th aria-sort="none"><button data-run-sort="total">Evals</button></th>
+          <th aria-sort="none"><button data-run-sort="status">Status</button></th>
+          <th aria-sort="none"><button data-run-sort="score">Score</button></th>
+          <th><span class="sr-only">Delete</span></th>
+        </tr></thead><tbody id="run-list"></tbody></table></div>
+        <div id="empty-runs" class="empty-state"><h3>Your runs will appear here.</h3><p>Select evaluations in the library and choose Run selected.</p></div>
+        <div class="table-footer"><span id="filtered-runs-count">0 of 0 runs</span></div>
+      </section>
+      <section id="run-detail-page" hidden><a class="back-to-runs" href="#runs">← Back to runs</a><div id="run-detail" class="run-detail"></div></section>
     </section>
     <footer class="app-footer">
       <div class="footer-meta">

@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Store } from './src/evals/store.mjs';
 import { Engine } from './src/evals/engine.mjs';
+import { summarizeRun } from './src/evals/runs.mjs';
 import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
@@ -113,11 +114,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       if (url.pathname === '/api/runs') {
         if (req.method === 'POST') return json(res, 202, engine.start((await readBody(req))?.evaluationIds, scope));
-        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).slice(0, 100).map(run => ({
-          id: run.id, createdAt: run.createdAt, status: run.status, finishedAt: run.finishedAt,
-          total: run.items.length, passed: run.items.filter(item => item.status === 'passed').length,
-          failed: run.items.filter(item => item.status === 'failed').length, errors: run.items.filter(item => item.status === 'error').length,
-        })) });
+        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).map(summarizeRun) });
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([a-z0-9-]+)$/i);
       if (runMatch && req.method === 'DELETE') return json(res, 200, store.deleteRun(runMatch[1], scope));

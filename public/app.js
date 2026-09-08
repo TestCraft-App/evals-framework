@@ -9,7 +9,8 @@ let suites = [], suiteEditing = null, savingSuite = false, libraryDeleteTarget =
 let session = null, sessionTimer, sessionSetup;
 let currentMethod = null, methodDrafts = new Map(), familyChoices = {};
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
-const canDeleteRun = run => ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
+let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
+const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
 const familyLabel = method => config?.evaluationMethods?.[method]?.familyLabel || (method === 'model_grade' ? 'Model-based' : 'Rule-based');
 const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
@@ -43,6 +44,7 @@ function showConnecting() {
   ['suite-dialog', 'delete-library-dialog'].forEach(id => $(id).close());
   suiteEditing = null; libraryDeleteTarget = null; savingEvaluation = false; savingSuite = false; deletingLibrary = false;
   $('filter-suite').value = ''; renderSuites();
+  $('run-search').value = ''; $('run-status').value = ''; $('run-model').value = ''; runSort = 'createdAt'; runSortDirection = -1; lastRunRows = null;
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
   $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
   $('session-message').textContent = 'Opening your private workspace…';
@@ -386,8 +388,47 @@ async function startRun(ids) {
   } catch (e) { error(e.message); await refreshSession().catch(() => {}); }
   finally { updateSelection(); }
 }
+function runName(run) {
+  const d = new Date(run.createdAt), pad = n => String(n).padStart(2, '0');
+  return 'Run · ' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+const runStatus = run => activeStatuses.includes(run.status) ? 'In progress' : run.status === 'completed' ? 'Complete' : names[run.status] || run.status;
+function visibleRuns() {
+  const query = $('run-search').value.trim().toLowerCase(), status = $('run-status').value, model = $('run-model').value;
+  const value = run => runSort === 'name' ? runName(run) : runSort === 'models' ? run.models.join(', ') : runSort === 'status' ? runStatus(run) : run[runSort];
+  return runs.filter(run => (!query || (runName(run) + ' ' + run.id).toLowerCase().includes(query))
+    && (!status || (status === 'active' ? activeStatuses.includes(run.status) : run.status === status))
+    && (!model || run.models.includes(model))).sort((a, b) => {
+    if (runSort === 'score' && (a.score === null || b.score === null)) return a.score === b.score ? a.id.localeCompare(b.id) : a.score === null ? 1 : -1;
+    const av = value(a), bv = value(b);
+    return (typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))) * runSortDirection || a.id.localeCompare(b.id);
+  });
+}
 function renderRunList() {
-  $('run-list').innerHTML = runs.length ? runs.map(run => '<button class="' + (currentRun?.id === run.id ? 'active' : '') + '" data-run-link="' + run.id + '"><strong>Run ' + run.id.slice(0,8) + ' · ' + run.total + ' evaluation' + (run.total === 1 ? '' : 's') + '</strong>' + badge(run.status) + '<small>' + escape(date(run.createdAt)) + ' · ' + run.passed + ' passed</small></button>').join('') : '<div class="empty-state"><p>Your runs will appear here.</p></div>';
+  const model = $('run-model').value, models = [...new Set(runs.flatMap(run => run.models))].sort();
+  if (model && !models.includes(model)) models.push(model);
+  const options = '<option value="">All models</option>' + models.map(m => '<option value="' + escape(m) + '">' + escape(m) + '</option>').join('');
+  if ($('run-model').innerHTML !== options) { $('run-model').innerHTML = options; $('run-model').value = model; }
+  const visible = visibleRuns(), focused = document.activeElement;
+  const focusId = $('run-list').contains(focused) ? focused.closest('[data-run-row]')?.dataset.runRow : null;
+  const focusDelete = focused?.hasAttribute('data-delete-run');
+  const rows = visible.map(run => '<tr data-run-row="' + escape(run.id) + '"><td><a class="eval-name" data-run-link="' + escape(run.id) + '" href="#runs/' + escape(run.id) + '">' + escape(runName(run)) + '</a></td>'
+    + '<td><time datetime="' + escape(run.createdAt) + '">' + escape(new Date(run.createdAt).toLocaleString()) + '</time></td>'
+    + '<td>' + (run.models.length ? run.models.map(escape).join('<br>') : '—') + '</td><td>' + run.total + '</td>'
+    + '<td><span class="badge ' + escape(run.status) + '">' + escape(runStatus(run)) + '</span>' + (run.errors ? '<span class="row-meta">' + run.errors + ' error' + (run.errors === 1 ? '' : 's') + '</span>' : '') + '</td>'
+    + '<td class="score">' + (Number.isFinite(run.score) ? scoreText(run.score) + ' / 100' : '—') + (run.scoredCount < run.total ? '<span class="row-meta">' + run.scoredCount + ' of ' + run.total + ' scored</span>' : '') + '</td>'
+    + '<td><button class="text-button danger run-delete" data-delete-run="' + escape(run.id) + '" aria-label="Delete ' + escape(runName(run)) + '"' + (run.canDelete ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></td></tr>').join('');
+  const changed = rows !== lastRunRows;
+  if (changed) { $('run-list').innerHTML = rows; lastRunRows = rows; }
+  if (changed && focusId) {
+    const row = [...$('run-list').rows].find(row => row.dataset.runRow === focusId);
+    (row?.querySelector(focusDelete ? 'button' : 'a') || $('runs-title')).focus();
+  }
+  document.querySelectorAll('[data-run-sort]').forEach(button => button.parentElement.setAttribute('aria-sort', button.dataset.runSort === runSort ? (runSortDirection === 1 ? 'ascending' : 'descending') : 'none'));
+  $('empty-runs').hidden = visible.length > 0;
+  $('empty-runs').querySelector('h3').textContent = runs.length ? 'No runs match these filters.' : 'Your runs will appear here.';
+  $('empty-runs').querySelector('p').textContent = runs.length ? 'Try another search or change the filters.' : 'Select evaluations in the library and choose Run selected.';
+  $('filtered-runs-count').textContent = visible.length + ' of ' + runs.length + ' runs';
 }
 function renderRunDetail() {
   const run = currentRun;
@@ -399,7 +440,7 @@ function renderRunDetail() {
   const item = run.items.find(item => item.id === currentItemId), e = item?.evaluation;
   if (!item) return;
   const active = activeStatuses.includes(item.status);
-  $('run-detail').innerHTML = '<div class="run-top"><div><h3>Run ' + run.id.slice(0,8) + ' ' + badge(run.status) + '</h3><p>' + escape(date(run.createdAt)) + ' · ' + run.items.length + ' saved evaluation snapshots</p></div><div class="run-actions"><a href="#runs/' + run.id + '" target="_blank" rel="noopener">Open in new tab ↗</a><button class="button small danger" data-delete-run="' + run.id + '"' + (canDeleteRun(run) ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '>Delete run</button></div></div>'
+  $('run-detail').innerHTML = '<div class="run-top"><div><h3>' + escape(runName(run)) + ' ' + badge(run.status) + '</h3><p>' + escape(date(run.createdAt)) + ' · ' + run.items.length + ' saved evaluation snapshots</p></div><div class="run-actions"><a href="#runs/' + run.id + '" target="_blank" rel="noopener">Open in new tab ↗</a><button class="button small danger" data-delete-run="' + run.id + '"' + (canDeleteRun(run) ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '>Delete run</button></div></div>'
     + '<div class="run-items">' + run.items.map(x => '<button class="run-item ' + (x.id === item.id ? 'active' : '') + '" data-item="' + x.id + '">' + escape(x.evaluation.name) + ' · ' + escape(names[x.status] || x.status) + '</button>').join('') + '</div>'
     + '<div class="result-body"><div class="result-title"><div><h3>' + escape(e.name) + '</h3><p>' + escape(names[e.type]) + ' · ' + escape(familyLabel(e.method)) + ' / ' + escape(names[e.method]) + ' · v' + (e.revision || 1) + '</p></div><div class="result-score">' + (Number.isFinite(item.score) ? scoreText(item.score) + '<small> / 100</small>' : '—') + '</div></div>'
     + (active ? '<p class="muted"><span class="spinner" aria-hidden="true"></span>' + escape(names[item.status]) + '… Results update automatically.</p>' : '<p>' + badge(item.status) + ' <span class="muted">' + (item.durationMs ?? 0) + ' ms</span></p>')
@@ -411,9 +452,10 @@ function renderRunDetail() {
     + '<details><summary>Inspect saved input, HTML, and criteria</summary><pre class="context-pre">' + escape(JSON.stringify({ description: e.input, html: e.html, framework: e.framework, language: e.language, pageUrl: e.pageUrl, criteria: e.criteria, pom: e.pom, fromIdeas: e.fromIdeas, ideas: e.ideas }, null, 2)) + '</pre></details></div>';
 }
 function askDeleteRun(id) {
-  if (!session || currentRun?.id !== id || !canDeleteRun(currentRun) || deletingRun) return;
+  const run = currentRun?.id === id ? currentRun : runs.find(run => run.id === id);
+  if (!session || !run || !canDeleteRun(run) || deletingRun) return;
   deleteTarget = { id, session };
-  $('delete-run-summary').textContent = 'Run ' + id.slice(0,8) + ' · ' + date(currentRun.createdAt) + ' · ' + currentRun.items.length + ' evaluation snapshots';
+  $('delete-run-summary').textContent = runName(run) + ' · ' + (run.total ?? run.items.length) + ' evaluation snapshots';
   $('delete-run-error').textContent = '';
   $('confirm-delete-run').disabled = false; $('confirm-delete-run').textContent = 'Delete run'; $('cancel-delete-run').disabled = false;
   $('delete-run-dialog').showModal(); document.body.classList.add('modal-open'); $('cancel-delete-run').focus();
@@ -437,9 +479,12 @@ async function deleteRun(event) {
     }
   }
   if (target.session !== session) return;
-  deletingRun = false; $('delete-run-dialog').close(); error('');
+  deletingRun = false; target.deleted = true; $('delete-run-dialog').close(); error('');
   const viewingDeleted = location.hash === '#runs/' + target.id;
-  if (viewingDeleted) { history.replaceState(null, '', '#runs'); runViewRevision++; clearTimeout(polling); }
+  if (viewingDeleted) {
+    history.replaceState(null, '', '#runs'); runViewRevision++; clearTimeout(polling);
+    $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
+  }
   if (currentRun?.id === target.id) { currentRun = null; currentItemId = null; lastRunJson = null; renderRunDetail(); }
   // Invalidate older reads before refreshing so a stale response cannot restore the row.
   runsRequest++; libraryRequest++;
@@ -448,7 +493,8 @@ async function deleteRun(event) {
   toast(alreadyDeleted ? 'This run was already removed.' : 'Run deleted. Your evaluations are still saved.');
   try {
     await Promise.all([loadRuns(), loadLibrary()]);
-    if (target.session === session && viewingDeleted && location.hash === '#runs') { await route(); $('refresh-runs').focus(); }
+    if (target.session === session && viewingDeleted && location.hash === '#runs') { await route(); $('runs-title').focus(); }
+    else if (target.session === session && location.hash === '#runs') $('runs-title').focus();
   } catch {
     if (target.session === session) error('The run was removed, but the history could not refresh. Reload the page.');
   }
@@ -469,6 +515,7 @@ async function pollRun(id, revision = runViewRevision) {
     if (e.status === 404) {
       currentRun = null; currentItemId = null; renderRunDetail();
       history.replaceState(null, '', '#runs'); toast('This run is no longer available.');
+      $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
       try { await loadLibrary(); if (revision === runViewRevision) await route(); }
       catch (refreshError) { if (session && revision === runViewRevision) error(refreshError.message); }
       return;
@@ -477,9 +524,23 @@ async function pollRun(id, revision = runViewRevision) {
     if (++pollFailures < 3) polling = setTimeout(() => pollRun(id, revision), 1500);
   }
 }
+async function pollRunList(revision = runViewRevision) {
+  if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
+  try {
+    await loadRuns();
+    if (revision !== runViewRevision || location.hash !== '#runs') return;
+    pollFailures = 0;
+    if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
+    else { await loadLibrary(); if (!sessionSetup) await refreshSession(); }
+  } catch (e) {
+    if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
+    error(e.message);
+    if (++pollFailures < 3) polling = setTimeout(() => pollRunList(revision), 1500);
+  }
+}
 async function route() {
   const revision = ++runViewRevision;
-  clearTimeout(polling); lastRunJson = null; pollFailures = 0;
+  clearTimeout(polling); runsRequest++; lastRunJson = null; pollFailures = 0;
   if (!session) return;
   const isRuns = location.hash.startsWith('#runs');
   $('evaluations-panel').hidden = isRuns; $('runs-panel').hidden = !isRuns;
@@ -487,11 +548,12 @@ async function route() {
   $('evaluations-tab').tabIndex = isRuns ? -1 : 0; $('runs-tab').tabIndex = isRuns ? 0 : -1;
   if (isRuns) {
     const id = location.hash.split('/')[1];
+    $('runs-list-page').hidden = !!id; $('run-detail-page').hidden = !id;
     if (currentRun?.id !== id || !id) { currentRun = null; currentItemId = null; renderRunDetail(); }
     await loadRuns();
     if (revision !== runViewRevision) return;
     if (id) { currentItemId = null; await pollRun(id, revision); }
-    else if (runs.length) location.hash = 'runs/' + runs[0].id;
+    else if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
   } else await loadLibrary();
 }
 $('evaluation-form').addEventListener('submit', saveEvaluation);
@@ -517,7 +579,12 @@ $('evaluation-dialog').addEventListener('cancel', event => { if (savingEvaluatio
 $('delete-run-form').addEventListener('submit', deleteRun);
 $('cancel-delete-run').addEventListener('click', () => { if (!deletingRun) $('delete-run-dialog').close(); });
 $('delete-run-dialog').addEventListener('cancel', event => { if (deletingRun) event.preventDefault(); });
-$('delete-run-dialog').addEventListener('close', () => { deleteTarget = null; document.body.classList.toggle('modal-open', $('evaluation-dialog').open); });
+$('delete-run-dialog').addEventListener('close', () => {
+  const target = deleteTarget; deleteTarget = null; lockBody();
+  if (!target || target.deleted || target.session !== session) return;
+  const container = location.hash === '#runs' ? $('run-list') : $('run-detail');
+  [...container.querySelectorAll('[data-delete-run]')].find(button => button.dataset.deleteRun === target.id)?.focus();
+});
 $('back-step').addEventListener('click', () => setStep(1));
 ['type','source','from-ideas'].forEach(id => $(id).addEventListener('change', syncForm));
 $('method').addEventListener('change', () => selectMethod($('method').value));
@@ -564,13 +631,23 @@ document.addEventListener('click', event => {
   if (el.dataset.item) { currentItemId = el.dataset.item; renderRunDetail(); }
 });
 $('evaluations-tab').addEventListener('click', () => { location.hash = 'evaluations'; });
-$('runs-tab').addEventListener('click', () => { location.hash = currentRun ? 'runs/' + currentRun.id : 'runs'; });
+$('runs-tab').addEventListener('click', () => { location.hash = 'runs'; });
 document.querySelector('.tabs').addEventListener('keydown', event => {
   if (['ArrowRight','ArrowLeft','Home','End'].includes(event.key)) {
     event.preventDefault(); const target = event.key === 'Home' ? $('evaluations-tab') : event.key === 'End' ? $('runs-tab') : event.target === $('runs-tab') ? $('evaluations-tab') : $('runs-tab'); target.click(); target.focus();
   }
 });
-$('refresh-runs').addEventListener('click', () => { error(''); route().catch(e => error(e.message)); });
+['run-search', 'run-status', 'run-model'].forEach(id => $(id).addEventListener(id === 'run-search' ? 'input' : 'change', renderRunList));
+document.querySelectorAll('[data-run-sort]').forEach(button => button.addEventListener('click', () => {
+  const key = button.dataset.runSort;
+  runSortDirection = runSort === key ? -runSortDirection : ['createdAt', 'total', 'score'].includes(key) ? -1 : 1;
+  runSort = key; renderRunList();
+}));
+$('run-list').addEventListener('click', event => {
+  if (event.target.closest('a, button') || window.getSelection()?.toString()) return;
+  const row = event.target.closest('[data-run-row]');
+  if (row) location.hash = 'runs/' + row.dataset.runRow;
+});
 window.addEventListener('hashchange', () => route().catch(e => error(e.message)));
 async function openWorkspace() {
   config = await api('/api/config');

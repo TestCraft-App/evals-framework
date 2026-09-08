@@ -61,11 +61,12 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await confirmation.getByRole('button', { name: 'Delete run', exact: true }).click();
   await expect(confirmation).not.toBeVisible();
   await expect(page.locator('#runs-count')).toHaveText('0');
-  await expect(page.locator('#run-detail')).toContainText('No run selected');
+  await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here.');
+  await expect(page.locator('#run-detail-page')).toBeHidden();
   await expect(page.locator('.result-score')).toHaveCount(0);
   await page.goto(savedRunUrl);
   await expect(page).toHaveURL(/#runs$/);
-  await expect(page.locator('#run-detail')).toContainText('No run selected');
+  await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here.');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
   await expect(page.locator('#evaluation-rows .badge.not_run')).toHaveText('Not run');
