@@ -60,7 +60,7 @@ test('infrastructure scopes deployment access and preserves data for explicit te
   const trust = r.DeployRole.Properties.AssumeRolePolicyDocument.Statement[0];
   assert.deepEqual(trust.Condition.StringEquals, {
     'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-    'token.actions.githubusercontent.com:sub': 'repo:TestCraft-App/evals-framework:ref:refs/heads/main',
+    'token.actions.githubusercontent.com:sub': 'repo:TestCraft-App@139815958/evals-framework@1360313670:ref:refs/heads/main',
   });
   const permissions = r.DeployRole.Properties.Policies[0].PolicyDocument.Statement;
   assert.equal(JSON.stringify(permissions).includes('secretsmanager:GetSecretValue'), false);

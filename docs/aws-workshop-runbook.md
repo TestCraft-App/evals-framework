@@ -41,6 +41,8 @@ En GitHub, iniciar sesión como **jfagundez-uy** para configurar Actions. Tener 
 
 Configurar las variables de Actions con los Outputs del stack según [la guía de despliegue](aws-deployment.md). Mantener `AWS_DEPLOY_ENABLED=false` hasta que la infraestructura y el secreto estén preparados. Subir los cambios mediante PR; verificar tests, mergear y activar el primer release. El pipeline no crea infraestructura: actualiza solo esta app con una imagen inmutable y guarda los datos en el mismo volumen.
 
+La confianza OIDC usa el prefijo inmutable verificado `repo:TestCraft-App@139815958/evals-framework@1360313670`, seguido de `:ref:refs/heads/main`. En la cuenta de GitHub actual, la protección de ramas de este repositorio privado requiere otro plan (API devolvió 403). No se cambió el plan ni la visibilidad: el workflow se ejecuta al mergear y también ante pushes directos a `main`; usar PRs por convención hasta disponer de protección.
+
 Registrar el StackId, AppOrigin, InstanceId, DataVolumeId, ArtifactBucket, EcrRepositoryUri, SecretArn, DistributionId, NatGatewayId y NatAllocationId para la retirada. No registrar valores de secretos.
 
 ## Retirada completa: requiere revisar y confirmar los objetivos

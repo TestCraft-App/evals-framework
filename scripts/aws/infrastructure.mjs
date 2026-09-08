@@ -86,7 +86,7 @@ export function infrastructure() {
   r.DeployRole = resource('AWS::IAM::Role', {
     AssumeRolePolicyDocument: policy([{
       Effect: 'Allow', Principal: { Federated: ref('GithubOidcArn') }, Action: 'sts:AssumeRoleWithWebIdentity',
-      Condition: { StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': 'repo:TestCraft-App/evals-framework:ref:refs/heads/main' } },
+      Condition: { StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': 'repo:TestCraft-App@139815958/evals-framework@1360313670:ref:refs/heads/main' } },
     }]),
     Policies: [{ PolicyName: 'DeployOnlyThisApplication', PolicyDocument: policy([
       allow('ecr:GetAuthorizationToken', '*'),
