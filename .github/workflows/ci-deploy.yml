@@ -1,0 +1,79 @@
+name: Test and deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: bash -n scripts/aws/deploy-host.sh
+      - run: bash -n scripts/aws/bootstrap-host.sh
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Build and smoke-test the production image without model calls
+        run: |
+          docker build -t testcraft-evals:ci .
+          docker run -d --name evals-ci --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /data:rw,uid=1000,gid=1000,size=64m -e APP_ORIGIN=https://workshop.example testcraft-evals:ci
+          for attempt in $(seq 1 30); do
+            if docker exec evals-ci node --input-type=module -e 'const r=await fetch("http://127.0.0.1:3000/healthz");if(!r.ok)process.exit(1)'; then
+              docker stop --time 20 evals-ci
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs evals-ci
+          exit 1
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: aws-production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_INSTANCE_ID: ${{ vars.AWS_INSTANCE_ID }}
+      AWS_ARTIFACT_BUCKET: ${{ vars.AWS_ARTIFACT_BUCKET }}
+      AWS_SECRET_ARN: ${{ vars.AWS_SECRET_ARN }}
+      ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+      APP_ORIGIN: ${{ vars.APP_ORIGIN }}
+      WORKSHOP_ID: ${{ vars.WORKSHOP_ID || 'workshop' }}
+      WORKSHOP_MAX_MODEL_CALLS: ${{ vars.WORKSHOP_MAX_MODEL_CALLS || '200' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Validate destination before requesting AWS credentials
+        run: node scripts/aws/release.mjs --check-config
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: evals-${{ github.run_id }}
+      - name: Publish immutable image and deploy with Systems Manager
+        run: node scripts/aws/release.mjs

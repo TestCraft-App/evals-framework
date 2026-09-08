@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "description": "Persistent evaluation framework for TestCraft idea and code generation.",
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "test": "node --test tests/backend.test.mjs tests/sessions.test.mjs",
+    "test": "node --test tests/backend.test.mjs tests/sessions.test.mjs tests/runtime.test.mjs tests/deployment.test.mjs",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.1127.0"
   }
 }
