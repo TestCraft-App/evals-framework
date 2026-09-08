@@ -67,7 +67,7 @@ test('existing string-based evaluations still grade with their original referenc
     const input = JSON.parse(JSON.parse(options.body).messages[1].content);
     assert.equal(input.expectedOutput, legacy.expectedOutput);
     assert.deepEqual(input.criteria.map(c => c.text), ['Positive coverage', 'Negative coverage']);
-    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, passed: true, evidence: 'candidate', reason: 'Evidence reviewed' })) }) } }] });
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, passed: true, evidence: [1], reason: 'Evidence reviewed' })) }) } }] });
   });
 });
 
@@ -248,9 +248,9 @@ test('real judge request includes rubric and validates each verdict; missing cre
     calls++; assert.equal(url, 'https://llm.example/v1/chat/completions');
     const body = JSON.parse(options.body), input = JSON.parse(body.messages[1].content);
     assert.equal(body.response_format.json_schema.strict, true);
-    assert.equal('expectedOutput' in input, false); assert.equal(input.actualOutput, 'candidate');
+    assert.equal('expectedOutput' in input, false); assert.deepEqual(input.actualOutputLines, [{ line: 1, text: 'candidate' }]);
     assert.equal(input.criteria.length, 2);
-    return Response.json({ model: 'judge-test', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks: [{ id: 'c1', passed: true, evidence: 'candidate', reason: 'Covered' }, { id: 'c2', passed: false, evidence: 'No negative case', reason: 'Missing' }] }) } }] });
+    return Response.json({ model: 'judge-test', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks: [{ id: 'c1', passed: true, evidence: [1], reason: 'Covered' }, { id: 'c2', passed: false, evidence: 'No negative case', reason: 'Missing' }] }) } }] });
   };
   const result = await grade(evaluation, 'candidate', { OPENAI_API_KEY: 'test-only', OPENAI_BASE_URL: 'https://llm.example/v1' }, mockFetch);
   assert.equal(result.score, 50); assert.equal(calls, 1);
@@ -286,9 +286,9 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     assert.equal(url, 'https://judge.example/v1/chat/completions');
     assert.equal(options.headers.authorization, 'Bearer judge-key');
     const input = JSON.parse(body.messages[1].content);
-    assert.equal(input.actualOutput, 'valid user; invalid password');
+    assert.deepEqual(input.actualOutputLines, [{ line: 1, text: 'valid user; invalid password' }]);
     assert.equal('expectedOutput' in input, false);
-    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, passed: true, evidence: 'valid user; invalid password', reason: 'Both behaviors covered.' })) }) }, finish_reason: 'stop' }] });
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ checks: input.criteria.map(c => ({ id: c.id, passed: true, evidence: [1], reason: 'Both behaviors covered.' })) }) }, finish_reason: 'stop' }] });
   };
   const app = createApp({ dbPath: ':memory:', env: { TESTCRAFT_BASE_URL: 'https://testcraft.example', TESTCRAFT_OPENAI_API_KEY: 'generation-key', OPENAI_BASE_URL: 'https://judge.example/v1', OPENAI_API_KEY: 'judge-key' }, fetchImpl: mockFetch });
   app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
