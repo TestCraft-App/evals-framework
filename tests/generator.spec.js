@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './browser-fixtures.mjs';
 let pageErrors;
 const catalog = { models: [
   { id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true },
@@ -97,7 +97,7 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
 test('batch selection grades each case independently and preserves HTML as inert text', async ({ page }) => {
   const base = { name: 'Batch good', type: 'code', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains', input: 'Test login', html: '<button onclick="alert(1)">Login</button><script>throw new Error("must not run")</script>', actualOutput: 'expect(page.getByRole("button")).toBeVisible()', criteria: ['expect', 'getByRole'], model: '', judgeModel: '', pageUrl: '' };
   const session = await (await page.request.get('/api/session')).json();
-  const headers = { origin: 'http://127.0.0.1:3107', 'x-csrf-token': session.csrfToken };
+  const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
   expect((await page.request.post('/api/evaluations', { headers, data: base })).status()).toBe(201);
   expect((await page.request.post('/api/evaluations', { headers, data: { ...base, name: 'Batch weak', actualOutput: 'expect(true)' } })).status()).toBe(201);
   await page.goto('/');
@@ -134,7 +134,7 @@ test('LLM as a judge has quality criteria and reports missing configuration hone
   await expect(page.locator('.result-body .badge').first()).toHaveText('Error');
 });
 
-test('wizard validates each step, preserves edits on Back, and saves criteria as strings without a reference', async ({ page }) => {
+test('wizard validates each step, preserves edits on Back, and saves typed criteria without a reference', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New evaluation' }).click();
   await expect(page.getByRole('dialog').getByRole('combobox', { name: 'Framework', exact: true })).toBeDisabled();
@@ -169,7 +169,7 @@ test('wizard validates each step, preserves edits on Back, and saves criteria as
   const savedResponse = page.waitForResponse(res => res.url().endsWith('/api/evaluations') && res.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   const response = await savedResponse, payload = response.request().postDataJSON(), saved = await response.json();
-  expect(payload.criteria).toEqual(['Uses only controls from the HTML.']);
+  expect(payload.criteria).toEqual([{ text: 'Uses only controls from the HTML.', method: 'model_grade', weight: 1 }]);
   expect(payload).not.toHaveProperty('threshold'); expect(payload).not.toHaveProperty('expectedOutput');
   expect(payload).not.toHaveProperty('framework'); expect(payload).not.toHaveProperty('language');
   expect(saved.threshold).toBe(80); expect(saved.input).toBe(''); expect(saved.judgeModel).toBe('gpt-4o');

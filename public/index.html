@@ -11,7 +11,7 @@
 <body>
   <header class="app-header">
     <a class="brand" href="#evaluations"><span class="brand-icon" aria-hidden="true">tc</span><span>TestCraft <b>Evals</b></span></a>
-    <div class="header-right"><span class="workspace-badge" id="private-badge" hidden>PRIVATE WORKSPACE</span><a href="https://home.testcraft.app/" target="_blank" rel="noreferrer">TestCraft ↗</a></div>
+    <div class="header-right"><span class="workspace-badge" id="private-badge" hidden>Private session</span><a href="https://home.testcraft.app/" target="_blank" rel="noreferrer">Extension ↗</a></div>
   </header>
   <section id="session-status" class="session-status" aria-live="polite">
     <p id="session-message">Opening your private workspace…</p>
@@ -19,9 +19,8 @@
     <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
   </section>
   <main class="shell" id="workspace" hidden>
-    <div class="page-heading"><div><p class="eyebrow">TESTCRAFT / EVALUATION FRAMEWORK</p><h1>Evaluation workspace</h1><p class="subtitle">Evaluate test ideas and generated code against your dataset.</p></div><span class="storage-badge" id="connection">Connecting…</span></div>
+    <div class="page-heading"><h1>Workspace</h1><span class="usage-badge" id="model-allowance" role="status" aria-label="Shared model-call allowance"></span></div>
     <div class="notice" id="setup-notice" hidden></div>
-    <div class="session-strip"><span id="model-allowance" role="status"></span><details><summary>About this workspace</summary><p>No account or access code is needed. This browser keeps your session until <span id="session-expiry"></span>. Clearing cookies, changing browsers or session expiry starts a new empty workspace automatically.</p><p>Your evaluations and runs are separate from other participants. Anyone with the app URL can enter and use the shared model-call allowance, which is not a dollar limit.</p><p>Workspace ID: <code id="workspace-id"></code></p></details></div>
     <div class="error-banner" id="app-error" role="alert" hidden></div>
     <nav class="tabs" role="tablist" aria-label="Workspaces">
       <button id="evaluations-tab" role="tab" aria-selected="true" aria-controls="evaluations-panel">Evaluations <span id="eval-count">0</span></button>
@@ -36,11 +35,15 @@
         <article><span>Average score</span><strong id="stat-score">—</strong><small>Graded results from latest runs</small></article>
       </div>
       <section class="table-card" aria-label="Evaluation library">
-        <div class="section-heading"><div><h2>Evaluation library</h2><p>Save an input and criteria, then run the evaluations you want to compare.</p></div><div class="actions"><button id="example-button" class="button">Load example</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
+        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><button id="example-button" class="button">Load example</button><button id="workshop-button" class="button">Load workshop suite</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
+        <div class="suite-toolbar" aria-label="Suites">
+          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">Unfiled</option></select></label>
+          <button id="new-suite" class="button small">＋ New suite</button><button id="rename-suite" class="text-button" disabled>Rename suite</button><button id="delete-suite" class="text-button danger" disabled>Delete suite</button>
+        </div>
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
           <label>Type<select id="filter-type"><option value="">All types</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">All Rule-based</option><option value="model_based">All Model-based</option><optgroup label="Rule-based"><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></optgroup><optgroup label="Model-based"><option value="model_grade">LLM as a judge</option></optgroup></select></label>
+          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">All Rule-based</option><option value="model_based">All Model-based</option><option value="hybrid">Hybrid</option><optgroup label="Rule-based"><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></optgroup><optgroup label="Model-based"><option value="model_grade">LLM as a judge</option></optgroup></select></label>
           <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
           <label>Sort<select id="sort"><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="score">Highest score</option></select></label>
         </div>
@@ -49,21 +52,31 @@
           <table><thead><tr><th class="checkbox-cell"><input id="select-all" type="checkbox" aria-label="Select all visible evaluations"></th><th>Evaluation</th><th>Type</th><th>Framework / language</th><th>Method</th><th>Source</th><th>Status</th><th>Score</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
         </div>
         <div class="empty-state" id="empty-library"><div class="empty-icon" aria-hidden="true">☷</div><h3>Your first evaluation starts here.</h3><p>Add the HTML, define what a good output looks like, and choose how to measure it.</p><button class="button" id="empty-create">Create an evaluation</button></div>
-        <div class="table-footer"><span id="filtered-count">0 evaluations</span><span>Saved in the backend · available after restart</span></div>
+        <div class="table-footer"><span id="filtered-count">0 evaluations</span></div>
       </section>
-      <div class="workflow-tip"><span class="tip-icon" aria-hidden="true">i</span><p><b>A passing evaluation is evidence, not a guarantee.</b> Model grade measures your criteria; exact match and contains compare text. This workspace does not execute generated test code.</p></div>
     </section>
 
     <section id="runs-panel" role="tabpanel" aria-labelledby="runs-tab" hidden>
-      <div class="section-heading runs-heading"><div><h2>Evaluation runs</h2><p>Review saved results. Select a finished run to delete it from your history.</p></div><button id="refresh-runs" class="button">↻ Refresh runs</button></div>
+      <div class="section-heading runs-heading"><h2>Evaluation runs</h2><button id="refresh-runs" class="button">↻ Refresh runs</button></div>
       <div class="runs-layout"><aside class="run-history" aria-label="Run history"><h3>RECENT RUNS</h3><div id="run-list"></div></aside><div id="run-detail" class="run-detail"><div class="empty-state"><div class="empty-icon" aria-hidden="true">▷</div><h3>No run selected</h3><p>Select evaluations in the library and choose Run selected.</p></div></div></div>
     </section>
-    <footer>TestCraft Evals <span>Built for testing AI-powered testing tools.</span><a href="https://github.com/TestCraft-App/evals-framework" target="_blank" rel="noreferrer">evals-framework ↗</a></footer>
+    <footer class="app-footer">
+      <div class="footer-meta">
+        <span class="connection-status" id="connection">Connecting…</span>
+        <details class="workspace-details"><summary>Session details</summary>
+          <p>Private to this browser until <span id="session-expiry"></span>. Clearing cookies, changing browsers or session expiry starts a new workspace.</p>
+          <p>The model-call allowance is shared. Anyone with the app link can use it; it is not a dollar limit.</p>
+          <p>Pass is evidence, not a guarantee. Model graders can be wrong. Generated code is not executed.</p>
+          <p>Workspace ID: <code id="workspace-id"></code></p>
+        </details>
+      </div>
+      <a href="https://github.com/TestCraft-App/evals-framework" target="_blank" rel="noreferrer">GitHub ↗</a>
+    </footer>
   </main>
 
   <dialog id="evaluation-dialog" aria-labelledby="dialog-title">
     <form id="evaluation-form" novalidate>
-      <div class="dialog-heading"><div><p class="eyebrow">BUILD YOUR DATASET</p><h2 id="dialog-title">New evaluation</h2></div><button type="button" id="close-dialog" class="icon-button" aria-label="Close new evaluation">×</button></div>
+      <div class="dialog-heading"><div><h2 id="dialog-title">New evaluation</h2><p id="edit-version" hidden></p></div><div class="actions"><button type="button" id="duplicate-evaluation" class="button small" hidden>Duplicate</button><button type="button" id="close-dialog" class="icon-button" aria-label="Close evaluation">×</button></div></div>
       <ol class="wizard-steps" aria-label="Evaluation setup">
         <li id="step-indicator-1" aria-current="step"><span class="step-number">1</span><span>Parameters &amp; input</span></li>
         <li id="step-indicator-2"><span class="step-number">2</span><span>Evaluation method</span></li>
@@ -87,6 +100,7 @@
           </div>
           <div class="evaluation-inputs">
             <label>Eval name<input name="name" id="name" maxlength="140" required placeholder="e.g. SauceDemo · login coverage"></label>
+            <label>Suite<select name="suiteId" id="evaluation-suite"><option value="">Unfiled</option></select></label>
             <label>Test description <span class="optional">(optional)</span><textarea name="input" id="input" rows="2" maxlength="16000" placeholder="Add context for the evaluation, if needed."></textarea></label>
             <label>HTML input<textarea name="html" id="html" class="code-input" rows="5" maxlength="100000" required spellcheck="false" placeholder="Paste the selected element or page HTML from TestCraft…"></textarea><small>Context only. HTML and scripts are never rendered or executed.</small></label>
             <label>Page URL<input name="pageUrl" id="page-url" type="url" maxlength="2000" placeholder="https://www.saucedemo.com/"><small>Required for TestCraft code generation; optional for ideas.</small></label>
@@ -98,7 +112,7 @@
           <div class="parameter-panel">
             <h3>Evaluation method</h3>
             <div class="method-row">
-              <label for="method-family">Evaluation family<select id="method-family"><option value="model_based">Model-based</option><option value="rule_based">Rule-based</option></select></label>
+              <label for="method-family">Evaluation family<select id="method-family"><option value="model_based">Model-based</option><option value="rule_based">Rule-based</option><option value="hybrid">Hybrid</option></select></label>
               <label for="method">Method<select name="method" id="method"><option value="model_grade">LLM as a judge</option></select></label>
               <label id="judge-field">Model grader<select id="judge-model" name="judgeModel" aria-describedby="models-status"></select></label>
             </div>
@@ -110,15 +124,23 @@
           <div class="criteria-section" aria-labelledby="criteria-title">
             <div class="criteria-heading"><h3 id="criteria-title">Evaluation criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
             <p id="criteria-hint" class="field-hint"></p>
+            <label class="check-label weights-toggle"><input id="use-weights" type="checkbox">Custom weights <span class="optional">(optional)</span></label>
             <ol id="criteria-list" aria-label="Evaluation criteria"></ol>
             <p id="criteria-empty" class="criteria-empty">What makes a good response? Add your first criterion below.</p>
+            <label id="criterion-method-field" class="criterion-method-field" hidden>New criterion method<select id="criterion-method"><option value="model_grade">LLM as a judge</option><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></select></label>
             <div class="criteria-composer"><label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="2" maxlength="8000" placeholder="e.g. Includes negative login scenarios with clear expected behavior."></textarea><button id="add-criterion" type="button" class="button">＋ Add criteria</button></div>
-            <p class="field-hint">Each method keeps its own draft criteria while you edit. Switching methods never converts quality criteria into literal text checks. Only the selected method is saved.</p>
+            <p class="field-hint" id="score-formula">Score = passed criteria / total criteria × 100. Every criterion returns Pass or Fail.</p>
           </div>
         </section>
       </div>
-      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
+      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="delete-evaluation" class="button danger" hidden>Delete evaluation</button><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-as-new" class="button" hidden>Save as new</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
     </form>
+  </dialog>
+  <dialog id="suite-dialog" class="compact-dialog" aria-labelledby="suite-title">
+    <form id="suite-form"><div class="dialog-heading"><h2 id="suite-title">New suite</h2></div><div class="compact-body"><label>Suite name<input id="suite-name" required maxlength="140"></label><p id="suite-error" class="session-error" role="alert"></p></div><div class="dialog-footer"><button id="cancel-suite" type="button" class="button">Cancel</button><button id="save-suite" type="submit" class="button primary">Save suite</button></div></form>
+  </dialog>
+  <dialog id="delete-library-dialog" class="compact-dialog" role="alertdialog" aria-labelledby="delete-library-title" aria-describedby="delete-library-description">
+    <form id="delete-library-form"><div class="dialog-heading"><h2 id="delete-library-title">Delete evaluation?</h2></div><div class="compact-body"><p id="delete-library-name" class="delete-run-summary"></p><p id="delete-library-description"></p><p id="delete-library-error" class="session-error" role="alert"></p></div><div class="dialog-footer"><button id="cancel-delete-library" type="button" class="button" autofocus>Cancel</button><button id="confirm-delete-library" type="submit" class="button danger-solid">Delete evaluation</button></div></form>
   </dialog>
   <dialog id="delete-run-dialog" role="alertdialog" aria-labelledby="delete-run-title" aria-describedby="delete-run-description">
     <form id="delete-run-form">
