@@ -1,8 +1,9 @@
 import { AppError, unsupportedGraderModel } from './validation.mjs';
+import { evaluationMethods } from './methods.mjs';
 
 export function publicConfig(env) {
   return {
-    app: 'TestCraft Evals', version: 4,
+    app: 'TestCraft Evals', version: 6, evaluationMethods,
     llmReady: Boolean(env.OPENAI_API_KEY),
     model: env.LLM_MODEL || 'gpt-4o-mini', judgeModel: env.JUDGE_MODEL || env.LLM_MODEL || 'gpt-4o-mini',
     judgeModelCompatible: !unsupportedGraderModel(env.JUDGE_MODEL || env.LLM_MODEL || 'gpt-4o-mini'),

@@ -31,7 +31,7 @@ export class Engine {
     event(item.evaluation.source === 'pasted' ? 'Loading supplied TestCraft output' : `Generating ${item.evaluation.type} from input and HTML`);
     try {
       // Do not pay for a generation when the selected judge cannot be called.
-      if (item.evaluation.method === 'model_grade' && !this.env.OPENAI_API_KEY) throw new AppError('Set OPENAI_API_KEY in the backend .env and restart before running Model grade.', 503);
+      if (item.evaluation.method === 'model_grade' && !this.env.OPENAI_API_KEY) throw new AppError('Set OPENAI_API_KEY in the backend .env and restart before running LLM as a judge.', 503);
       if (item.evaluation.method === 'model_grade' && unsupportedGraderModel(item.evaluation.judgeModel)) throw new AppError('This model does not support structured grading. Duplicate the evaluation and choose another model grader.');
       const generated = await generateOutput(item.evaluation, this.env, budgetedFetch);
       item.output = generated.output; item.outputSource = generated.source; item.generationModel = generated.model; item.generationUsage = generated.usage;

@@ -61,6 +61,9 @@ html { scrollbar-gutter: stable; }
 .criteria-section { padding: 24px 26px; }
 .criteria-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .criteria-heading h3 { margin: 0; }
+.method-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.method-meta { color: var(--teal); font-size: .875rem; line-height: 1.5; margin-top: 10px; }
+.method-limitation { color: var(--muted); font-size: .875rem; line-height: 1.6; margin-top: 8px; }
 #criteria-list { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 8px; }
 #criteria-list li { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; }
 #criteria-list textarea { margin: 0; border-color: transparent; padding: 2px 6px; min-height: 28px; }

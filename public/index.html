@@ -40,7 +40,7 @@
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
           <label>Type<select id="filter-type"><option value="">All types</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-          <label>Method<select id="filter-method"><option value="">All methods</option><option value="model_grade">Model grade</option><option value="exact_match">Exact match</option><option value="contains">Contains</option></select></label>
+          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">All Rule-based</option><option value="model_based">All Model-based</option><optgroup label="Rule-based"><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></optgroup><optgroup label="Model-based"><option value="model_grade">LLM as a judge</option></optgroup></select></label>
           <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
           <label>Sort<select id="sort"><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="score">Highest score</option></select></label>
         </div>
@@ -98,11 +98,14 @@
           <div class="parameter-panel">
             <h3>Evaluation method</h3>
             <div class="method-row">
-              <label>Method<select name="method" id="method"><option value="model_grade">Model grade</option><option value="exact_match">Exact match</option><option value="contains">Contains</option></select></label>
+              <label for="method-family">Evaluation family<select id="method-family"><option value="model_based">Model-based</option><option value="rule_based">Rule-based</option></select></label>
+              <label for="method">Method<select name="method" id="method"><option value="model_grade">LLM as a judge</option></select></label>
               <label id="judge-field">Model grader<select id="judge-model" name="judgeModel" aria-describedby="models-status"></select></label>
             </div>
             <div id="models-feedback"><p class="field-hint" id="models-status" role="status"></p><button type="button" id="retry-models" class="text-button" hidden>Retry loading models</button></div>
             <p id="method-hint" class="field-hint"></p>
+            <p id="grading-cost" class="method-meta"></p>
+            <p id="method-limitation" class="method-limitation"></p>
           </div>
           <div class="criteria-section" aria-labelledby="criteria-title">
             <div class="criteria-heading"><h3 id="criteria-title">Evaluation criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
@@ -110,7 +113,7 @@
             <ol id="criteria-list" aria-label="Evaluation criteria"></ol>
             <p id="criteria-empty" class="criteria-empty">What makes a good response? Add your first criterion below.</p>
             <div class="criteria-composer"><label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="2" maxlength="8000" placeholder="e.g. Includes negative login scenarios with clear expected behavior."></textarea><button id="add-criterion" type="button" class="button">＋ Add criteria</button></div>
-            <p class="field-hint">Add one at a time. You can edit or remove each item before saving.</p>
+            <p class="field-hint">Each method keeps its own draft criteria while you edit. Switching methods never converts quality criteria into literal text checks. Only the selected method is saved.</p>
           </div>
         </section>
       </div>

@@ -1,7 +1,9 @@
 import { AppError } from './validation.mjs';
 import { chat } from './providers.mjs';
+import { evaluationMethods } from './methods.mjs';
 
 export async function grade(evaluation, output, env, fetchImpl = fetch) {
+  if (!Object.hasOwn(evaluationMethods, evaluation.method)) throw new AppError('Unsupported evaluation method. Choose a rule or LLM as a judge.');
   // Historical cases keep their original reference-based rules; new cases use string arrays.
   const isCriteriaList = Array.isArray(evaluation.criteria);
   if (evaluation.method === 'exact_match') {
@@ -11,9 +13,17 @@ export async function grade(evaluation, output, env, fetchImpl = fetch) {
     const passed = normalize(output) === normalize(target);
     return { score: passed ? 100 : 0, checks: [{ criterion: isCriteriaList ? target : 'Exact match', score: passed ? 100 : 0, evidence: passed ? 'Output matches after trimming and normalizing line endings.' : 'Output differs from the required text. Inspect the output and criterion.', reason: 'Case, punctuation, and internal whitespace are significant.' }], judgeModel: null };
   }
-  if (evaluation.method === 'contains') {
+  if (evaluation.method === 'contains' || evaluation.method === 'not_contains') {
     const terms = isCriteriaList ? evaluation.criteria : [...new Set(evaluation.expectedOutput.split(/\r?\n/).map(x => x.trim()).filter(Boolean))];
-    const checks = terms.map(term => ({ criterion: term, score: output.includes(term) ? 100 : 0, evidence: output.includes(term) ? term : `Missing: ${term}`, reason: 'Case-sensitive substring check; each required fragment has equal weight.' }));
+    const forbidden = evaluation.method === 'not_contains';
+    const checks = terms.map(term => {
+      const found = output.includes(term);
+      return {
+        criterion: term, score: (forbidden ? !found : found) ? 100 : 0,
+        evidence: forbidden ? (found ? `Forbidden fragment found: ${term}` : `Not found: ${term}`) : (found ? term : `Missing: ${term}`),
+        reason: forbidden ? 'Case-sensitive substring check; each absent forbidden fragment has equal weight. This does not prove code safety or correctness.' : 'Case-sensitive substring check; each required fragment has equal weight.',
+      };
+    });
     return { score: Math.round(checks.reduce((sum,x) => sum + x.score, 0) / checks.length), checks, judgeModel: null };
   }
   const criteria = (isCriteriaList ? evaluation.criteria : evaluation.criteria.split(/\r?\n/).map(x => x.trim()).filter(Boolean)).map((text,index) => ({ id: `c${index + 1}`, text }));

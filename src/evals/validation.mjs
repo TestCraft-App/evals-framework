@@ -3,7 +3,8 @@ export class AppError extends Error {
 }
 
 export const frameworks = { playwright: ['typescript', 'javascript', 'python', 'java', 'csharp'], cypress: ['typescript', 'javascript'], selenium: ['javascript', 'python', 'java', 'csharp'] };
-export const methods = ['model_grade', 'exact_match', 'contains'];
+import { evaluationMethods, methods } from './methods.mjs';
+export { methods } from './methods.mjs';
 export const sources = ['pasted', 'testcraft_api', 'llm'];
 export const PASS_THRESHOLD = 80;
 export const verifiedGraderModels = ['gpt-4o-mini', 'gpt-4o', 'o3-mini'];
@@ -44,7 +45,7 @@ export function validateEvaluation(body) {
   }
   const fromIdeas = type === 'code' && source === 'testcraft_api' && (body.fromIdeas ?? false);
   return {
-    schemaVersion: 2, name: string(body.name, 'Name', 140), type, framework, language, method, source, threshold: PASS_THRESHOLD,
+    schemaVersion: 2, name: string(body.name, 'Name', 140), type, framework, language, method, evaluationFamily: evaluationMethods[method].family, source, threshold: PASS_THRESHOLD,
     input: string(body.input, 'Test description', 16000, false), html: string(body.html, 'HTML', 100000),
     actualOutput: source === 'pasted' ? string(body.actualOutput, 'TestCraft output', 60000) : '',
     ideas: fromIdeas ? string(body.ideas, 'Selected test ideas', 16000) : '',

@@ -40,8 +40,8 @@ Each browser gets a **different anonymous workspace**. The server stores a hash 
 | Save a case, view results, load the model catalog | 0 |
 | Pasted output + Rule-based method | 0 |
 | TestCraft / backend LLM generation + text grading | 1 |
-| Pasted output + Model grade | 1 |
-| Generation + Model grade | 2 |
+| Pasted output + LLM as a judge | 1 |
+| Generation + LLM as a judge | 2 |
 
 The backend atomically reserves the entire batch before accepting it, including simultaneous requests from different participants. An unaffordable batch returns 429 without starting a partial run. Every outbound model request is counted **before dispatch**; failures/timeouts still count because the provider may have processed them. Unattempted calls are released after errors or restart recovery. No credentials / no dispatched request means no consumed calls. Offline text grading still works when the allowance is exhausted; setting the limit to 0 permits only those runs.
 
@@ -57,7 +57,7 @@ Set LLM secrets in the backend runtime only. Keep the database outside an epheme
 
 1. Open the app; your workspace starts automatically. Select **New evaluation**. Step 1 has a horizontal parameter bar: **TestCraft endpoint**, output source, framework, and language. Ideas disables framework/language; code enables them.
 2. Fill **Eval name**, optional **Test description**, **HTML input**, and **Page URL**. TestCraft code generation requires the original page URL. Pasted output also needs what the extension actually generated. There is no Expected output field.
-3. Choose **Next**. Step 2 has **Evaluation method** and a **Model grader** dropdown. Use **Add criteria** to build an editable/removable list, one criterion at a time. **Back** preserves both steps. One scroll area keeps the step indicator and actions visible.
+3. Choose **Next**. Step 2 separates **Evaluation family** from **Method**: Rule-based → Contains / Does not contain / Exact match; Model-based → LLM as a judge. The **Model grader** dropdown is disabled for rules. Each method explains its input, limitations and grading-call cost. Use **Add criteria** to build its list. Switching methods keeps independent drafts, so quality rubrics are not reinterpreted as literal strings; only the selected method is saved. **Back** preserves both steps. One scroll area keeps the step indicator and actions visible.
 4. **Create evaluation** saves a row in SQLite. It does not call a model.
 5. Select cases and choose **Run selected**. Runs shows progress, criteria alongside actual output, scores, criterion-level evidence, and timestamps. **Open in new tab** opens the saved run in a separate browser tab.
 6. Click a case name to inspect its settings and save a revised copy. Earlier cases and run snapshots are preserved.
@@ -71,8 +71,8 @@ Evaluation run
   ├─ Generate: TestCraft v1 API → TestCraft's configured LLM
   │            OR paste output copied from the extension
   │            OR optional independent backend LLM adapter
-  └─ Grade: Exact match / Contains locally
-            OR Model grade → OPENAI_BASE_URL → judge model
+  └─ Grade: Rule-based → local text checks
+            OR Model-based → LLM as a judge → OPENAI_BASE_URL
                   ↓
            SQLite: output + score + evidence
 ```
@@ -93,7 +93,9 @@ The adapter consumes streamed `choices[].delta.content`, including fragmented UT
 
 Configure `TESTCRAFT_BASE_URL` for your deployed or local API. With `TESTCRAFT_OPENAI_API_KEY` blank, generation depends on that API's own credentials. If set, this separate key is explicitly sent to TestCraft as `openAiApiKey`. Leave Generation model blank to use TestCraft's default.
 
-### Model grade
+### Model-based → LLM as a judge
+
+Previously labeled **Model grade**, this is the same rubric-based evaluator (`method: "model_grade"` remains compatible). Model-based is a family, not a competing method alongside LLM-as-a-judge. Here that family is implemented by a language model scoring one response against independent criteria. Our initial three choices mixed two specific text rules with one model-based implementation; they were not meant as an exhaustive classification of eval techniques. See the official [LLM-as-a-judge guidance](https://developers.openai.com/api/docs/guides/evaluation-best-practices#llm-as-a-judge-and-model-graders).
 
 Set `OPENAI_API_KEY` in the backend `.env` and restart. `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1`. `JUDGE_MODEL` defaults to `gpt-4o-mini` and is overridable per evaluation. The model/provider must support Chat Completions **strict JSON-schema Structured Outputs**.
 
@@ -111,8 +113,15 @@ This follows the [official Structured Outputs guide](https://developers.openai.c
 - **Backend LLM adapter:** direct OpenAI-compatible generation with this project's own prompt. It is explicitly **not the TestCraft v1 prompt**; do not present it as evaluating the extension's generator.
 - **Exact match:** exactly one criterion containing the full text to match; 100 or 0. Normalizes CRLF and trims outer whitespace. Case, punctuation, and internal whitespace remain significant.
 - **Contains:** each criterion is a case-sensitive required text fragment, not a semantic instruction. Score is the percentage found, rounded to an integer. This measures text presence, not semantic correctness.
+- **Does not contain:** each criterion is a case-sensitive forbidden fragment, such as `waitForTimeout` or `TODO`. An absent fragment scores 100; a present fragment scores 0; the overall score is their rounded mean. Comments count as text too, and differently written equivalents are not detected. This is not a parser, safety guarantee, or proof that the code works. It shares the existing global pass policy, so an individual failing check does not necessarily fail a many-criterion evaluation.
+
+These three text operations belong to **Rule-based** evaluation: the same output and criteria always produce the same grade, with no grader-model call. This says nothing about determinism of the upstream TestCraft generation. The terminology aligns with the distinction between [string checks and model graders](https://developers.openai.com/api/docs/guides/graders). The app implements its own graders; it is not delegating them to OpenAI's Evals API.
+
+For the workshop, use literal rules to demonstrate inexpensive, repeatable checks, then use LLM as a judge for coverage, grounded selectors, and meaningful assertions. Judge results still need human review. Exact match is useful for fixed labels, but is deliberately described as a poor default for freely generated code. No regex execution, arbitrary grading scripts, generated-code execution, human-review workflow, embeddings or pairwise comparison has been added.
 
 Criteria are **never supplied to the generator**. `OPENAI_API_KEY` is never implicitly forwarded to TestCraft. Keys stay outside browser responses and saved evaluations.
+
+The non-secret method catalog is returned in `/api/config`. The backend derives `evaluationFamily` from the validated `method`; client-supplied family overrides are ignored. Earlier cases/runs without the extra family field still display correctly, and unknown method IDs are rejected rather than silently sent to a paid judge.
 
 New evaluation payloads require `criteria: string[]`: 1–20 distinct, nonempty strings, up to 8,000 characters total (exact match requires one). New cases do not store `expectedOutput`. Existing cases with string-based criteria keep their reference-based grading rules and remain readable; duplicating one converts it to the new form. Historical run snapshots are unchanged. Reruns use the current global policy and save it in their new snapshots.
 

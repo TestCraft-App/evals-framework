@@ -189,11 +189,13 @@ test('all Rule-based methods run in private sessions with a zero model-call allo
   const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '0' }, fetchImpl: async () => { calls++; throw new Error('No model calls expected'); } }));
   try {
     const a = await client(app);
-    for (const [method, criteria] of [['contains', ['valid user']], ['exact_match', [evaluation.actualOutput]]]) {
+    for (const [method, criteria] of [['contains', ['valid user']], ['not_contains', ['TODO']], ['exact_match', [evaluation.actualOutput]]]) {
       const saved = await save(a, { ...evaluation, method, criteria });
+      assert.equal(saved.evaluationFamily, 'rule_based');
       const result = await waitForRun(a, (await start(a, [saved.id])).id);
       assert.equal(result.items[0].score, 100);
       assert.equal(result.items[0].evaluation.method, method);
+      assert.equal(result.items[0].evaluation.evaluationFamily, 'rule_based');
     }
     assert.equal(calls, 0); assert.equal((await a.get('/api/session')).budget.used, 0);
     const b = await client(app); assert.deepEqual((await b.get('/api/runs')).runs, []);

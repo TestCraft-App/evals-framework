@@ -8,7 +8,7 @@ TestCraft's browser extension is the application being evaluated. This project s
 
 1. Inspect a UI with TestCraft and obtain its selected HTML.
 2. Open New evaluation. Step 1: choose the TestCraft endpoint and parameters, then provide a name, optional test description, HTML, and page URL. Framework/language apply only to code.
-3. Choose Next. Step 2: select the evaluation method and, for Model grade, a model from the dropdown. Add observable criteria one by one before seeing a new generation. No reference response or configurable percentage is required.
+3. Choose Next. Step 2: choose the evaluation family and concrete method. Rule-based offers Contains, Does not contain and Exact match; Model-based offers LLM as a judge, with a model dropdown. Add literal fragments for rules or observable quality criteria for the judge. Each method preserves its own draft while editing. No separate reference-response field or configurable percentage is required.
 4. Save the case; repeat to build a dataset.
 5. Select cases and run them. The backend generates through TestCraft and applies the grader.
 6. Inspect actual output against the criteria, scores, evidence, and errors in Runs or in a separate browser tab.
@@ -17,7 +17,8 @@ TestCraft's browser extension is the application being evaluated. This project s
 ## Exercises
 
 - **Credential-free baseline:** Load example uses synthetic pasted output and three Contains checks. Remove a phrase in a revised case and observe the computed score decrease.
-- **Text match versus quality:** a candidate can include required words but still be poor. Compare Contains to an explicit Model grade rubric.
+- **Text match versus quality:** a candidate can include required words but still be poor. Compare Rule-based → Contains to Model-based → LLM as a judge with an explicit quality rubric. Model-based is the family; LLM-as-a-judge is the implementation used here.
+- **Forbidden fragments:** use Does not contain with `waitForTimeout` and `TODO`; inspect the individual checks. Show that comments also match and different spellings may escape a literal check. The overall score is an average, not a guarantee that every criterion passed.
 - **Ideas coverage:** grade positive, negative, and boundary coverage of a login form. v1's ideas route consumes HTML; the separate intent is judge context.
 - **Code quality:** assess grounded selectors, meaningful assertions, and waiting in a selected framework/language. These are artifact checks, not runtime results.
 - **Code from ideas:** enable the selected-ideas option and enter one idea per line in its dedicated field for the automate-tests-ideas endpoint. The test description remains optional evaluator context.

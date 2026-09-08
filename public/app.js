@@ -1,10 +1,12 @@
 const $ = id => document.getElementById(id);
-const names = { ideas: 'Generate ideas', code: 'Generate code', model_grade: 'Model grade', exact_match: 'Exact match', contains: 'Contains', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
+const names = { ideas: 'Generate ideas', code: 'Generate code', model_grade: 'LLM as a judge', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Does not contain', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 const languages = { playwright: ['typescript','javascript','python','java','csharp'], cypress: ['typescript','javascript'], selenium: ['javascript','python','java','csharp'] };
 const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], selected = new Set(), currentRun, currentItemId, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, duplicate = false, criteria = [], modelCatalog, modelsLoading = false, desiredJudge = '';
 let session = null, sessionTimer, sessionSetup;
+let currentMethod = null, methodDrafts = new Map(), familyChoices = {};
+const familyLabel = method => config?.evaluationMethods?.[method]?.familyLabel || (method === 'model_grade' ? 'Model-based' : 'Rule-based');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const badge = status => '<span class="badge ' + escape(status) + '">' + escape(names[status] || status) + '</span>';
 const date = value => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -23,6 +25,7 @@ async function api(path, options) {
 function showConnecting() {
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; selected.clear(); currentRun = null; currentItemId = null; criteria = []; modelCatalog = null; modelsLoading = false;
+  methodDrafts.clear(); currentMethod = null; familyChoices = {};
   $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
   $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
@@ -60,7 +63,7 @@ function visibleEvaluations() {
     const status = e.latest?.status || 'not_run';
     return (!query || (e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
       && (!$('filter-type').value || e.type === $('filter-type').value)
-      && (!$('filter-method').value || e.method === $('filter-method').value)
+      && (!$('filter-method').value || e.method === $('filter-method').value || config.evaluationMethods[e.method]?.family === $('filter-method').value)
       && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
   }).sort((a,b) => $('sort').value === 'name' ? a.name.localeCompare(b.name) : $('sort').value === 'score' ? (b.latest?.score ?? -1) - (a.latest?.score ?? -1) : b.createdAt.localeCompare(a.createdAt));
 }
@@ -74,7 +77,7 @@ function renderLibrary() {
   $('evaluation-rows').innerHTML = visible.map(e => '<tr><td class="checkbox-cell"><input type="checkbox" aria-label="Select ' + escape(e.name) + '" data-select="' + e.id + '"' + (selected.has(e.id) ? ' checked' : '') + '></td>'
     + '<td><button class="eval-name" data-inspect="' + e.id + '" title="Inspect or duplicate">' + escape(e.name) + '</button><div class="eval-id">EV-' + e.id.slice(0,8).toUpperCase() + '</div></td>'
     + '<td>' + badge(e.type) + '</td><td>' + (e.type === 'ideas' ? '<span class="muted">Not applicable</span>' : escape(names[e.framework]) + '<span class="row-meta">' + escape(names[e.language]) + '</span>') + '</td>'
-    + '<td>' + escape(names[e.method]) + '</td><td>' + escape(names[e.source]) + '</td><td>' + badge(e.latest?.status || 'not_run') + '</td>'
+    + '<td>' + escape(names[e.method]) + '<span class="row-meta">' + escape(familyLabel(e.method)) + '</span></td><td>' + escape(names[e.source]) + '</td><td>' + badge(e.latest?.status || 'not_run') + '</td>'
     + '<td class="score">' + (Number.isFinite(e.latest?.score) ? e.latest.score + '%' : '—') + '</td><td>' + escape(date(e.createdAt)) + '</td>'
     + '<td>' + (e.latest ? '<button class="text-button" data-run-link="' + e.latest.runId + '">View run ↗</button>' : '<button class="text-button" data-run-one="' + e.id + '">Run →</button>') + '</td></tr>').join('');
   $('empty-library').hidden = visible.length > 0;
@@ -95,8 +98,23 @@ function setLanguages(preferred = $('language').value) {
   $('language').innerHTML = languages[$('framework').value].map(value => '<option value="' + value + '">' + names[value] + '</option>').join('');
   if (languages[$('framework').value].includes(preferred)) $('language').value = preferred;
 }
+function selectMethod(method, preserveDraft = true) {
+  const definition = config.evaluationMethods[method];
+  if (!definition) return;
+  if (preserveDraft && currentMethod) methodDrafts.set(currentMethod, { criteria: [...criteria], draft: $('criterion-draft').value });
+  $('method-family').value = definition.family;
+  $('method').innerHTML = Object.entries(config.evaluationMethods).filter(([, value]) => value.family === definition.family).map(([id, value]) => '<option value="' + escape(id) + '">' + escape(value.label) + '</option>').join('');
+  $('method').value = method;
+  familyChoices[definition.family] = method; currentMethod = method;
+  if (preserveDraft) {
+    const savedDraft = methodDrafts.get(method);
+    criteria = [...(savedDraft?.criteria || [])]; $('criterion-draft').value = savedDraft?.draft || '';
+  }
+  renderCriteria(); syncForm();
+}
 function syncForm() {
   const source = $('source').value, method = $('method').value, code = $('type').value === 'code';
+  const definition = config?.evaluationMethods?.[method];
   if (source === 'llm' && !$('model').value) $('model').value = config?.model || 'gpt-4o-mini';
   $('actual-field').hidden = source !== 'pasted'; $('actual-output').disabled = source !== 'pasted'; $('actual-output').required = source === 'pasted';
   $('model').disabled = source === 'pasted'; $('model').required = source === 'llm';
@@ -112,13 +130,12 @@ function syncForm() {
     : source === 'llm' ? 'Calls a separate backend prompt adapter. This is not the TestCraft v1 generation pipeline.'
     : code ? `Calls ${fromIdeas ? '/api/automate-tests-ideas' : '/api/automate-tests'} with the HTML and code parameters. Description is evaluator context.`
     : 'Calls /api/generate-ideas with the HTML. Description is evaluator context, not an extra instruction to TestCraft.';
-  $('method-hint').textContent = method === 'model_grade' ? (config?.llmReady ? 'An LLM grades each criterion with evidence. No reference response is needed.' : 'You can save this case now. Running Model grade needs OPENAI_API_KEY in the backend.')
-    : method === 'contains' ? 'Checks whether the response includes each criterion literally. No LLM call.'
-    : 'Compares the complete response with a single criterion. No LLM call.';
-  $('criteria-hint').textContent = method === 'model_grade' ? 'Describe observable qualities. Each criterion has equal weight and receives its own evidence.'
-    : method === 'contains' ? 'Each item must be a required text fragment, not an instruction. Matching is case-sensitive.'
-    : 'Use exactly one item containing the complete text to match. Only outer whitespace and line endings are normalized.';
-  $('criterion-draft').placeholder = method === 'model_grade' ? 'e.g. Includes negative login scenarios with clear expected behavior.' : method === 'contains' ? 'e.g. Negative Tests:' : 'The complete response text to match';
+  $('method-hint').textContent = definition?.description || '';
+  $('method-limitation').textContent = definition?.limitation || '';
+  $('grading-cost').textContent = method === 'model_grade' ? 'Grading: 1 model call · Non-deterministic' + (!config?.llmReady ? ' · Requires OPENAI_API_KEY in the backend' : '') : 'Grading: 0 model calls · Deterministic for the same output and criteria';
+  $('criteria-hint').textContent = definition?.criteriaHint || '';
+  $('criterion-draft').placeholder = definition?.placeholder || '';
+  $('criteria-empty').textContent = method === 'model_grade' ? 'What makes a good response? Add your first quality criterion.' : method === 'not_contains' ? 'Add the first text fragment that must not appear.' : method === 'exact_match' ? 'Add the complete text that the output must match.' : 'Add the first text fragment that must appear.';
   updateCriteriaState();
   resizeTextareas();
 }
@@ -139,7 +156,7 @@ function setStep(step, focus = true) {
   $('save-evaluation').textContent = step === 1 ? 'Next →' : duplicate ? 'Save as new evaluation' : 'Create evaluation';
   $('form-error').textContent = ''; $('wizard-body').scrollTop = 0;
   resizeTextareas();
-  if (focus) $(step === 1 ? 'name' : 'method').focus();
+  if (focus) $(step === 1 ? 'name' : 'method-family').focus();
 }
 function updateCriteriaState() {
   $('criteria-count').textContent = criteria.length + (criteria.length === 1 ? ' criterion' : ' criteria');
@@ -191,6 +208,7 @@ function validateStep(step) {
 function openForm(example = false, existing) {
   if (!session || !config) return;
   $('evaluation-form').reset(); $('form-error').textContent = '';
+  currentMethod = null; methodDrafts.clear(); familyChoices = {};
   duplicate = Boolean(existing);
   $('dialog-title').textContent = existing ? 'Inspect / duplicate evaluation' : 'New evaluation';
   $('model').value = ''; desiredJudge = existing?.judgeModel || config.judgeModel;
@@ -205,7 +223,7 @@ function openForm(example = false, existing) {
   };
   const data = existing || (example ? sample : null);
   if (data) {
-    for (const key of ['name','type','source','method','input','html','model']) if (data[key] !== undefined) $(key).value = data[key];
+    for (const key of ['name','type','source','input','html','model']) if (data[key] !== undefined) $(key).value = data[key];
     if (languages[data.framework]) $('framework').value = data.framework;
     setLanguages(data.language);
     for (const [key,id] of [['pageUrl','page-url'],['actualOutput','actual-output']]) if (data[key] !== undefined) $(id).value = data[key];
@@ -213,7 +231,7 @@ function openForm(example = false, existing) {
     $('ideas').value = data.ideas ?? (data.fromIdeas ? data.input : '') ?? '';
     criteria = Array.isArray(data.criteria) ? [...data.criteria] : data.method === 'exact_match' ? [data.expectedOutput || ''] : (data.method === 'contains' ? data.expectedOutput || '' : data.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   }
-  renderCriteria(); renderModelOptions(); syncForm(); setStep(1, false);
+  selectMethod(data?.method || 'model_grade', false); renderModelOptions(); syncForm(); setStep(1, false);
   $('evaluation-dialog').showModal(); document.body.classList.add('modal-open'); resizeTextareas(); $('name').focus();
   loadModels();
 }
@@ -260,7 +278,7 @@ function renderRunDetail() {
   const active = activeStatuses.includes(item.status);
   $('run-detail').innerHTML = '<div class="run-top"><div><h3>Run ' + run.id.slice(0,8) + ' ' + badge(run.status) + '</h3><p>' + escape(date(run.createdAt)) + ' · ' + run.items.length + ' saved evaluation snapshots</p></div><a href="#runs/' + run.id + '" target="_blank" rel="noopener">Open in new tab ↗</a></div>'
     + '<div class="run-items">' + run.items.map(x => '<button class="run-item ' + (x.id === item.id ? 'active' : '') + '" data-item="' + x.id + '">' + escape(x.evaluation.name) + ' · ' + escape(names[x.status] || x.status) + '</button>').join('') + '</div>'
-    + '<div class="result-body"><div class="result-title"><div><h3>' + escape(e.name) + '</h3><p>' + escape(names[e.type]) + ' · ' + escape(names[e.method]) + '</p></div><div class="result-score">' + (Number.isFinite(item.score) ? item.score + '<small> / 100</small>' : '—') + '</div></div>'
+    + '<div class="result-body"><div class="result-title"><div><h3>' + escape(e.name) + '</h3><p>' + escape(names[e.type]) + ' · ' + escape(familyLabel(e.method)) + ' / ' + escape(names[e.method]) + '</p></div><div class="result-score">' + (Number.isFinite(item.score) ? item.score + '<small> / 100</small>' : '—') + '</div></div>'
     + (active ? '<p class="muted"><span class="spinner" aria-hidden="true"></span>' + escape(names[item.status]) + '… Results update automatically.</p>' : '<p>' + badge(item.status) + ' <span class="muted">' + (item.durationMs ?? 0) + ' ms</span></p>')
     + (item.error ? '<div class="error-banner" role="alert">' + escape(item.error) + '</div>' : '')
     + '<div class="comparison"><section class="output-card"><h4>' + (Array.isArray(e.criteria) ? 'EVALUATION CRITERIA' : 'LEGACY REFERENCE') + '</h4><pre>' + escape(Array.isArray(e.criteria) ? e.criteria.map((criterion, index) => (index + 1) + '. ' + criterion).join('\n\n') : e.expectedOutput) + '</pre></section><section class="output-card"><h4>ACTUAL OUTPUT</h4><pre>' + escape(item.output ?? 'Waiting for output…') + '</pre></section></div>'
@@ -304,7 +322,9 @@ $('example-button').addEventListener('click', () => openForm(true));
 ['close-dialog','cancel-dialog'].forEach(id => $(id).addEventListener('click', () => $('evaluation-dialog').close()));
 $('evaluation-dialog').addEventListener('close', () => document.body.classList.remove('modal-open'));
 $('back-step').addEventListener('click', () => setStep(1));
-['type','source','method','from-ideas'].forEach(id => $(id).addEventListener('change', syncForm));
+['type','source','from-ideas'].forEach(id => $(id).addEventListener('change', syncForm));
+$('method').addEventListener('change', () => selectMethod($('method').value));
+$('method-family').addEventListener('change', () => selectMethod(familyChoices[$('method-family').value] || ($('method-family').value === 'model_based' ? 'model_grade' : 'contains')));
 $('judge-model').addEventListener('change', () => { desiredJudge = $('judge-model').value; });
 $('retry-models').addEventListener('click', loadModels);
 $('add-criterion').addEventListener('click', addCriterion);
@@ -347,10 +367,10 @@ $('refresh-runs').addEventListener('click', () => { error(''); route().catch(e =
 window.addEventListener('hashchange', () => route().catch(e => error(e.message)));
 async function openWorkspace() {
   config = await api('/api/config');
-  if (config.version !== 4) throw new Error('An older server is running. Restart npm start to enable automatic browser sessions.');
+  if (config.version !== 6 || !config.evaluationMethods) throw new Error('An older server is running. Restart npm start to enable automatic browser sessions.');
   $('connection').textContent = '● Backend connected';
   $('setup-notice').hidden = true; error('');
-  if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'Model grade needs OPENAI_API_KEY in the backend. You can already save evaluations and grade pasted TestCraft outputs with Exact match or Contains. Load example to try it.'; }
+  if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can already save evaluations and use Rule-based grading with pasted outputs. Load example to try it.'; }
   await Promise.all([loadLibrary(), loadRuns()]); await route();
   if (!session) return;
   $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;

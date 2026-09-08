@@ -11,6 +11,22 @@ import { validateEvaluation } from '../src/evals/validation.mjs';
 import { generateOutput, readTestcraftStream, testcraftRequest } from '../src/evals/providers.mjs';
 import { grade } from '../src/evals/graders.mjs';
 import { createModelCatalog } from '../src/evals/models.mjs';
+import { evaluationMethods, methods } from '../src/evals/methods.mjs';
+
+test('method catalog distinguishes families from implementations and derives family on the server', () => {
+  assert.deepEqual(methods, ['model_grade', 'contains', 'not_contains', 'exact_match']);
+  assert.equal(evaluationMethods.model_grade.family, 'model_based');
+  assert.equal(evaluationMethods.model_grade.label, 'LLM as a judge');
+  for (const method of ['contains', 'not_contains', 'exact_match']) {
+    assert.equal(evaluationMethods[method].family, 'rule_based');
+    assert.equal(evaluationMethods[method].deterministic, true);
+    assert.equal(evaluationMethods[method].gradingCalls, 0);
+    const saved = validateEvaluation({ ...base, method, criteria: ['required text'], evaluationFamily: 'model_based' });
+    assert.equal(saved.evaluationFamily, 'rule_based'); assert.equal(saved.judgeModel, '');
+  }
+  assert.equal(validateEvaluation({ ...base, method: 'model_grade', evaluationFamily: 'rule_based' }).evaluationFamily, 'model_based');
+  for (const method of ['rule_based', 'model_based', 'llm_as_a_judge', 'unknown', '__proto__']) assert.throws(() => validateEvaluation({ ...base, method }), /evaluation method/);
+});
 
 const base = {
   name: 'Login coverage', type: 'ideas', source: 'pasted', method: 'contains', framework: 'playwright', language: 'typescript',
@@ -92,6 +108,7 @@ test('local models API proxies the verified TestCraft catalog and exposes no sec
     const body = await res.json(); assert.equal(body.models[0].id, 'gpt-4o-mini');
     assert.equal(JSON.stringify(body).includes('private-judge'), false);
     const config = await participant.get('/api/config');
+    assert.deepEqual(config.evaluationMethods, evaluationMethods);
     assert.equal(JSON.stringify(config).includes('private-judge'), false);
   } finally { await new Promise(resolve => app.server.close(resolve)); }
 });
@@ -176,6 +193,29 @@ test('exact and contains grading are computed from output, never scenario ids', 
   assert.equal((await grade({ ...base, method: 'exact_match', criteria: ['hello'] }, 'unrelated', {})).score, 0);
   assert.equal((await grade(base, 'invalid password', {})).score, 50);
   assert.throws(() => validateEvaluation({ ...base, type: 'code', framework: 'cypress', language: 'python' }), /combination/);
+});
+
+test('Does not contain scores absent fragments locally with explicit per-fragment evidence', async () => {
+  const e = { ...base, method: 'not_contains', criteria: ['waitForTimeout', 'TODO'] };
+  const noModel = async () => { throw new Error('Rule-based grading must not call a model'); };
+  const good = await grade(e, 'await expect(button).toBeVisible();', {}, noModel);
+  assert.equal(good.score, 100); assert.equal(good.judgeModel, null);
+  assert.deepEqual(good.checks.map(c => c.score), [100, 100]);
+  assert.equal(good.checks[0].evidence, 'Not found: waitForTimeout');
+  const weak = await grade(e, '// TODO: implement assertions', {}, noModel);
+  assert.equal(weak.score, 50); assert.equal(weak.checks[1].evidence, 'Forbidden fragment found: TODO');
+  assert.match(weak.checks[1].reason, /does not prove/);
+  assert.equal((await grade(e, 'waitForTimeout(3000); // TODO', {}, noModel)).score, 0);
+  assert.equal((await grade(e, '// todo', {}, noModel)).score, 100, 'Matching is explicitly case-sensitive, not semantic');
+  for (let i = 0; i < 3; i++) assert.deepEqual(await grade(e, '// TODO: implement assertions', {}, noModel), weak);
+  const literal = await grade({ ...e, criteria: ['.*'] }, 'ordinary text', {}, noModel);
+  assert.equal(literal.score, 100, 'Text is never interpreted as a regular expression or executable code');
+});
+
+test('an unknown grader never silently falls back to a paid model judge', async () => {
+  let calls = 0;
+  for (const method of ['unknown', 'rule_based', '__proto__']) await assert.rejects(grade({ ...base, method }, 'output', { OPENAI_API_KEY: 'test-only' }, async () => { calls++; }), /Unsupported evaluation method/);
+  assert.equal(calls, 0);
 });
 
 test('TestCraft v1 uses the verified payload and handles arbitrarily fragmented UTF-8 SSE', async () => {

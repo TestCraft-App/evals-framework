@@ -57,7 +57,7 @@ test('batch selection grades each case independently and preserves HTML as inert
   await expect(page.getByText('Missing: getByRole', { exact: true })).toBeVisible();
 });
 
-test('model grade has editable criteria and reports missing configuration honestly', async ({ page }) => {
+test('LLM as a judge has quality criteria and reports missing configuration honestly', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByLabel('Eval name', { exact: true }).fill('Judge configuration');
@@ -66,9 +66,11 @@ test('model grade has editable criteria and reports missing configuration honest
   await page.getByRole('dialog').getByRole('combobox', { name: 'Framework', exact: true }).selectOption('cypress');
   await expect(page.locator('#language option[value=python]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('model_grade');
+  await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('model_based');
   await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeEnabled();
-  await page.getByLabel('Criterion 1', { exact: true }).fill('The output includes a negative login test.');
+  await expect(page.locator('#criteria-list li')).toHaveCount(0);
+  await page.getByLabel('New criterion', { exact: true }).fill('The output includes a negative login test.');
+  await page.getByRole('button', { name: 'Add criteria' }).click();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Select Judge configuration', exact: true }).check();
   await page.getByRole('button', { name: 'Run selected', exact: false }).click();
@@ -151,29 +153,73 @@ test('model catalog failure is explicit and Retry preserves the form', async ({ 
   });
   await page.goto('/'); await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('model_grade');
+  await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('model_based');
+  await page.getByLabel('New criterion', { exact: true }).fill('Negative scenarios specify their expected behavior.');
+  await page.getByRole('button', { name: 'Add criteria' }).click();
   await expect(page.locator('#models-status')).toContainText('unavailable');
   await expect(page.getByRole('combobox', { name: 'Model grader' })).toHaveValue('gpt-4o-mini');
   await page.getByRole('button', { name: 'Retry loading models' }).click();
   await expect(page.locator('#models-status')).toContainText('TestCraft catalog');
-  await expect(page.locator('#criteria-list li')).toHaveCount(3);
+  await expect(page.locator('#criteria-list li')).toHaveCount(1);
   await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeEnabled();
 });
 
-test('exact match requires one criterion and never silently discards the rest', async ({ page }) => {
+test('exact match has its own single-target draft and preserves Contains criteria when switching back', async ({ page }) => {
   await page.goto('/'); await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('exact_match');
-  await expect(page.locator('#criteria-list li')).toHaveCount(3);
+  await expect(page.locator('#criteria-list li')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeDisabled();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#form-error')).toContainText('exactly one');
-  await page.getByRole('button', { name: 'Remove criterion 3' }).click();
-  await page.getByRole('button', { name: 'Remove criterion 2' }).click();
+  await page.getByLabel('New criterion', { exact: true }).fill('The complete response');
+  await page.getByRole('button', { name: 'Add criteria' }).click();
   await expect(page.locator('#criteria-list li')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Add criteria' })).toBeDisabled();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('contains');
+  await expect(page.locator('#criteria-list li')).toHaveCount(3);
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('exact_match');
+  await expect(page.getByLabel('Criterion 1', { exact: true })).toHaveValue('The complete response');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
+});
+
+test('family switching restores rubric drafts and never turns them into literal checks', async ({ page }) => {
+  await page.getByRole('button', { name: 'Load example' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.locator('#method-family')).toHaveValue('rule_based');
+  await expect(page.locator('#grading-cost')).toContainText('0 model calls');
+  await page.locator('#method-family').selectOption('model_based');
+  await expect(page.locator('#method')).toHaveValue('model_grade');
+  await expect(page.locator('#criteria-list li')).toHaveCount(0);
+  await page.getByLabel('New criterion', { exact: true }).fill('The negative tests state the expected error.');
+  await page.getByRole('button', { name: 'Add criteria' }).click();
+  await page.getByLabel('New criterion', { exact: true }).fill('Unfinished rubric criterion');
+  await page.locator('#method-family').selectOption('rule_based');
+  await expect(page.locator('#criteria-list li')).toHaveCount(3);
+  await expect(page.getByLabel('New criterion', { exact: true })).toHaveValue('');
+  await page.locator('#method-family').selectOption('model_based');
+  await expect(page.locator('#criteria-list li')).toHaveCount(1);
+  await expect(page.getByLabel('New criterion', { exact: true })).toHaveValue('Unfinished rubric criterion');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'New evaluation' }).click();
+  await expect(page.locator('#criteria-list li')).toHaveCount(0);
+});
+
+test('Does not contain saves a rule-based case and runs without a model grader', async ({ page }) => {
+  await page.getByRole('button', { name: 'Load example' }).click();
+  await page.getByLabel('Eval name', { exact: true }).fill('No placeholder code');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('not_contains');
+  await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeDisabled();
+  await page.getByLabel('New criterion', { exact: true }).fill('TODO');
+  await page.getByRole('button', { name: 'Add criteria' }).click();
+  await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Select No placeholder code', exact: true }).check();
+  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-title')).toContainText('Rule-based / Does not contain');
+  await expect(page.getByText('Not found: TODO', { exact: true })).toBeVisible();
 });
 
 for (const viewport of [{ width: 1280, height: 650 }, { width: 390, height: 700 }]) {
