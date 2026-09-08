@@ -58,12 +58,14 @@ Crear un rol de despliegue cuya confianza permita `sts:AssumeRoleWithWebIdentity
 {
   "StringEquals": {
     "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:sub": "repo:TestCraft-App/evals-framework:ref:refs/heads/main"
+    "token.actions.githubusercontent.com:sub": "repo:TestCraft-App@139815958/evals-framework@1360313670:ref:refs/heads/main"
   }
 }
 ```
 
 Esas son las condiciones, no una política de confianza completa: también hacen falta el Principal Federated del proveedor y la acción indicada. No usar `repo:*`, permitir forks ni dar credenciales al job de PR. Este workflow no usa un GitHub Environment: agregar uno cambia el `sub` y requiere actualizar/restringir la confianza correspondientemente. [Guía OIDC de GitHub](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).
+
+Este repositorio usa el formato inmutable de GitHub, obligatorio para repositorios nuevos desde el 15 de julio de 2026. Los IDs de organización y repositorio fueron verificados con la API de GitHub. No usar el formato antiguo sin IDs ni un comodín para resolver un error de autenticación. Verificar `actions/oidc/customization/sub` y el prefijo informado antes de recrear el despliegue. [Cambio oficial](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/).
 
 Permisos del rol de despliegue:
 
