@@ -83,7 +83,7 @@ test('hybrid allows shared text across methods and multiple exact matches, with 
   assert.throws(() => validateEvaluation({ ...rules, criteria: ['a'] }), /criterion method/);
   const mixed = { ...rules, criteria: [...criteria, criterion('a', 'model_grade')] };
   assert.equal(needsModelGrader(mixed), true);
-  for (const judgeModel of [undefined, '', 'o1-mini', 'gpt-4-turbo']) assert.throws(() => validateEvaluation({ ...mixed, judgeModel }), isAppError(400));
+  assert.equal(validateEvaluation({ ...mixed }).judgeModel, '');
   assert.equal(validateEvaluation({ ...mixed, judgeModel: 'gpt-4o-mini' }).judgeModel, 'gpt-4o-mini');
   assert.equal(needsModelGrader({ method: 'model_grade', criteria: 'legacy rubric' }), true);
   assert.equal(needsModelGrader({ ...base, judgeModel: 'gpt-4o-mini' }), false);
@@ -377,7 +377,6 @@ test('hybrid batch budget rejects unaffordable runs before any model attempt', t
 
 test('hybrid judge preflight prevents paid generation when credentials, model, or criteria are invalid', async t => {
   for (const invalid of [{ environment: {}, judgeModel: 'gpt-4o-mini', pattern: /OPENAI_API_KEY/ },
-    { environment: env, judgeModel: 'o1-mini', pattern: /structured grading/ },
     { environment: env, judgeModel: '', pattern: /model grader/ },
     { environment: env, judgeModel: 'gpt-4o-mini', weight: 0, pattern: /weight/ }]) {
     await t.test(invalid.pattern.source, async t => {

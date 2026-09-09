@@ -4,9 +4,9 @@ One hour, seven people. Goal: distinguish literal checks from quality judgments,
 
 ## One creation and execution flow
 
-**Load example**, **Load workshop suite**, and **New evaluation** use the same input-only flow: HTML and parameters → save definition → Run generates through TestCraft → grade the response → inspect the saved run. There is no output-paste field or preloaded answer. Loading or saving makes no model calls or completed runs. Opening the form may fetch the read-only model catalog.
+**Load example**, **Load workshop suite**, and **New evaluation** use the same input-only flow: HTML and parameters → save definition → Create Run generates through TestCraft → grade the response → inspect the saved run. There is no output-paste field or preloaded answer. Loading or saving makes no model calls or completed runs. Model catalogs preload for enabled environments when the app opens and are reused in Create Run. Reload the page to refresh the lists, or use Retry after a catalog failure. The grader can be selected immediately and is required only for model-based criteria.
 
-Load the suite **SauceDemo · TestCraft workshop**, select cases, and choose **Run selected**. Use **Duplicate** or **Save as new** to make variants. Every rerun generates a fresh response; it does not regrade the previous output.
+Load the suite **SauceDemo · TestCraft workshop**, then open **Runs → Create Run**. Choose an environment and models, select cases, and create the run. Use **Duplicate** or **Save as new** to make evaluation variants. Every rerun generates a fresh response; it does not regrade the previous output.
 
 The supplied HTML is **synthetic, simplified SauceDemo-inspired input**, not captured live HTML or a working login implementation. Credentials, messages, and alternate states are fictional workshop assumptions. The page URL is context; the evaluator does not visit it. Generated code is inspected as text, never executed. No score proves that a test passes on the live site.
 
@@ -50,12 +50,12 @@ Repeated runs probe the whole generation-and-grading pipeline: both output and j
 
 ## Configuration and usage
 
-All eight cases need working TestCraft API generation. Blank Generation model uses that API's default. Cases 04, 06, and 07 also need backend `OPENAI_API_KEY` and access to their configured `gpt-4o-mini` grader. All model criteria within one case share one judge call. The grader key is never implicitly forwarded to TestCraft.
+All eight cases need working TestCraft API generation. In **Runs → Create Run**, choose an explicit generation model from the selected environment’s catalog. Cases 04, 06, and 07 also need backend `OPENAI_API_KEY` and access to the grader chosen from the same TestCraft model catalog for the run. All model criteria within one case share one judge call. The grader key is never implicitly forwarded to TestCraft.
 
 One full suite uses **8 generation + 3 judge = 11 app model-call attempts**; seven participants running it once use **77**. Reruns add calls. This is a request allowance, not a dollar estimate. Missing configuration prevents dispatch; dispatched requests can consume allowance even on provider errors. If generation is unavailable, review the inputs and criteria without inventing responses or results.
 
 ## Existing workshop data
 
-The input-only suite uses seed `workshop-v2-live`. Loading it imports a new suite alongside an older `workshop-v1` import, preserving old cases, participant edits, and run snapshots. Subsequent loads reuse the new suite. The editor no longer offers pasted output; opening an old pasted case shows a warning that saving switches to generation and adds one model call per run. Cancel leaves it untouched; historical runs always retain their original snapshots.
+The input-only suite uses seed `workshop-v2-live`. Loading it imports a new suite alongside an older `workshop-v1` import, preserving old cases, participant edits, and run snapshots. Subsequent loads reuse the new suite. The editor no longer offers pasted output; new runs always generate fresh TestCraft output, including for old pasted cases. Both model selections now belong to the run, not to the evaluation editor. Cancel leaves it untouched; historical runs always retain their original snapshots.
 
 Developer reference: `src/evals/workshop.mjs` exports only input definitions; `POST /api/workshop-suite {}` imports them into the current private workspace. Network-free tests validate all three TestCraft request routes, streamed output, rule/model/hybrid grading, budget accounting, reruns, errors, and import preservation. Canned answers used for historical grader regression live only in `tests/fixtures`, never in the runtime workshop module.

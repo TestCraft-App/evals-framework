@@ -1,4 +1,4 @@
-import { test, expect } from './browser-fixtures.mjs';
+import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/models', route => route.fulfill({ json: { source: 'testcraft', warning: null, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true }] } }));
@@ -21,8 +21,9 @@ async function auth(page) {
 test('Save updates a definition and preserves the earlier run snapshot', async ({ page }) => {
   await example(page, 'Editable login');
   const original = (await (await page.request.get('/api/evaluations')).json()).evaluations[0];
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Editable login', exact: true }).check();
-  await page.getByRole('button', { name: /Run selected/ }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('100');
   const runUrl = page.url();
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
@@ -100,8 +101,9 @@ test('suites organize cases; deleting a folder moves them to Unfiled', async ({ 
 
 test('evaluation deletion requires confirmation and keeps run history', async ({ page }) => {
   await example(page, 'Delete definition');
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Delete definition', exact: true }).check();
-  await page.getByRole('button', { name: /Run selected/ }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('100');
   const runUrl = page.url();
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
@@ -130,12 +132,13 @@ test('hybrid rules with custom weights calculate Pass/Fail without a grader call
   await page.getByRole('button', { name: 'Add criteria' }).click();
   await page.getByRole('checkbox', { name: 'Custom weights' }).check();
   await page.getByLabel('Weight for criterion 4', { exact: true }).fill('3');
-  await expect(page.getByRole('combobox', { name: 'Model grader', exact: true })).toBeDisabled();
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await expect(page.locator('#grading-cost')).toContainText('0 model calls');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#evaluation-dialog')).not.toBeVisible();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Weighted hybrid', exact: true }).check();
-  await page.getByRole('button', { name: /Run selected/ }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('50');
   await expect(page.locator('.check .badge.passed')).toHaveCount(3);
   await expect(page.locator('.check .badge.failed')).toHaveCount(1);
@@ -151,10 +154,10 @@ test('hybrid model criteria enable the model dropdown and retain method-specific
   await page.getByRole('combobox', { name: 'New criterion method', exact: true }).selectOption('model_grade');
   await page.getByLabel('New criterion', { exact: true }).fill('The negative test states the expected error.');
   await page.getByRole('button', { name: 'Add criteria' }).click();
-  await expect(page.getByRole('combobox', { name: 'Model grader', exact: true })).toBeEnabled();
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await expect(page.locator('#grading-cost')).toContainText('1 model call');
   await page.getByRole('combobox', { name: 'Method for criterion 4', exact: true }).selectOption('contains');
-  await expect(page.getByRole('combobox', { name: 'Model grader', exact: true })).toBeDisabled();
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await expect(page.getByLabel('Criterion 4', { exact: true })).toHaveValue('The negative test states the expected error.');
 });
 

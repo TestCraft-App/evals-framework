@@ -1,4 +1,4 @@
-import { test, expect } from './browser-fixtures.mjs';
+import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 let pageErrors;
 const catalog = { models: [
   { id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true },
@@ -26,8 +26,9 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await expect(page.getByRole('button', { name: 'UI login coverage', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('button', { name: 'UI login coverage', exact: true })).toBeVisible();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select UI login coverage', exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.getByRole('tab', { name: /^Runs/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.result-score')).toContainText('100');
   await expect(page.locator('.result-body .badge').first()).toHaveText('Passed');
@@ -44,8 +45,9 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await page.getByLabel('Eval name', { exact: true }).fill('Keep this evaluation');
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('100');
   const savedRunUrl = page.url();
   const deleteButton = page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true });
@@ -71,8 +73,9 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
   await expect(page.locator('#evaluation-rows .badge.not_run')).toHaveText('Not run');
   await expect(page.locator('#stat-passed')).toHaveText('0');
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('100');
 });
 
@@ -80,8 +83,9 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('100');
   await page.route('**/api/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
   await page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true }).click();
@@ -96,16 +100,17 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
 });
 
 test('batch selection grades each case independently and preserves HTML as inert text', async ({ page }) => {
-  const base = { name: 'Batch good', type: 'code', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains', input: 'Test login', html: '<button onclick="alert(1)">Login</button><script>throw new Error("must not run")</script>', actualOutput: 'expect(page.getByRole("button")).toBeVisible()', criteria: ['expect', 'getByRole'], model: '', judgeModel: '', pageUrl: '' };
+  const base = { name: 'Batch good', type: 'code', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains', input: 'Test login', html: '<button onclick="alert(1)">Login</button><script>throw new Error("must not run")</script>', actualOutput: 'expect(page.getByRole("button")).toBeVisible()', criteria: ['valid credentials', 'invalid email'], model: '', judgeModel: '', pageUrl: 'https://example.com/login' };
   const session = await (await page.request.get('/api/session')).json();
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
   expect((await page.request.post('/api/evaluations', { headers, data: base })).status()).toBe(201);
-  expect((await page.request.post('/api/evaluations', { headers, data: { ...base, name: 'Batch weak', actualOutput: 'expect(true)' } })).status()).toBe(201);
+  expect((await page.request.post('/api/evaluations', { headers, data: { ...base, name: 'Batch weak', criteria: ['valid credentials', 'getByRole'], actualOutput: 'expect(true)' } })).status()).toBe(201);
   await page.goto('/');
   await page.getByRole('searchbox').fill('Batch');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.run-top .badge')).toHaveText('Completed');
   await expect(page.locator('.run-item')).toHaveCount(2);
   await page.getByRole('button', { name: /Batch weak · Failed/ }).click();
@@ -123,13 +128,14 @@ test('LLM as a judge has quality criteria and reports missing configuration hone
   await expect(page.locator('#language option[value=python]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('model_based');
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeEnabled();
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await expect(page.locator('#criteria-list li')).toHaveCount(0);
   await page.getByLabel('New criterion', { exact: true }).fill('The output includes a negative login test.');
   await page.getByRole('button', { name: 'Add criteria' }).click();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Judge configuration', exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-body .error-banner')).toContainText('OPENAI_API_KEY');
   await expect(page.locator('.result-score')).toHaveText('—');
   await expect(page.locator('.result-body .badge').first()).toHaveText('Error');
@@ -149,9 +155,7 @@ test('wizard validates each step, preserves edits on Back, and saves typed crite
   await page.locator('#html').fill('<form><button>Login</button></form>');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('#step-2')).toBeVisible();
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toHaveValue('gpt-4o-mini');
-  await expect(page.locator('#judge-model option[value="gpt-4-turbo"]')).toHaveJSProperty('disabled', true);
-  await page.getByRole('combobox', { name: 'Model grader' }).selectOption('gpt-4o');
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#form-error')).toContainText('Add at least one');
   await page.getByLabel('New criterion', { exact: true }).fill('Covers negative login scenarios.');
@@ -166,14 +170,14 @@ test('wizard validates each step, preserves edits on Back, and saves typed crite
   await expect(page.locator('#input')).toHaveValue('');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByLabel('Criterion 1', { exact: true })).toHaveValue('Uses only controls from the HTML.');
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toHaveValue('gpt-4o');
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   const savedResponse = page.waitForResponse(res => res.url().endsWith('/api/evaluations') && res.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   const response = await savedResponse, payload = response.request().postDataJSON(), saved = await response.json();
   expect(payload.criteria).toEqual([{ text: 'Uses only controls from the HTML.', method: 'model_grade', weight: 1 }]);
   expect(payload).not.toHaveProperty('threshold'); expect(payload).not.toHaveProperty('expectedOutput');
   expect(payload).not.toHaveProperty('framework'); expect(payload).not.toHaveProperty('language');
-  expect(saved.threshold).toBe(80); expect(saved.input).toBe(''); expect(saved.judgeModel).toBe('gpt-4o');
+  expect(saved.threshold).toBe(80); expect(saved.input).toBe(''); expect(saved.judgeModel).toBe('');
   await expect(page.getByRole('dialog')).not.toBeVisible();
 });
 
@@ -201,23 +205,17 @@ test('code parameters and selected ideas validate independently of the optional 
   await expect(page.locator('#ideas')).toHaveValue('Log in with valid credentials.');
 });
 
-test('model catalog failure is explicit and Retry preserves the form', async ({ page }) => {
-  let attempts = 0;
-  await page.route('**/api/models', route => {
-    attempts++;
-    return route.fulfill({ json: attempts === 1 ? { models: [{ id: 'gpt-4o-mini', label: 'Backend configured', graderCompatible: true }], warning: 'TestCraft models are unavailable. Only the backend-configured model is listed.' } : catalog });
-  });
-  await page.goto('/'); await page.getByRole('button', { name: 'Load example' }).click();
+test('evaluation creation does not depend on the model catalog', async ({ page }) => {
+  let calls = 0;
+  await page.route('**/api/models*', route => { calls++; return route.fulfill({ status: 503, json: { error: 'Unavailable' } }); });
+  await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('model_based');
   await page.getByLabel('New criterion', { exact: true }).fill('Negative scenarios specify their expected behavior.');
   await page.getByRole('button', { name: 'Add criteria' }).click();
-  await expect(page.locator('#models-status')).toContainText('unavailable');
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toHaveValue('gpt-4o-mini');
-  await page.getByRole('button', { name: 'Retry loading models' }).click();
-  await expect(page.locator('#models-status')).toContainText('TestCraft catalog');
-  await expect(page.locator('#criteria-list li')).toHaveCount(1);
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeEnabled();
+  await page.locator('#save-evaluation').click();
+  await expect(page.locator('#evaluation-dialog')).toBeHidden();
+  expect(calls).toBe(0);
 });
 
 test('exact match has its own single-target draft and preserves Contains criteria when switching back', async ({ page }) => {
@@ -225,7 +223,7 @@ test('exact match has its own single-target draft and preserves Contains criteri
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('exact_match');
   await expect(page.locator('#criteria-list li')).toHaveCount(0);
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeDisabled();
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#form-error')).toContainText('exactly one');
   await page.getByLabel('New criterion', { exact: true }).fill('The complete response');
@@ -267,12 +265,13 @@ test('Does not contain saves a rule-based case and runs without a model grader',
   await page.getByLabel('Eval name', { exact: true }).fill('No placeholder code');
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('not_contains');
-  await expect(page.getByRole('combobox', { name: 'Model grader' })).toBeDisabled();
+  await expect(page.locator('#judge-model')).toHaveCount(0);
   await page.getByLabel('New criterion', { exact: true }).fill('TODO');
   await page.getByRole('button', { name: 'Add criteria' }).click();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select No placeholder code', exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('100');
   await expect(page.locator('.result-title')).toContainText('Rule-based / Does not contain');
   await expect(page.getByText('Not found: TODO', { exact: true })).toBeVisible();

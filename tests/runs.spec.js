@@ -22,7 +22,7 @@ async function seed(page, app) {
 test('run table metadata, combined filters, name/ID search and all header sorts', async ({ page, browserApp }) => {
   await seed(page, browserApp);
   await expect(page.locator('.runs-table th')).toHaveText(['Run name', 'Date', 'Models', 'Evals', 'Status', 'Score', 'Delete']);
-  await expect(page.locator('#create-run')).toBeDisabled();
+  await expect(page.locator('#create-run')).toBeEnabled();
   await expect(page.locator('#refresh-runs, .run-history')).toHaveCount(0);
   await expect(page.locator('#run-detail-page')).toBeHidden();
   const alpha = page.locator('[data-run-row="run-alpha"]');

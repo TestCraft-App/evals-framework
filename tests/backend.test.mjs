@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
-import { createApp, client, waitForRun, testScope } from './helpers.mjs';
+import { createApp, client, waitForRun, testScope, syntheticStream } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 import { validateEvaluation } from '../src/evals/validation.mjs';
 import { generateOutput, readTestcraftStream, testcraftRequest } from '../src/evals/providers.mjs';
@@ -55,8 +55,8 @@ test('criteria are distinct nonempty strings; exact match needs one literal targ
     assert.throws(() => validateEvaluation({ ...base, criteria }));
   }
   assert.throws(() => validateEvaluation({ ...base, method: 'exact_match' }), /exactly one/);
-  assert.throws(() => validateEvaluation({ ...base, method: 'model_grade', judgeModel: '' }), /Model grader/);
-  assert.throws(() => validateEvaluation({ ...base, method: 'model_grade', judgeModel: 'gpt-4-turbo' }), /structured grading/);
+  assert.equal(validateEvaluation({ ...base, method: 'model_grade', judgeModel: '' }).judgeModel, '');
+  assert.equal(validateEvaluation({ ...base, method: 'model_grade', judgeModel: 'gpt-5.6-sol' }).judgeModel, 'gpt-5.6-sol');
 });
 
 test('existing string-based evaluations still grade with their original reference', async () => {
@@ -71,7 +71,7 @@ test('existing string-based evaluations still grade with their original referenc
   });
 });
 
-test('TestCraft catalog uses GET without secrets, caches and coalesces requests, and marks incompatible models', async () => {
+test('TestCraft catalog uses GET without secrets, caches and coalesces requests, and makes catalog models available for grading', async () => {
   let clock = 0, calls = 0, unavailable = false;
   const getModels = createModelCatalog({ TESTCRAFT_BASE_URL: 'https://testcraft.example/', OPENAI_API_KEY: 'judge-private', TESTCRAFT_OPENAI_API_KEY: 'generation-private' }, async (url, options) => {
     calls++; assert.equal(url, 'https://testcraft.example/api/models'); assert.equal(options.method, 'GET');
@@ -81,19 +81,19 @@ test('TestCraft catalog uses GET without secrets, caches and coalesces requests,
   }, () => clock);
   const results = await Promise.all([getModels(), getModels(), getModels()]);
   assert.equal(calls, 1); assert.equal(results[0].source, 'testcraft'); assert.equal(results[0].warning, null);
-  assert.deepEqual(results[0].models.map(m => m.graderCompatible), [true, true, false, false]);
+  assert.deepEqual(results[0].models.map(m => m.graderCompatible), [true, true, true, true]);
   await getModels(); assert.equal(calls, 1);
   clock = 300001; unavailable = true;
   const stale = await getModels(); assert.equal(calls, 2); assert.match(stale.warning, /last catalog/);
   assert.deepEqual(stale.models, results[0].models); assert.equal(JSON.stringify(stale).includes('private'), false);
 });
 
-test('invalid or unavailable model catalogs offer only the configured model with an explicit warning', async () => {
+test('invalid or unavailable model catalogs return no selectable models with an explicit warning', async () => {
   for (const response of [new Response('private', { status: 401 }), Response.json({ models: [] }), Response.json({ models: [{ id: '<script>', label: 'bad' }] }), new Response('not json'), new Response('x'.repeat(64001))]) {
     const getModels = createModelCatalog({ JUDGE_MODEL: 'configured-grader' }, async () => response);
     const result = await getModels();
-    assert.equal(result.source, 'configured'); assert.match(result.warning, /unavailable/);
-    assert.deepEqual(result.models.map(m => m.id), ['configured-grader']);
+    assert.equal(result.source, 'unavailable'); assert.match(result.warning, /unavailable/);
+    assert.deepEqual(result.models, []);
     assert.equal(JSON.stringify(result).includes('private'), false);
   }
 });
@@ -133,7 +133,8 @@ test('evaluations and real grading results survive server restart; batches keep 
   const dbPath = join(dir, 'evals.sqlite');
   let app;
   try {
-    app = createApp({ dbPath, env: {} }); app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
+    let generation = 0;
+    app = createApp({ dbPath, env: {}, fetchImpl: async () => syntheticStream(generation++ ? 'valid user only' : 'valid user; invalid password') }); app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
     const url = `http://127.0.0.1:${app.server.address().port}`;
     const participant = await client(app), { post, scope } = participant;
     assert.deepEqual((await participant.get('/api/evaluations')).evaluations, []);
@@ -276,7 +277,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
   const calls = [];
   const mockFetch = async (url, options) => {
     const body = JSON.parse(options.body); calls.push({ url, body });
-    if (url === 'https://testcraft.example/api/generate-ideas') {
+    if (url === 'https://api.testcraft.app/api/generate-ideas') {
       await gate;
       assert.equal(body.sourceCode, base.html);
       assert.equal(body.openAiApiKey, 'generation-key');

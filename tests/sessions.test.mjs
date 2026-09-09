@@ -118,7 +118,7 @@ test('deleting finished runs removes only their snapshots and recomputes the lat
     assert.deepEqual((await a.get('/api/runs')).runs, []);
     const remaining = (await a.get('/api/evaluations')).evaluations;
     assert.equal(remaining.length, 1); assert.equal(remaining[0].id, saved.id); assert.equal(remaining[0].latest, null);
-    assert.equal((await a.get('/api/session')).budget.used, 0);
+    assert.equal((await a.get('/api/session')).budget.used, 2);
     const rerun = await waitForRun(a, (await start(a, [saved.id])).id);
     assert.equal(rerun.items[0].score, 100, 'saved evaluations can still be run after clearing history');
   } finally { await close(app); }
@@ -176,22 +176,22 @@ test('queued and running runs cannot be deleted or lose reserved calls, but beco
 
 test('run deletion survives restart and does not refund consumed model calls or affect other participants', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-run-delete-')), dbPath = join(dir, 'evals.sqlite');
-  let calls = 0, app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '1' }, fetchImpl: async () => { calls++; return stream(); } }));
+  let calls = 0, app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '2' }, fetchImpl: async () => { calls++; return stream(); } }));
   try {
     const a = await client(app), b = await client(app), saved = await save(a, generated), other = await save(b);
     const ownRun = await waitForRun(a, (await start(a, [saved.id])).id);
     const otherRun = await waitForRun(b, (await start(b, [other.id])).id);
     assert.equal((await a.request('/api/runs/' + ownRun.id, { method: 'DELETE' })).status, 200);
     assert.deepEqual(await b.get('/api/runs/' + otherRun.id), otherRun);
-    await close(app); app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '1' } }));
+    await close(app); app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '2' } }));
     const restored = await client(app, { cookie: a.cookie });
     assert.deepEqual((await restored.get('/api/runs')).runs, []);
     assert.equal((await restored.request('/api/runs/' + ownRun.id)).status, 404);
     assert.equal((await restored.get('/api/evaluations')).evaluations[0].id, saved.id);
-    assert.deepEqual(restored.info.budget, { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
+    assert.deepEqual(restored.info.budget, { limit: 2, used: 2, reserved: 0, remaining: 0, unit: 'model_calls' });
     assert.equal((await restored.post('/api/runs', { evaluationIds: [saved.id] })).status, 429);
     const restoredB = await client(app, { cookie: b.cookie });
-    assert.equal((await restoredB.get('/api/runs')).runs[0].id, otherRun.id); assert.equal(calls, 1);
+    assert.equal((await restoredB.get('/api/runs')).runs[0].id, otherRun.id); assert.equal(calls, 2);
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -260,7 +260,7 @@ test('a shared allowance is reserved atomically across participants before any b
     assert.equal((await b.get('/api/session')).budget.remaining, 0);
     const newBrowser = await client(app); assert.equal(newBrowser.info.budget.remaining, 0);
     const offline = await save(newBrowser);
-    const run = await start(newBrowser, [offline.id]); assert.equal((await waitForRun(newBrowser, run.id)).items[0].score, 100);
+    assert.equal((await newBrowser.post('/api/runs', { evaluationIds: [offline.id] })).status, 429);
     assert.equal(calls, 1);
   } finally { release(); for (const run of accepted) await waitForRun(run.participant, run.id); await close(app); }
 });
@@ -279,7 +279,7 @@ test('a generation plus model grade reserves two calls and never starts a partia
   } finally { await close(app); }
 });
 
-test('all Rule-based methods run in private sessions with a zero model-call allowance', async () => {
+test('new Rule-based runs still require generation allowance even for legacy pasted definitions', async () => {
   let calls = 0;
   const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '0' }, fetchImpl: async () => { calls++; throw new Error('No model calls expected'); } }));
   try {
@@ -287,10 +287,7 @@ test('all Rule-based methods run in private sessions with a zero model-call allo
     for (const [method, criteria] of [['contains', ['valid user']], ['not_contains', ['TODO']], ['exact_match', [evaluation.actualOutput]]]) {
       const saved = await save(a, { ...evaluation, method, criteria });
       assert.equal(saved.evaluationFamily, 'rule_based');
-      const result = await waitForRun(a, (await start(a, [saved.id])).id);
-      assert.equal(result.items[0].score, 100);
-      assert.equal(result.items[0].evaluation.method, method);
-      assert.equal(result.items[0].evaluation.evaluationFamily, 'rule_based');
+      assert.equal((await a.post('/api/runs', { evaluationIds: [saved.id] })).status, 429);
     }
     assert.equal(calls, 0); assert.equal((await a.get('/api/session')).budget.used, 0);
     const b = await client(app); assert.deepEqual((await b.get('/api/runs')).runs, []);
@@ -321,7 +318,7 @@ test('missing model credentials consume no calls and catalog lookups do not use 
       assert.equal(result.items[0].status, 'error'); assert.equal(calls, 0);
       assert.equal((await a.get('/api/session')).budget.remaining, 2);
     }
-    await a.get('/api/models'); assert.equal(calls, 1);
+    assert.ok((await a.get('/api/models')).models.length); assert.equal(calls, 0);
     assert.equal((await a.get('/api/session')).budget.used, 0);
   } finally { await close(app); }
 });

@@ -1,3 +1,4 @@
+import { openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 import { test as base, expect } from '@playwright/test';
 import { once } from 'node:events';
 import { createApp } from '../server.mjs';
@@ -6,12 +7,15 @@ import { workshopSuite } from './fixtures/pasted-grader-cases.mjs';
 const evidence = 'The code has no field entry or submission for any of the requested login scenarios.';
 const reason = 'Navigation and an assertion on true do not verify a login outcome.';
 const test = base.extend({
+  generationOutput: [workshopSuite.evaluations.find(item => item.name.startsWith('04')).actualOutput, { option: true }],
   graderReply: [{ id: 'c1', passed: false, evidence, reason }, { option: true }],
-  baseURL: async ({ graderReply }, use) => {
+  baseURL: async ({ graderReply, generationOutput }, use) => {
     const app = createApp({
       dbPath: ':memory:',
-      env: { NODE_ENV: 'test', WORKSHOP_ID: 'grader-browser-tests', WORKSHOP_MAX_MODEL_CALLS: '1', OPENAI_API_KEY: 'browser-test-only' },
+      env: { NODE_ENV: 'test', WORKSHOP_ID: 'grader-browser-tests', WORKSHOP_MAX_MODEL_CALLS: '2', OPENAI_API_KEY: 'browser-test-only' },
       fetchImpl: async (url, options) => {
+        if (url.endsWith('/api/models')) return Response.json({ models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] });
+        if (url.startsWith('https://api.testcraft.app/api/')) return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: generationOutput }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
         if (url !== 'https://api.openai.com/v1/chat/completions') throw new Error('Unexpected provider request');
         const request = JSON.parse(options.body);
         if (!request.response_format?.json_schema.strict) throw new Error('Expected strict grading');
@@ -33,8 +37,9 @@ async function runExample(page, caseNumber = '04') {
   const created = await page.request.post('/api/evaluations', { headers, data: example });
   expect(created.status()).toBe(201);
   await page.reload();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + example.name, exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
+  await createSelectedRun(page);
   await expect(page.locator('.result-body .badge').first()).toHaveText(/^(Passed|Failed|Error)$/);
 }
 
@@ -49,7 +54,7 @@ test('a justified model Fail displays its evidence and remains distinct from a g
   await page.reload();
   await expect(page.locator('.check blockquote')).toHaveText(evidence);
   const session = await (await page.request.get('/api/session')).json();
-  expect(session.budget.used).toBe(1);
+  expect(session.budget.used).toBe(2);
 });
 
 test.describe('provider violates the nonempty-evidence contract', () => {
@@ -64,7 +69,7 @@ test.describe('provider violates the nonempty-evidence contract', () => {
     await page.reload();
     await expect(page.locator('#run-detail [role="alert"]')).toContainText('empty evidence for criterion c1');
     const session = await (await page.request.get('/api/session')).json();
-    expect(session.budget.used).toBe(1);
+    expect(session.budget.used).toBe(2);
     expect(session.budget.reserved).toBe(0);
   });
 });
@@ -73,7 +78,7 @@ test.describe('passing source-line citations', () => {
   const strong = workshopSuite.evaluations.find(item => item.name.startsWith('06'));
   const outputLines = strong.actualOutput.split('\n');
   const line = outputLines.findIndex(text => text.includes('toHaveURL')) + 1;
-  test.use({ graderReply: { id: 'c3', passed: true, evidence: [line], reason: 'Mocked positive verdict for source-extraction UI coverage.' } });
+  test.use({ generationOutput: strong.actualOutput, graderReply: { id: 'c3', passed: true, evidence: [line], reason: 'Mocked positive verdict for source-extraction UI coverage.' } });
   test('displays the original source text and persists its line references', async ({ page }) => {
     expect(line).toBeGreaterThan(0);
     await runExample(page, '06');

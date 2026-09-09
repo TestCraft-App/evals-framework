@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApp, listen, close, client, waitForRun, testScope } from './helpers.mjs';
+import { createApp, listen, close, client, waitForRun, testScope, syntheticStream } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 import { validateEvaluation } from '../src/evals/validation.mjs';
 import { workshopSuite } from '../src/evals/workshop.mjs';
@@ -138,14 +138,14 @@ test('competing evaluation and suite updates accept one revision and reject the 
 });
 
 test('edits invalidate latest results while duplication preserves the current definition with fresh identity', async () => {
-  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => syntheticStream() }));
   try {
     const person = await client(app), group = await suite(person);
     const saved = await save(person, { ...base, suiteId: group.id });
     const first = await run(person, saved.id);
     assert.equal(first.items[0].evaluation.revision, 1);
     assert.equal((await person.get('/api/evaluations')).evaluations[0].latest.runId, first.id);
-    const edited = await result(put(person, '/api/evaluations/' + saved.id, { ...base, actualOutput: 'no matches', revision: 1, suiteId: group.id }), 200);
+    const edited = await result(put(person, '/api/evaluations/' + saved.id, { ...base, actualOutput: 'no matches', criteria: ['missing new requirement'], revision: 1, suiteId: group.id }), 200);
     assert.equal((await person.get('/api/evaluations')).evaluations[0].latest, null);
     assert.deepEqual(await person.get('/api/runs/' + first.id), first);
     const duplicate = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', { name: '  Copy  ' }), 201);
@@ -187,7 +187,7 @@ test('legacy evaluations and run snapshots without revision behave as revision o
 });
 
 test('create, edit and duplicate retain normalized weighted hybrid criteria and allow moving to another suite', async () => {
-  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => syntheticStream() }));
   try {
     const person = await client(app), first = await suite(person, 'First'), second = await suite(person, 'Second');
     const criteria = [{ text: 'valid user', method: 'contains', weight: 2 }, { text: 'TODO', method: 'not_contains', weight: 1 }];
@@ -200,7 +200,7 @@ test('create, edit and duplicate retain normalized weighted hybrid criteria and 
     const copy = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', {}), 201);
     assert.equal(copy.suiteId, second.id); assert.deepEqual(copy.criteria, updatedCriteria); assert.equal(copy.revision, 1);
     assert.deepEqual((await person.get('/api/runs/' + finished.id)).items[0].evaluation.criteria, criteria);
-    assert.equal((await person.get('/api/session')).budget.used, 0);
+    assert.equal((await person.get('/api/session')).budget.used, 1);
   } finally { await close(app); }
 });
 
@@ -231,7 +231,7 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     }
     release(); const finished = await waitForRun(person, started.id);
     assert.equal(calls, 3);
-    assert.deepEqual(finished.items.map(item => item.evaluation), saved);
+    assert.deepEqual(finished.items.map(item => item.evaluation), saved.map(e => ({ ...e, model: 'gpt-4o-mini' })));
     assert.ok((await person.get('/api/evaluations')).evaluations.every(e => e.latest === null));
     const finishedBudget = (await person.get('/api/session')).budget;
     for (const evaluation of saved) assert.deepEqual(await result(person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' }), 200), { deletedId: evaluation.id });
@@ -358,7 +358,7 @@ test('workshop import is private, idempotent across restart, preserves edits and
 });
 
 test('the live workshop import leaves earlier pasted suites, edits and run snapshots untouched', async () => {
-  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => syntheticStream() }));
   try {
     const person = await client(app);
     const originalSuite = await suite(person, 'Participant renamed the old workshop');
@@ -376,7 +376,7 @@ test('the live workshop import leaves earlier pasted suites, edits and run snaps
     const repeated = await result(person.post('/api/workshop-suite', {}), 200);
     assert.equal(repeated.suite.id, imported.suite.id);
     assert.equal(app.store.suites(person.scope).length, 2);
-    assert.equal((await person.get('/api/session')).budget.used, 0);
+    assert.equal((await person.get('/api/session')).budget.used, 1);
   } finally { await close(app); }
 });
 

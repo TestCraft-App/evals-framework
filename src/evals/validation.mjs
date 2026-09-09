@@ -7,8 +7,6 @@ import { criterionMethods, evaluationMethods, methods, needsModelGrader } from '
 export { methods } from './methods.mjs';
 export const sources = ['pasted', 'testcraft_api', 'llm'];
 export const PASS_THRESHOLD = 80;
-export const verifiedGraderModels = ['gpt-4o-mini', 'gpt-4o', 'o3-mini'];
-export const unsupportedGraderModel = model => /^(gpt-4-turbo|o1-mini)(-|$)/.test(model);
 
 function string(value, field, max, required = true) {
   if (value === undefined && !required) return '';
@@ -56,11 +54,10 @@ export function validateEvaluation(body) {
   const framework = type === 'code' ? choice(body.framework, Object.keys(frameworks), 'framework') : '';
   const language = type === 'code' ? choice(body.language, frameworks[framework], 'framework/language combination') : '';
   const method = choice(body.method, methods, 'evaluation method');
-  const source = choice(body.source, sources, 'output source');
+  const source = choice(body.source ?? 'testcraft_api', sources, 'output source');
   const criteria = normalizeCriteria(body, { allowLegacy: false });
   const model = source === 'pasted' ? '' : string(body.model, 'Generation model', 120, source === 'llm');
-  const judgeModel = needsModelGrader({ method, criteria }) ? string(body.judgeModel, 'Model grader', 120) : '';
-  if (unsupportedGraderModel(judgeModel)) throw new AppError('This model does not support structured grading. Choose another model grader.');
+  const judgeModel = needsModelGrader({ method, criteria }) ? string(body.judgeModel, 'Model grader', 120, false) : '';
   const suiteId = string(body.suiteId, 'Suite ID', 36, false);
   if (suiteId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suiteId)) throw new AppError('Suite ID must be a UUID or empty for an unfiled evaluation.');
   const pageUrl = string(body.pageUrl, 'Page URL', 2000, false);

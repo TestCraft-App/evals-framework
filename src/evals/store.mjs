@@ -199,7 +199,7 @@ export class Store {
   reserveRun(run, scope, limit) {
     return this.transaction(() => {
       const reservations = run.items.map(item => ({ id: item.id, calls: Number(item.evaluation.source !== 'pasted') + Number(needsModelGrader(item.evaluation)) }));
-      if (reservations.reduce((sum, item) => sum + item.calls, 0) > this.budget(scope.workshopId, limit).remaining) throw new AppError('The workshop model-call allowance is insufficient for this batch. Try fewer evaluations, or use pasted output with Rule-based grading.', 429);
+      if (reservations.reduce((sum, item) => sum + item.calls, 0) > this.budget(scope.workshopId, limit).remaining) throw new AppError('The workshop model-call allowance is insufficient for this batch. Try fewer evaluations or wait for active reservations to be released.', 429);
       this.saveRun(run, scope);
       for (const item of reservations) if (item.calls) this.db.prepare('INSERT INTO model_reservations VALUES (?,?,?)').run(item.id, scope.workshopId, item.calls);
     });

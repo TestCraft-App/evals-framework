@@ -1,4 +1,5 @@
 :root{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#263d3b;background:#f4f7f7;font-synthesis:none;--teal:#137d70;--teal-dark:#075a50;--line:#dde6e4;--muted:#6b7e7b}
+#create-run-dialog{width:min(1100px,calc(100% - 32px))}#create-run-form{display:flex;flex-direction:column;max-height:90vh}.create-run-body{overflow:auto;padding:24px;min-height:0}.run-settings{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin:18px 0}.run-eval-filters{padding:20px 0}.run-submit-status{margin-right:auto;font-size:.875rem}#create-run-error{color:#9a3434;margin-top:6px}#create-run-form .dialog-heading,#create-run-form .dialog-footer{flex-shrink:0}#create-run-form table{min-width:570px}@media(max-width:700px){.run-settings{grid-template-columns:1fr}.create-run-body{padding:16px}#create-run-form .dialog-footer{flex-wrap:wrap}.run-submit-status{flex-basis:100%}}
 #runs-list-page{background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden}
 #runs-list-page .runs-heading{padding:24px}
 .runs-table{min-width:950px}.runs-table th button{border:0;background:none;color:inherit;font:inherit;font-weight:600;padding:5px 0;white-space:nowrap}
@@ -160,3 +161,12 @@ html { scrollbar-gutter: stable; }
   #evaluation-dialog .dialog-footer > span:not(:empty) { flex-basis: 100%; }
   .wizard-actions { margin-left: auto; flex-wrap: wrap; max-width: 100%; }
 }
+
+/* Keep run configuration spacing independent of the evaluation editor. */
+#create-run-form .dialog-heading{padding:20px 24px 16px}
+#create-run-form .create-run-body{padding-top:16px}
+#create-run-form .run-settings{margin:0 0 16px}
+#create-run-form .run-eval-filters{padding:0;margin:24px 0 16px}
+#create-run-form #run-description{min-height:0;height:41px;resize:vertical}
+#create-run-form #run-models-status:not([hidden]){margin:0 0 8px}
+#create-run-form #retry-run-models:not([hidden]){margin-bottom:16px}

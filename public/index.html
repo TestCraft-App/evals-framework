@@ -47,9 +47,8 @@
           <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
           <label>Sort<select id="sort"><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="score">Highest score</option></select></label>
         </div>
-        <div class="selection-bar"><span id="selection-count">0 selected</span><button id="clear-selection" class="text-button" disabled>Clear selection</button><button id="run-selected" class="button primary small" disabled>▶ Run selected</button></div>
         <div class="table-scroll">
-          <table><thead><tr><th class="checkbox-cell"><input id="select-all" type="checkbox" aria-label="Select all visible evaluations"></th><th>Evaluation</th><th>Type</th><th>Framework / language</th><th>Method</th><th>Source</th><th>Status</th><th>Score</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
+          <table><thead><tr><th>Evaluation</th><th>Type</th><th>Framework / language</th><th>Method</th><th>Source</th><th>Status</th><th>Score</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
         </div>
         <div class="empty-state" id="empty-library"><div class="empty-icon" aria-hidden="true">☷</div><h3>Your first evaluation starts here.</h3><p>Add the HTML, define what a good output looks like, and choose how to measure it.</p><button class="button" id="empty-create">Create an evaluation</button></div>
         <div class="table-footer"><span id="filtered-count">0 evaluations</span></div>
@@ -58,7 +57,7 @@
 
     <section id="runs-panel" role="tabpanel" aria-labelledby="runs-tab" hidden>
       <section id="runs-list-page">
-        <div class="section-heading runs-heading"><h2 tabindex="-1" id="runs-title">Runs</h2><button id="create-run" class="button primary" disabled title="Run creation is coming soon">＋ Create Run</button></div>
+        <div class="section-heading runs-heading"><h2 tabindex="-1" id="runs-title">Runs</h2><button id="create-run" class="button primary">＋ Create Run</button></div>
         <div class="filters">
           <label class="search-field">Search runs<input id="run-search" type="search" placeholder="Search by name or ID…"></label>
           <label>Status<select id="run-status"><option value="">All statuses</option><option value="active">In progress</option><option value="completed">Complete</option><option value="interrupted">Interrupted</option></select></label>
@@ -73,7 +72,7 @@
           <th aria-sort="none"><button data-run-sort="score">Score</button></th>
           <th><span class="sr-only">Delete</span></th>
         </tr></thead><tbody id="run-list"></tbody></table></div>
-        <div id="empty-runs" class="empty-state"><h3>Your runs will appear here.</h3><p>Select evaluations in the library and choose Run selected.</p></div>
+        <div id="empty-runs" class="empty-state"><h3>Your runs will appear here.</h3><p>Create a run to generate outputs and evaluate your saved evaluations.</p></div>
         <div class="table-footer"><span id="filtered-runs-count">0 of 0 runs</span></div>
       </section>
       <section id="run-detail-page" hidden><a class="back-to-runs" href="#runs">← Back to runs</a><div id="run-detail" class="run-detail"></div></section>
@@ -105,13 +104,11 @@
             <h3>Parameters</h3>
             <div class="parameter-row">
               <label>TestCraft endpoint<select id="type" name="type"><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-              <label>Output source<select id="source" name="source"><option value="testcraft_api">TestCraft v1 API</option><option value="llm">Backend LLM adapter</option></select></label>
               <label>Framework<select id="framework" name="framework" aria-describedby="code-params-hint"><option value="playwright">Playwright</option><option value="cypress">Cypress</option><option value="selenium">Selenium</option></select></label>
               <label>Language<select id="language" name="language" aria-describedby="code-params-hint"></select></label>
             </div>
             <p id="code-params-hint" class="field-hint">Framework and language apply only to Generate code.</p>
             <div class="generation-options">
-              <label id="model-field">Generation model<input name="model" id="model" maxlength="120" placeholder="API default"></label>
               <div class="code-options"><label class="check-label"><input id="pom" name="pom" type="checkbox">Page Object Model</label><label class="check-label"><input id="from-ideas" name="fromIdeas" type="checkbox">Generate code from selected ideas</label></div>
             </div>
             <p class="field-hint" id="source-hint"></p>
@@ -131,9 +128,7 @@
             <div class="method-row">
               <label for="method-family">Evaluation family<select id="method-family"><option value="model_based">Model-based</option><option value="rule_based">Rule-based</option><option value="hybrid">Hybrid</option></select></label>
               <label for="method">Method<select name="method" id="method"><option value="model_grade">LLM as a judge</option></select></label>
-              <label id="judge-field">Model grader<select id="judge-model" name="judgeModel" aria-describedby="models-status"></select></label>
             </div>
-            <div id="models-feedback"><p class="field-hint" id="models-status" role="status"></p><button type="button" id="retry-models" class="text-button" hidden>Retry loading models</button></div>
             <p id="method-hint" class="field-hint"></p>
             <p id="grading-cost" class="method-meta"></p>
             <p id="method-limitation" class="method-limitation"></p>
@@ -151,6 +146,28 @@
         </section>
       </div>
       <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="delete-evaluation" class="button danger" hidden>Delete evaluation</button><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-as-new" class="button" hidden>Save as new</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="create-run-dialog" aria-labelledby="create-run-title">
+    <form id="create-run-form">
+      <div class="dialog-heading"><h2 id="create-run-title">Create Run</h2><button type="button" id="close-create-run" class="icon-button" aria-label="Close Create Run">×</button></div>
+      <div class="create-run-body">
+        <div class="run-settings">
+          <label>Environment<select id="create-environment"></select></label>
+          <label>Generation model<select id="create-generation-model" required><option value="">Select a model</option></select></label>
+          <label>Grader model<select id="create-grader-model"><option value="">Select a model</option></select></label>
+        </div>
+        <p id="run-models-status" class="field-hint" role="status"></p><button type="button" id="retry-run-models" class="text-button" hidden>Retry loading models</button>
+        <label>Run Description <span class="optional">(optional)</span><textarea id="run-description" maxlength="2000" rows="1"></textarea></label>
+        <div class="filters run-eval-filters">
+          <label class="search-field">Search evaluations<input id="create-eval-search" type="search" placeholder="Search by name…"></label>
+          <label>Type<select id="create-eval-type"><option value="">All types</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
+          <label>Method<select id="create-eval-method"><option value="">All methods</option></select></label>
+        </div>
+        <div class="table-scroll"><table aria-label="Select evaluations for this run"><thead><tr><th><input id="create-select-all" type="checkbox" aria-label="Select all visible evaluations"></th><th>Evaluation name</th><th>Type</th><th>Method</th></tr></thead><tbody id="create-eval-rows"></tbody></table></div>
+        <p id="create-eval-empty" class="empty-state" hidden>No evaluations match these filters.</p>
+      </div>
+      <div class="dialog-footer"><div class="run-submit-status"><span id="create-selected-count">0 selected · maximum 50</span><p id="create-run-error" role="alert"></p></div><button type="button" id="cancel-create-run" class="button">Cancel</button><button id="submit-create-run" type="submit" class="button primary" disabled>Create Run</button></div>
     </form>
   </dialog>
   <dialog id="suite-dialog" class="compact-dialog" aria-labelledby="suite-title">

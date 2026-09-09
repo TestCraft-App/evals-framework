@@ -1,4 +1,4 @@
-import { AppError, normalizeCriteria, unsupportedGraderModel } from './validation.mjs';
+import { AppError, normalizeCriteria } from './validation.mjs';
 import { chat } from './providers.mjs';
 import { GRADING_VERSION } from './methods.mjs';
 
@@ -29,7 +29,6 @@ function ruleGrade(criterion, output) {
 
 async function modelGrade(evaluation, output, criteria, env, fetchImpl) {
   if (typeof evaluation.judgeModel !== 'string' || !evaluation.judgeModel.trim()) throw new AppError('Choose a model grader before running model criteria.');
-  if (unsupportedGraderModel(evaluation.judgeModel)) throw new AppError('This model does not support structured grading. Choose another model grader.');
   const outputLines = normalizeLineEndings(output).split('\n');
   const maxEvidenceLines = Math.min(40, outputLines.length);
   const checkSchema = passed => ({
