@@ -52,13 +52,31 @@ async function seed(page, count = 3) {
   await page.goto('/'); await expect(page.locator('#workspace')).toBeVisible();
   const session = await (await page.request.get('/api/session')).json();
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
-  const definitions = count === 3 ? [rules, { ...rules, name: 'Beta model', method: 'model_grade' }, { ...rules, name: 'Gamma code', type: 'code', framework: 'playwright', language: 'typescript', pageUrl: 'https://example.com' }] : Array.from({ length: count }, (_, i) => ({ ...rules, name: 'Eval ' + i }));
+  const suiteIds = {};
+  if (count === 3) for (const name of ['Core suite', 'Code suite']) {
+    const response = await page.request.post('/api/suites', { headers, data: { name } }); expect(response.status()).toBe(201);
+    suiteIds[name] = (await response.json()).id;
+  }
+  const definitions = count === 3 ? [rules, { ...rules, name: 'Beta model', method: 'model_grade', suiteId: suiteIds['Core suite'] }, { ...rules, name: 'Gamma code', type: 'code', framework: 'playwright', language: 'typescript', pageUrl: 'https://example.com', suiteId: suiteIds['Code suite'] }] : Array.from({ length: count }, (_, i) => ({ ...rules, name: 'Eval ' + i }));
   const saved = [];
   for (const data of definitions) {
     const response = await page.request.post('/api/evaluations', { headers, data }); expect(response.status()).toBe(201); saved.push(await response.json());
   }
   return saved;
 }
+test('run modal shows suite and endpoint columns and filters by suite before endpoint', async ({ page }) => {
+  await seed(page); await openRunCreator(page);
+  const dialog = page.locator('#create-run-dialog'), table = dialog.getByRole('table', { name: 'Select evaluations for this run' });
+  expect(await dialog.locator('.run-eval-filters input, .run-eval-filters select').evaluateAll(elements => elements.map(element => element.id))).toEqual(['create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method']);
+  await expect(table.locator('th')).toHaveText(['', 'Eval ID', 'Evaluation name', 'Suite', 'Endpoint', 'Method']);
+  await expect(table.locator('tr', { hasText: 'Alpha rules' }).locator('td')).toHaveText(['', 'EVAL-1', 'Alpha rules', 'None', 'Generate ideas', 'rule-based']);
+  await expect(table.locator('tr', { hasText: 'Beta model' }).locator('td')).toHaveText(['', 'EVAL-2', 'Beta model', 'Core suite', 'Generate ideas', 'model-graded']);
+  await dialog.locator('#create-eval-suite').selectOption({ label: 'Core suite' });
+  await expect(table.locator('tbody tr')).toHaveCount(1); await expect(table.locator('tbody')).toContainText('Beta model');
+  await dialog.locator('#create-eval-type').selectOption('code'); await expect(dialog.locator('#create-eval-empty')).toBeVisible();
+  await dialog.locator('#create-eval-suite').selectOption('__unfiled'); await dialog.locator('#create-eval-type').selectOption('');
+  await expect(table.locator('tbody tr')).toHaveCount(1); await expect(table.locator('tbody')).toContainText('Alpha rules');
+});
 test('run modal selects across filters, requires a conditional grader and creates a persisted Dev run', async ({ page, generationCalls }) => {
   const saved = await seed(page); await openRunCreator(page);
   await expect(page.locator('#create-eval-rows tr')).toHaveCount(3);

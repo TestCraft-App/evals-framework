@@ -88,15 +88,15 @@ const evaluationSuite = e => suites.find(s => s.id === e.suiteId)?.name || 'None
 const evaluationMethod = e => ({ rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[evaluationFamily(e)]);
 function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
-  const value = e => evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
+  const value = e => evalSort === 'reference' ? Number(e.reference?.slice(5) || 0) : evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
   return evaluations.filter(e => {
     const status = e.latest?.status || 'not_run';
-    return (!query || (e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
+    return (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
       && (!$('filter-type').value || endpoint(e) === $('filter-type').value)
       && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
       && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value)
       && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
-  }).sort((a, b) => String(value(a)).localeCompare(String(value(b))) * evalSortDirection || a.id.localeCompare(b.id));
+  }).sort((a, b) => (evalSort === 'reference' ? value(a) - value(b) : String(value(a)).localeCompare(String(value(b)))) * evalSortDirection || a.id.localeCompare(b.id));
 }
 function renderLibrary() {
   $('eval-count').textContent = evaluations.length;
@@ -104,11 +104,12 @@ function renderLibrary() {
   if (inlineName) visible.unshift(inlineName.record);
   const focused = document.activeElement?.id === 'duplicate-name', selection = focused ? [$('duplicate-name').selectionStart, $('duplicate-name').selectionEnd] : null;
   renderingLibrary = true;
-  $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
+  $('evaluation-rows').innerHTML = visible.map(e => '<tr><td class="evaluation-id">' + escape(e.reference || '—') + '</td>'
     + '<td>' + (e.id === inlineName?.record.id ? inlineNameMarkup() : '<button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button>') + '</td>'
     + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(endpoint(e)) + '</td>'
     + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
+  $('evaluation-rows').querySelectorAll('td:not(:nth-child(2)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
   renderingLibrary = false;
   document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = duplicatingEvaluation; });
   if (focused && $('duplicate-name')) { $('duplicate-name').focus(); $('duplicate-name').setSelectionRange(...selection); }
@@ -272,7 +273,7 @@ function setSavingEvaluation(busy) {
   syncSuiteActions();
 }
 function renderSuites() {
-  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">None</option>'], ['evaluation-suite', '<option value="">None</option>']]) {
+  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">None</option>'], ['create-eval-suite', '<option value="">All suites</option><option value="__unfiled">None</option>'], ['evaluation-suite', '<option value="">None</option>']]) {
     const current = $(id).value;
     $(id).innerHTML = empty + suites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if ([...$(id).options].some(o => o.value === current)) $(id).value = current;
@@ -462,15 +463,15 @@ async function clearWorkspace(event) {
   } catch (e) { if (review.session === session) $('clear-workspace-error').textContent = e.message; }
   finally { if (review.session === session) { clearingWorkspace = false; $('cancel-clear-workspace').disabled = false; $('confirm-clear-workspace').disabled = false; } }
 }
-async function loadWorkshop() {
+async function loadWorkshop(basic = false) {
   if ($('workshop-button').disabled) return;
-  const requestSession = session; $('workshop-button').disabled = true; error('');
+  const requestSession = session; $('workshop-button').disabled = true; $('basic-workshop-button').disabled = true; error('');
   try {
-    const imported = await api('/api/workshop-suite', { method: 'POST', body: '{}' });
+    const imported = await api(basic ? '/api/basic-workshop-suite' : '/api/workshop-suite', { method: 'POST', body: '{}' });
     await loadLibrary(); $('filter-suite').value = imported.suites?.length > 1 ? '' : imported.suite.id; renderSuites(); renderLibrary();
     toast('Workshop templates ready. Open Runs and choose Create Run to generate and evaluate with TestCraft.');
   } catch (e) { if (requestSession === session) error(e.message); }
-  finally { $('workshop-button').disabled = false; }
+  finally { $('workshop-button').disabled = false; $('basic-workshop-button').disabled = false; }
 }
 function closeRunDraft() {
   runDraftRevision++; catalogRequest++; runSelection.clear(); runCatalog = null; runCatalogs.clear(); catalogLoads.clear(); creatingRun = false;
@@ -480,8 +481,11 @@ function selectedNeedsGrader() {
   return evaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => c.method === 'model_grade'));
 }
 function visibleRunEvaluations() {
-  const query = $('create-eval-search').value.trim().toLowerCase(), type = $('create-eval-type').value, method = $('create-eval-method').value;
-  return evaluations.filter(e => (!query || e.name.toLowerCase().includes(query)) && (!type || endpoint(e) === type) && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const query = $('create-eval-search').value.trim().toLowerCase(), suite = $('create-eval-suite').value, type = $('create-eval-type').value, method = $('create-eval-method').value;
+  return evaluations.filter(e => (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name).toLowerCase().includes(query))
+    && (!suite || (suite === '__unfiled' ? !e.suiteId : e.suiteId === suite))
+    && (!type || endpoint(e) === type)
+    && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 function updateRunSubmit() {
   const needsGrader = selectedNeedsGrader();
@@ -494,7 +498,8 @@ function updateRunSubmit() {
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
-  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td>' + escape(e.name) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
+  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td class="evaluation-id">' + escape(e.reference || '—') + '</td><td>' + escape(e.name) + '</td><td>' + escape(evaluationSuite(e)) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
+  $('create-eval-rows').querySelectorAll('td:not(:first-child)').forEach(cell => { cell.title = cell.textContent; });
   $('create-select-all').checked = !!visible.length && visible.every(e => runSelection.has(e.id));
   $('create-select-all').indeterminate = visible.some(e => runSelection.has(e.id)) && !$('create-select-all').checked;
   $('create-select-all').disabled = creatingRun || !visible.length;
@@ -551,7 +556,7 @@ async function openCreateRun() {
 }
 function setCreatingRun(busy) {
   creatingRun = busy;
-  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models'].forEach(id => { $(id).disabled = busy; });
+  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models'].forEach(id => { $(id).disabled = busy; });
   renderRunEvaluations();
 }
 async function submitRun(event) {
@@ -742,6 +747,7 @@ document.querySelector('.library-actions').addEventListener('focusout', event =>
   if (!event.currentTarget.contains(event.relatedTarget)) closeLibraryActions();
 });
 $('example-button').addEventListener('click', () => { closeLibraryActions(); openForm(true); });
+$('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(true); });
 $('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(); });
 $('clear-workspace-button').addEventListener('click', reviewWorkspace);
 $('clear-workspace-form').addEventListener('submit', clearWorkspace);
@@ -862,7 +868,7 @@ $('create-run-dialog').addEventListener('close', () => { runDraftRevision++; cat
 $('create-environment').addEventListener('change', () => loadRunModels());
 $('retry-run-models').addEventListener('click', () => loadRunModels(false, true));
 ['create-generation-model', 'create-grader-model'].forEach(id => $(id).addEventListener('change', updateRunSubmit));
-['create-eval-search', 'create-eval-type', 'create-eval-method'].forEach(id => $(id).addEventListener(id === 'create-eval-search' ? 'input' : 'change', renderRunEvaluations));
+['create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method'].forEach(id => $(id).addEventListener(id === 'create-eval-search' ? 'input' : 'change', renderRunEvaluations));
 $('create-eval-rows').addEventListener('change', event => {
   const id = event.target.dataset.runSelect;
   if (!id || creatingRun) return;

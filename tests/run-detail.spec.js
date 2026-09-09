@@ -28,7 +28,7 @@ const ids = page => page.locator('.detail-eval-row').evaluateAll(rows => rows.ma
 test('detail table has concise metadata, normalized score boundaries and combined filters', async ({ page, browserApp }) => {
   await page.route('**/api/models?environment=dev', route => route.fulfill({ json: { models: [{ id: 'gpt-4o', label: 'GPT 4o' }, { id: 'gpt-4o-mini', label: 'gpt-4o-mini' }] } }));
   await seed(page, browserApp);
-  await expect(page.locator('.detail-table th')).toHaveText(['Eval name ↕', 'Suite ↕', 'Model ↕', 'Eval method ↕', 'Status ↕', 'Score ↕', 'Criteria met ↕']);
+  await expect(page.locator('.detail-table th')).toHaveText(['Eval ID ↕', 'Eval name ↕', 'Suite ↕', 'Model ↕', 'Eval method ↕', 'Status ↕', 'Score ↕', 'Criteria met ↕']);
   await expect(page.locator('.run-context')).toHaveText('Env: Dev · Grader: GPT 4o');
   await expect(page.locator('.run-top')).not.toContainText('Hidden description');
   await expect(page.locator('.result-score')).toHaveText(['0.50', '0.50', '0.80', '0.80', '0.00', '—']);
@@ -123,17 +123,30 @@ for (const width of [1280, 390]) test('detail layout stays usable at ' + width +
   await page.setViewportSize({ width, height: 850 });
   const { run, scope } = await seed(page, browserApp);
   const longName = 'Login form · negative test coverage ' + '(copy) '.repeat(14);
+  const longSuite = 'TestCraft Basic · 04 Framework and language compatibility <safe>', longModel = 'A generation model with a very long display name <safe>';
+  run.items[0].evaluation.suiteName = longSuite;
+  run.items[0].generationModel = longModel;
   run.items[0].evaluation.name = longName; browserApp.store.saveRun(run, scope); await page.reload();
   await page.locator('#expand-b').click(); await page.locator('#expand-a').click();
   await expect(page.locator('#expand-b')).toHaveAttribute('title', longName);
   await expect(page.locator('#expand-b')).toHaveAccessibleName(longName.trim());
   const layout = await page.locator('[data-detail-item="b"]').evaluate(row => {
     const label = row.querySelector('.detail-name'), cells = [...row.cells].map(cell => cell.getBoundingClientRect());
-    return { truncated: label.scrollWidth > label.clientWidth, ellipsis: getComputedStyle(label).textOverflow, nameRight: label.getBoundingClientRect().right, suiteLeft: cells[1].left, widths: cells.map(cell => cell.width) };
+    return { truncated: label.scrollWidth > label.clientWidth, ellipsis: getComputedStyle(label).textOverflow, nameRight: label.getBoundingClientRect().right, suiteLeft: cells[2].left, widths: cells.map(cell => cell.width) };
   });
   expect(layout.truncated).toBe(true); expect(layout.ellipsis).toBe('ellipsis'); expect(layout.nameRight).toBeLessThan(layout.suiteLeft);
-  expect(layout.widths[0]).toBeGreaterThan(layout.widths[1]);
-  expect(Math.abs(layout.widths[2] - layout.widths[3])).toBeLessThan(1); expect(Math.abs(layout.widths[3] - layout.widths[4])).toBeLessThan(1);
+  expect(layout.widths[0]).toBeCloseTo(80, 0);
+  for (const [index, text] of [[2, longSuite], [3, longModel]]) {
+    const cell = page.locator('[data-detail-item="b"] > td').nth(index);
+    await expect(cell).toHaveText(text);
+    await expect(cell).toHaveAttribute('title', text);
+    await expect(cell).toHaveCSS('text-overflow', 'ellipsis');
+    await expect(cell).toHaveCSS('overflow-x', 'hidden');
+    await expect(cell).toHaveCSS('white-space', 'nowrap');
+    expect(await cell.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  }
+  expect(layout.widths[1]).toBeGreaterThan(layout.widths[2]);
+  expect(Math.abs(layout.widths[3] - layout.widths[4])).toBeLessThan(1); expect(Math.abs(layout.widths[4] - layout.widths[5])).toBeLessThan(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
   const reason = page.locator('#criteria-b .criterion-reason').first();
   expect(await reason.evaluate(el => getComputedStyle(el).whiteSpace)).toBe(width > 760 ? 'nowrap' : 'normal');

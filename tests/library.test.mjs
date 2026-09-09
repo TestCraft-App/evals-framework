@@ -16,6 +16,33 @@ const base = {
   criteria: ['valid user', 'invalid password'],
 };
 const noProvider = async () => assert.fail('Library operations must not contact a provider.');
+test('basic import is private, repeatable, and independent of the full suite', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  try {
+    const person = await client(app), other = await client(app);
+    for (const body of [null, [], { evaluations: [] }, { ownerId: other.info.workspaceId }]) {
+      await result(person.post('/api/basic-workshop-suite', body), 400);
+    }
+    const basic = await result(person.post('/api/basic-workshop-suite', {}), 201);
+    assert.equal(basic.suites.length, 6);
+    assert.equal(basic.evaluations.length, 12);
+    assert.deepEqual(basic.evaluations.map(item => item.reference), Array.from({ length: 12 }, (_, index) => 'EVAL-' + (index + 1)));
+    assert.equal(app.store.evaluations(other.scope).length, 0);
+    const item = basic.evaluations[0];
+    app.store.updateEvaluation(item.id, validateEvaluation({ ...item, name: 'Participant edit' }), item.revision, person.scope);
+    const full = await result(person.post('/api/workshop-suite', {}), 201);
+    assert.deepEqual(full.evaluations.map(item => item.reference), Array.from({ length: full.evaluations.length }, (_, index) => 'EVAL-' + (index + 13)));
+    const repeated = await result(person.post('/api/basic-workshop-suite', {}), 200);
+    const references = new Map([...basic.evaluations, ...full.evaluations].map(item => [item.id, item.reference]));
+    for (const item of repeated.evaluations) assert.equal(item.reference, references.get(item.id));
+    const repeatedFull = await result(person.post('/api/workshop-suite', {}), 200);
+    for (const item of repeatedFull.evaluations) assert.equal(item.reference, references.get(item.id));
+    assert.equal(repeated.evaluations.find(e => e.id === item.id).name, 'Participant edit');
+    assert.equal(repeated.suite.id, basic.suite.id);
+    assert.equal(app.store.evaluations(person.scope).length, 12 + full.evaluations.length);
+    assert.equal(app.store.runs(person.scope).length, 0);
+  } finally { await close(app); }
+});
 const put = (person, path, body, headers) => person.request(path, { method: 'PUT', headers, body: JSON.stringify(body) });
 async function result(response, status) {
   const res = await response;
@@ -200,7 +227,8 @@ test('edits invalidate latest results while duplication preserves the current de
     assert.deepEqual(await person.get('/api/runs/' + first.id), first);
     const duplicate = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', { name: '  Copy  ' }), 201);
     assert.notEqual(duplicate.id, saved.id); assert.ok(duplicate.createdAt >= saved.createdAt);
-    assert.deepEqual(duplicate, { ...edited, id: duplicate.id, name: 'Copy', createdAt: duplicate.createdAt, revision: 1 });
+    assert.equal(duplicate.reference, 'EVAL-2');
+    assert.deepEqual(duplicate, { ...edited, id: duplicate.id, reference: duplicate.reference, name: 'Copy', createdAt: duplicate.createdAt, revision: 1 });
     assert.equal((await person.get('/api/evaluations')).evaluations.find(e => e.id === duplicate.id).latest, null);
     const unnamed = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', {}), 201);
     assert.equal(unnamed.name, saved.name);
@@ -327,7 +355,7 @@ test('PUT, DELETE, duplication and workshop import enforce JSON, Origin and sess
       ['PUT', '/api/evaluations/' + saved.id, { ...base, revision: 1 }],
       ['PUT', '/api/suites/' + group.id, { name: 'Updated', revision: 1 }],
       ['DELETE', '/api/evaluations/' + saved.id, {}], ['DELETE', '/api/suites/' + group.id, {}],
-      ['POST', '/api/evaluations/' + saved.id + '/duplicate', {}], ['POST', '/api/workshop-suite', {}],
+      ['POST', '/api/evaluations/' + saved.id + '/duplicate', {}], ['POST', '/api/workshop-suite', {}], ['POST', '/api/basic-workshop-suite', {}],
     ];
     for (const [method, path, body] of routes) {
       for (const headers of [{ 'x-csrf-token': '' }, { 'x-csrf-token': other.info.csrfToken }, { origin: '' }, { origin: 'null' }, { origin: 'https://attacker.invalid' }, { 'sec-fetch-site': 'cross-site' }]) {

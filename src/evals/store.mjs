@@ -47,11 +47,62 @@ export class Store {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE, workshop_id TEXT NOT NULL, access_version TEXT NOT NULL, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS access_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS evaluation_references (
+      owner_id TEXT NOT NULL, workshop_id TEXT NOT NULL, evaluation_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL CHECK(sequence > 0),
+      PRIMARY KEY(owner_id, workshop_id, evaluation_id), UNIQUE(owner_id, workshop_id, sequence));`);
+    this.#migrateReferences();
   }
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); this.db.exec('COMMIT'); return result; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  #reference(id, scope) {
+    if (!id) return undefined;
+    const row = this.db.prepare('SELECT sequence FROM evaluation_references WHERE owner_id=? AND workshop_id=? AND evaluation_id=?').get(...requireScope(scope), id);
+    return row ? 'EVAL-' + row.sequence : undefined;
+  }
+  #allocateReference(id, scope) {
+    // Call only within a write transaction. Retain mappings after deletion so numbers are never reused.
+    const existing = this.#reference(id, scope);
+    if (existing) return existing;
+    const params = requireScope(scope);
+    this.db.prepare(`INSERT INTO evaluation_references (owner_id, workshop_id, evaluation_id, sequence)
+      SELECT ?, ?, ?, COALESCE(MAX(sequence), 0) + 1 FROM evaluation_references WHERE owner_id=? AND workshop_id=?`).run(...params, id, ...params);
+    return this.#reference(id, scope);
+  }
+  #migrateReferences() {
+    this.transaction(() => {
+      const candidates = new Map();
+      const add = (row, id, createdAt) => {
+        if (!id || !row.owner_id || !row.workshop_id) return;
+        const key = JSON.stringify([row.owner_id, row.workshop_id, id]);
+        const candidate = { id, createdAt: createdAt || '', scope: { ownerId: row.owner_id, workshopId: row.workshop_id } };
+        if (!candidates.has(key) || candidate.createdAt < candidates.get(key).createdAt) candidates.set(key, candidate);
+      };
+      for (const row of this.db.prepare('SELECT id, data, owner_id, workshop_id FROM evaluations').all()) add(row, row.id, JSON.parse(row.data).createdAt);
+      for (const row of this.db.prepare('SELECT data, owner_id, workshop_id FROM runs').all()) {
+        const run = JSON.parse(row.data);
+        for (const item of run.items || []) add(row, item.evaluationId || item.evaluation?.id, item.evaluation?.createdAt || run.createdAt);
+      }
+      for (const candidate of [...candidates.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))) {
+        this.#allocateReference(candidate.id, candidate.scope);
+      }
+    });
+  }
+  #readEvaluation(row, scope) {
+    const record = readEvaluation(row);
+    return record && { ...record, reference: this.#reference(record.id, scope) };
+  }
+  #readRun(row, scope) {
+    if (!row) return undefined;
+    const run = JSON.parse(row.data);
+    for (const item of run.items || []) {
+      const reference = this.#reference(item.evaluationId || item.evaluation?.id, scope);
+      if (reference) item.evaluation = { ...item.evaluation, reference };
+    }
+    return run;
   }
   recoverInterruptedRuns() {
     // Preserve unfinished evidence without replaying paid calls after a restart.
@@ -70,9 +121,9 @@ export class Store {
     });
   }
   evaluations(scope) {
-    return this.db.prepare('SELECT data FROM evaluations WHERE owner_id=? AND workshop_id=?').all(...requireScope(scope)).map(readEvaluation).sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+    return this.db.prepare('SELECT data FROM evaluations WHERE owner_id=? AND workshop_id=?').all(...requireScope(scope)).map(row => this.#readEvaluation(row, scope)).sort((a,b) => b.createdAt.localeCompare(a.createdAt));
   }
-  evaluation(id, scope) { return readEvaluation(this.db.prepare('SELECT data FROM evaluations WHERE id=? AND owner_id=? AND workshop_id=?').get(id, ...requireScope(scope))); }
+  evaluation(id, scope) { return this.#readEvaluation(this.db.prepare('SELECT data FROM evaluations WHERE id=? AND owner_id=? AND workshop_id=?').get(id, ...requireScope(scope)), scope); }
   #suiteId(value, scope) {
     requireScope(scope);
     if (value === undefined) return '';
@@ -83,6 +134,7 @@ export class Store {
   }
   #insertEvaluation(data, scope) {
     const record = { ...data, suiteId: this.#suiteId(data.suiteId, scope), id: randomUUID(), createdAt: new Date().toISOString(), revision: 1 };
+    record.reference = this.#allocateReference(record.id, scope);
     this.db.prepare('INSERT INTO evaluations (id,data,owner_id,workshop_id) VALUES (?,?,?,?)').run(record.id, JSON.stringify(record), ...requireScope(scope));
     return record;
   }
@@ -92,7 +144,7 @@ export class Store {
       const current = this.evaluation(id, scope);
       if (!current) throw new AppError('Evaluation not found.', 404);
       requireRevision(revision, current.revision);
-      const record = { ...data, suiteId: this.#suiteId(data.suiteId, scope), id: current.id, createdAt: current.createdAt, revision: current.revision + 1 };
+      const record = { ...data, suiteId: this.#suiteId(data.suiteId, scope), id: current.id, reference: current.reference, createdAt: current.createdAt, revision: current.revision + 1 };
       this.db.prepare('UPDATE evaluations SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(record), id, ...requireScope(scope));
       return record;
     });
@@ -198,8 +250,8 @@ export class Store {
       return { created, suite: suites[0], ...(Array.isArray(bundle) ? { suites } : {}), evaluations };
     });
   }
-  runs(scope) { return this.db.prepare('SELECT data FROM runs WHERE owner_id=? AND workshop_id=?').all(...requireScope(scope)).map(row => JSON.parse(row.data)).sort((a,b) => b.createdAt.localeCompare(a.createdAt)); }
-  run(id, scope) { const row = this.db.prepare('SELECT data FROM runs WHERE id=? AND owner_id=? AND workshop_id=?').get(id, ...requireScope(scope)); return row && JSON.parse(row.data); }
+  runs(scope) { return this.db.prepare('SELECT data FROM runs WHERE owner_id=? AND workshop_id=?').all(...requireScope(scope)).map(row => this.#readRun(row, scope)).sort((a,b) => b.createdAt.localeCompare(a.createdAt)); }
+  run(id, scope) { return this.#readRun(this.db.prepare('SELECT data FROM runs WHERE id=? AND owner_id=? AND workshop_id=?').get(id, ...requireScope(scope)), scope); }
   saveRun(run, scope) {
     const result = this.db.prepare(`INSERT INTO runs (id,data,owner_id,workshop_id) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE runs.owner_id=excluded.owner_id AND runs.workshop_id=excluded.workshop_id`).run(run.id, JSON.stringify(run), ...requireScope(scope));
     if (!result.changes) throw new Error('Run workspace mismatch.');
