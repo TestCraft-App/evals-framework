@@ -19,7 +19,6 @@
     <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
   </section>
   <main class="shell" id="workspace" hidden>
-    <div class="page-heading"><h1>Workspace</h1><span class="usage-badge" id="model-allowance" role="status" aria-label="Shared model-call allowance"></span></div>
     <div class="notice" id="setup-notice" hidden></div>
     <div class="error-banner" id="app-error" role="alert" hidden></div>
     <nav class="tabs" role="tablist" aria-label="Workspaces">
@@ -28,12 +27,6 @@
     </nav>
 
     <section id="evaluations-panel" role="tabpanel" aria-labelledby="evaluations-tab">
-      <div class="stats">
-        <article><span>Total evaluations</span><strong id="stat-total">0</strong><small>Your saved evaluation dataset</small></article>
-        <article><span>Passed</span><strong id="stat-passed" class="teal">0</strong><small>Latest run meets the evaluation criteria</small></article>
-        <article><span>Needs attention</span><strong id="stat-failed">0</strong><small>Failed checks or execution errors</small></article>
-        <article><span>Average score</span><strong id="stat-score">—</strong><small>Graded results from latest runs</small></article>
-      </div>
       <section class="table-card" aria-label="Evaluation library">
         <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><button id="example-button" class="button">Load example</button><button id="workshop-button" class="button">Load workshop suite</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
         <div class="suite-toolbar" aria-label="Suites">

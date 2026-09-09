@@ -38,8 +38,6 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await page.reload();
   await expect(page.locator('.result-score')).toContainText('1.00');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
-  await expect(page.locator('#stat-score')).toHaveText('1.00');
-  await expect(page.locator('#stat-score')).toHaveClass('score-high');
   await expect(page.locator('#evaluation-rows .score')).toHaveText('1.00');
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await expect(page.locator('#run-list .score')).toHaveText('1.00');
@@ -77,7 +75,6 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
   await expect(page.locator('#evaluation-rows .badge.not_run')).toHaveText('Not run');
-  await expect(page.locator('#stat-passed')).toHaveText('0');
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
   await createSelectedRun(page);

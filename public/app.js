@@ -1,4 +1,4 @@
-import { createRunDetail, scoreText, scoreMarkup, scoreClass } from './run-detail.js';
+import { createRunDetail, scoreMarkup } from './run-detail.js';
 const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Generate code', model_grade: 'LLM as a judge', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Does not contain', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
@@ -53,11 +53,6 @@ function showConnecting() {
   $('session-message').textContent = 'Opening your private workspace…';
   $('session-error').textContent = ''; $('retry-session').hidden = true;
 }
-function renderSession() {
-  const b = session.budget;
-  $('model-allowance').textContent = `${b.remaining} / ${b.limit} calls left${b.reserved ? ` · ${b.reserved} reserved` : ''}`;
-  $('model-allowance').title = 'Shared model-call allowance for the workshop, not a dollar limit.';
-}
 function scheduleSessionCheck() {
   clearTimeout(sessionTimer);
   if (session) sessionTimer = setTimeout(() => refreshSession().catch(e => { error(e.message); scheduleSessionCheck(); }), 30000);
@@ -68,7 +63,7 @@ async function refreshSession() {
   const current = await api('/api/session');
   if (!current.authenticated || current.workspaceId !== session?.workspaceId) return connectWorkspace();
   // Preserve object identity so parallel responses from this workspace remain valid.
-  Object.assign(session, current); renderSession();
+  Object.assign(session, current);
   scheduleSessionCheck();
 }
 async function loadLibrary() {
@@ -94,12 +89,7 @@ function visibleEvaluations() {
   }).sort((a,b) => $('sort').value === 'name' ? a.name.localeCompare(b.name) : $('sort').value === 'score' ? (b.latest?.score ?? -1) - (a.latest?.score ?? -1) : b.createdAt.localeCompare(a.createdAt));
 }
 function renderLibrary() {
-  $('eval-count').textContent = evaluations.length; $('stat-total').textContent = evaluations.length;
-  $('stat-passed').textContent = evaluations.filter(e => e.latest?.status === 'passed').length;
-  $('stat-failed').textContent = evaluations.filter(e => ['failed','error'].includes(e.latest?.status)).length;
-  const scored = evaluations.filter(e => Number.isFinite(e.latest?.score));
-  const average = scored.length ? scored.reduce((sum,e) => sum + e.latest.score, 0) / scored.length : null;
-  $('stat-score').textContent = scoreText(average); $('stat-score').className = scoreClass(average);
+  $('eval-count').textContent = evaluations.length;
   const visible = visibleEvaluations();
   $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
     + '<td><button class="eval-name" data-inspect="' + e.id + '" title="Edit evaluation">' + escape(e.name) + '</button><div class="eval-id">' + escape(suites.find(s => s.id === e.suiteId)?.name || 'Unfiled') + ' · v' + (e.revision || 1) + '</div></td>'
@@ -432,7 +422,6 @@ async function submitRun(event) {
     if (workspace !== session || draft !== runDraftRevision) return;
     setCreatingRun(false); $('create-run-dialog').close(); location.hash = 'runs/' + run.id;
     toast('Run created. Generation and grading continue in the backend.');
-    await refreshSession().catch(() => {});
   } catch (e) {
     if (workspace === session && draft === runDraftRevision) $('create-run-error').textContent = e.message;
   } finally { if (workspace === session && draft === runDraftRevision) setCreatingRun(false); }
@@ -541,7 +530,7 @@ async function pollRun(id, revision = runViewRevision) {
     if (serialized !== lastRunJson) { lastRunJson = serialized; renderRunDetail(); await loadRuns(); }
     if (revision !== runViewRevision || location.hash !== '#runs/' + id) return;
     if (activeStatuses.includes(run.status)) polling = setTimeout(() => pollRun(id, revision), 900);
-    else { await loadLibrary(); if (!sessionSetup) await refreshSession(); }
+    else { await loadLibrary(); }
   } catch (e) {
     if (!session || revision !== runViewRevision || location.hash !== '#runs/' + id) return;
     if (e.status === 404) {
@@ -563,7 +552,7 @@ async function pollRunList(revision = runViewRevision) {
     if (revision !== runViewRevision || location.hash !== '#runs') return;
     pollFailures = 0;
     if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
-    else { await loadLibrary(); if (!sessionSetup) await refreshSession(); }
+    else { await loadLibrary(); }
   } catch (e) {
     if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
     error(e.message);
@@ -705,7 +694,7 @@ async function openWorkspace() {
   await Promise.all([loadLibrary(), loadRuns(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
   if (!session) return;
   $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;
-  renderSession(); scheduleSessionCheck();
+  scheduleSessionCheck();
 }
 async function ensureBrowserSession() {
   let current = await api('/api/session');

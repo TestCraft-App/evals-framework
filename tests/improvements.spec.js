@@ -147,7 +147,7 @@ test('hybrid rules with custom weights calculate Pass/Fail without a grader call
   await expect(page.locator('.criteria-met')).toHaveText('3/4');
   await expect(page.locator('#run-detail')).not.toContainText('weight');
   const session = await (await page.request.get('/api/session')).json();
-  expect(session.budget.used).toBe(1); // Generation, with no judge call.
+  expect(session).not.toHaveProperty('budget');
 });
 
 test('hybrid model criteria enable the model dropdown and retain method-specific text', async ({ page }) => {
@@ -170,7 +170,7 @@ test('workshop suite loads once without spending model calls', async ({ page }) 
   await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
   const session = await (await page.request.get('/api/session')).json();
-  expect(session.budget.used).toBe(0);
+  expect(session).not.toHaveProperty('budget');
   await page.reload();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
 });

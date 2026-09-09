@@ -19,7 +19,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
   const store = new Store(dbPath);
   let sessions;
   try { sessions = createSessions(store, env); } catch (error) { store.close(); throw error; }
-  const engine = new Engine(store, env, fetchImpl, sessions.limit);
+  const engine = new Engine(store, env, fetchImpl);
   const catalogs = Object.fromEntries(Object.entries(environments).map(([id, base]) => [id, createModelCatalog({ ...env, TESTCRAFT_BASE_URL: base }, fetchImpl)]));
   let stopping = false, shutdownPromise;
   const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/run-detail.js': ['run-detail.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };

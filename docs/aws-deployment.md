@@ -94,7 +94,6 @@ En GitHub → Settings → Secrets and variables → Actions → Variables, carg
 | `AWS_SECRET_ARN` | ARN del secreto; no su contenido |
 | `APP_ORIGIN` | Origen HTTPS exacto de CloudFront |
 | `WORKSHOP_ID` | `workshop`, estable durante las actualizaciones |
-| `WORKSHOP_MAX_MODEL_CALLS` | `200` inicialmente; `0` permite solo pruebas locales sin llamadas |
 | `AWS_DEPLOY_ENABLED` | Mantener ausente/`false` hasta completar todos los pasos; después `true` |
 
 Subir estos cambios mediante un PR, exigir el job `test` en la protección de `main`, bloquear pushes directos y revisar los cambios del workflow. Un push a `main` también activa el workflow; la regla de protección es lo que obliga a pasar por un PR.
@@ -123,3 +122,5 @@ Hay una breve interrupción al cambiar el único servidor. El workflow no cancel
 El backup previo al deploy en el mismo EBS no protege contra pérdida del volumen. Configurar AWS Backup/snapshots cifrados con retención y probar restauración antes del curso. Vigilar/definir retención de backups e imágenes; los scripts no borran automáticamente respaldos ni datos de participantes. Los snapshots, imágenes, discos, secretos y NAT pueden seguir cobrando aunque la EC2 esté detenida. Preparar el apagado/eliminación de recursos exclusivos cuando termine el uso, con autorización y conservación de los datos necesarios.
 
 Quedan fuera de este primer despliegue: criterios híbridos, Pass/Fail ponderado, suites/carpetas, edición/duplicación/borrado de evaluaciones, entornos TestCraft y modificaciones al prompt de Dev. Se mantienen como la siguiente etapa, no como funcionalidades ya implementadas.
+
+Los presupuestos se controlan mediante las API keys y los proveedores. `WORKSHOP_MAX_MODEL_CALLS` ya no se configura ni limita las ejecuciones.

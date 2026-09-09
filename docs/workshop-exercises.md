@@ -54,7 +54,7 @@ Repeated runs probe the whole generation-and-grading pipeline: both output and j
 
 All eight cases need working TestCraft API generation. In **Runs → Create Run**, choose an explicit generation model from the selected environment’s catalog. Cases 04, 06, and 07 also need backend `OPENAI_API_KEY` and access to the grader chosen from the same TestCraft model catalog for the run. All model criteria within one case share one judge call. The grader key is never implicitly forwarded to TestCraft.
 
-One full suite uses **8 generation + 3 judge = 11 app model-call attempts**; seven participants running it once use **77**. Reruns add calls. This is a request allowance, not a dollar estimate. Missing configuration prevents dispatch; dispatched requests can consume allowance even on provider errors. If generation is unavailable, review the inputs and criteria without inventing responses or results.
+One full suite uses **8 generation + 3 judge = 11 app model-call attempts**; seven participants running it once use **77**. Reruns add calls. These request counts are not dollar estimates. Manage budgets through API keys. Missing configuration prevents dispatch; provider errors may still incur charges. If generation is unavailable, review the inputs and criteria without inventing responses or results.
 
 ## Existing workshop data
 

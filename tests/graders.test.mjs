@@ -18,13 +18,13 @@ const response = (checks, overrides = {}) => Response.json({ model: 'mock-judge'
 const noFetch = async () => { assert.fail('Unexpected provider request'); };
 const isAppError = status => error => error instanceof AppError && error.status === status;
 
-function setupEngine(t, { limit = 2, environment = env, fetchImpl = noFetch } = {}) {
+function setupEngine(t, { environment = env, fetchImpl = noFetch } = {}) {
   const store = new Store(':memory:');
   const scope = { ownerId: 'grader-test-owner', workshopId: 'grader-test-workshop' };
   const calls = [];
-  const engine = new Engine(store, environment, async (...args) => { calls.push(args); return fetchImpl(...args); }, limit);
+  const engine = new Engine(store, environment, async (...args) => { calls.push(args); return fetchImpl(...args); });
   t.after(async () => { await engine.drain(); store.close(); });
-  return { store, scope, engine, calls, budget: () => store.budget(scope.workshopId, limit) };
+  return { store, scope, engine, calls };
 }
 
 async function runCase(fixture, evaluation) {
@@ -219,7 +219,7 @@ test('weak workshop output receives a justified Fail, not an error, when behavio
   const evaluation = workshopSuite.evaluations.find(item => item.name.startsWith('04'));
   const evidence = 'There is no field entry, submission, or assertion of the required login outcomes.';
   const reason = 'Navigation and an assertion on a constant do not implement the requested scenarios.';
-  const fixture = setupEngine(t, { limit: 1, fetchImpl: async (_url, options) => {
+  const fixture = setupEngine(t, { fetchImpl: async (_url, options) => {
     const request = JSON.parse(options.body);
     const input = JSON.parse(request.messages[1].content);
     assert.equal(input.actualOutputLines.map(line => line.text).join('\n'), evaluation.actualOutput);
@@ -233,7 +233,7 @@ test('weak workshop output receives a justified Fail, not an error, when behavio
   assert.equal(run.items[0].checks[0].evidence, evidence);
   assert.equal(run.items[0].checks[0].reason, reason);
   assert.equal(fixture.calls.length, 1);
-  assert.equal(fixture.budget().used, 1);
+
 });
 
 test('invalid grader fields report safe, specific errors without retries, raw responses, or invented grades', async t => {
@@ -248,7 +248,7 @@ test('invalid grader fields report safe, specific errors without retries, raw re
     { field: 'extra', value: 'PRIVATE_PROVIDER_CONTENT', message: /check 1.*exactly/ },
   ];
   for (const invalid of cases) await t.test(`${invalid.field}: ${JSON.stringify(invalid.value)}`, async t => {
-    const fixture = setupEngine(t, { limit: 1, fetchImpl: async () => response([
+    const fixture = setupEngine(t, { fetchImpl: async () => response([
       { id: 'c1', passed: false, evidence: 'PRIVATE_PROVIDER_CONTENT', reason: 'PRIVATE_PROVIDER_CONTENT', [invalid.field]: invalid.value },
     ]) });
     const { run } = await runCase(fixture, modelCase());
@@ -259,7 +259,7 @@ test('invalid grader fields report safe, specific errors without retries, raw re
     assert.match(item.error, invalid.message);
     assert.equal(JSON.stringify(run).includes('PRIVATE_PROVIDER_CONTENT'), false);
     assert.equal(fixture.calls.length, 1);
-    assert.deepEqual(fixture.budget(), { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
+
   });
 });
 
@@ -297,7 +297,7 @@ test('legacy scalar/reference definitions rerun as binary criteria without alter
 });
 
 test('engine keeps 79.6 below the fixed pass threshold and tags only new runs', async t => {
-  const fixture = setupEngine(t, { limit: 0, environment: {} });
+  const fixture = setupEngine(t, { environment: {} });
   const historical = { ...base, schemaVersion: 2, threshold: 1, criteria: ['valid user'], id: 'historical-evaluation' };
   const historicalRun = { id: 'historical-run', status: 'completed', createdAt: '2026-01-01', items: [{ evaluation: historical, score: 93, checks: [{ score: 93 }] }] };
   fixture.store.saveRun(historicalRun, fixture.scope);
@@ -321,7 +321,7 @@ test('engine keeps 79.6 below the fixed pass threshold and tags only new runs', 
 });
 
 test('decimal weights pass at exactly 80 regardless of summation order, while a nearby lower score fails', async t => {
-  const fixture = setupEngine(t, { limit: 0, environment: {} });
+  const fixture = setupEngine(t, { environment: {} });
   for (const criteria of [
     ['valid', 'user', 'invalid', 'password', 'missing'].map(text => criterion(text, 'contains', 0.1)),
     [criterion('missing', 'contains', 0.015), criterion('valid', 'contains', 0.01), criterion('user', 'contains', 0.01), criterion('password', 'contains', 0.04)],
@@ -340,16 +340,16 @@ test('decimal weights pass at exactly 80 regardless of summation order, while a 
   assert.equal(fixture.calls.length, 0);
 });
 
-test('hybrid rule-only runs use zero judge budget and ignore stale judge credentials', async t => {
-  const fixture = setupEngine(t, { limit: 0, environment: {} });
+test('hybrid rule-only runs use no judge calls and ignore stale judge credentials', async t => {
+  const fixture = setupEngine(t, { environment: {} });
   const { run } = await runCase(fixture, { ...base, method: 'hybrid', judgeModel: 'o1-mini', criteria: [criterion('valid user'), criterion('TODO', 'not_contains')] });
   assert.equal(run.items[0].status, 'passed');
   assert.equal(fixture.calls.length, 0);
-  assert.deepEqual(fixture.budget(), { limit: 0, used: 0, reserved: 0, remaining: 0, unit: 'model_calls' });
+
 });
 
-test('hybrid generation plus one judge call reserves two calls and closes the allowance', async t => {
-  const fixture = setupEngine(t, { limit: 2, fetchImpl: async (_url, options) => JSON.parse(options.body).response_format
+test('hybrid generation and grading can be repeated without a call cap', async t => {
+  const fixture = setupEngine(t, { fetchImpl: async (_url, options) => JSON.parse(options.body).response_format
     ? response([check('c2'), check('c3', false, 'No boundary scenario appears.')])
     : response([], { choices: [{ finish_reason: 'stop', message: { content: base.actualOutput } }] }) });
   const evaluation = validateEvaluation({ ...base, source: 'llm', model: 'mock-generator', method: 'hybrid', criteria: [
@@ -357,24 +357,15 @@ test('hybrid generation plus one judge call reserves two calls and closes the al
   ] });
   const saved = fixture.store.create(evaluation, fixture.scope);
   const run = fixture.engine.start([saved.id], fixture.scope);
-  assert.equal(fixture.budget().reserved, 2);
+
   assert.equal(fixture.calls.length, 0);
   await fixture.engine.drain(); fixture.engine.resume();
   assert.equal(fixture.store.run(run.id, fixture.scope).items[0].status, 'failed');
   assert.equal(fixture.calls.length, 2);
-  assert.deepEqual(fixture.budget(), { limit: 2, used: 2, reserved: 0, remaining: 0, unit: 'model_calls' });
-  assert.throws(() => fixture.engine.start([saved.id], fixture.scope), isAppError(429));
-  assert.equal(fixture.calls.length, 2);
-});
 
-test('hybrid batch budget rejects unaffordable runs before any model attempt', t => {
-  const fixture = setupEngine(t, { limit: 1 });
-  const evaluation = validateEvaluation({ ...base, source: 'llm', model: 'mock-generator', method: 'hybrid', criteria: [criterion('Positive behavior', 'model_grade')] });
-  const saved = fixture.store.create(evaluation, fixture.scope);
-  assert.throws(() => fixture.engine.start([saved.id], fixture.scope), isAppError(429));
-  assert.deepEqual(fixture.store.runs(fixture.scope), []);
-  assert.equal(fixture.calls.length, 0);
-  assert.equal(fixture.budget().remaining, 1);
+  fixture.engine.start([saved.id], fixture.scope);
+  await fixture.engine.drain();
+  assert.equal(fixture.calls.length, 4);
 });
 
 test('hybrid judge preflight prevents paid generation when credentials, model, or criteria are invalid', async t => {
@@ -389,18 +380,18 @@ test('hybrid judge preflight prevents paid generation when credentials, model, o
       assert.equal(run.items[0].score, null);
       assert.match(run.items[0].error, invalid.pattern);
       assert.equal(fixture.calls.length, 0);
-      assert.deepEqual(fixture.budget(), { limit: 2, used: 0, reserved: 0, remaining: 2, unit: 'model_calls' });
+
     });
   }
 });
 
-test('out-of-range judge evidence errors the run, charges one attempt, and releases reservations', async t => {
-  const fixture = setupEngine(t, { limit: 1, fetchImpl: async () => response([check('c2', true, [999])]) });
+test('out-of-range judge evidence errors the run, makes only one attempt', async t => {
+  const fixture = setupEngine(t, { fetchImpl: async () => response([check('c2', true, [999])]) });
   const { run } = await runCase(fixture, validateEvaluation({ ...base, method: 'hybrid', criteria: [criterion('valid user'), criterion('Positive behavior', 'model_grade')] }));
   assert.equal(run.items[0].status, 'error');
   assert.equal(run.items[0].score, null);
   assert.deepEqual(run.items[0].checks, []);
   assert.match(run.items[0].error, /valid source line numbers/);
   assert.equal(fixture.calls.length, 1);
-  assert.deepEqual(fixture.budget(), { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
+
 });

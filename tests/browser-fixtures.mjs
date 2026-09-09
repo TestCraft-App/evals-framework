@@ -10,7 +10,7 @@ export const test = base.extend({
   browserApp: async ({ generationOutput, generationCalls }, use) => {
     const app = createApp({
       dbPath: ':memory:',
-      env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', WORKSHOP_MAX_MODEL_CALLS: '200', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
+      env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
       fetchImpl: async (url, options) => {
         if (url.endsWith('/api/models')) return Response.json({ models: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].map(id => ({ id, label: id })) });
         if (!['https://api.testcraft.app', 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app', 'http://127.0.0.1:8080'].some(base => ['/api/generate-ideas', '/api/automate-tests', '/api/automate-tests-ideas'].some(path => url === base + path))) throw new Error('Browser tests must not contact real providers.');

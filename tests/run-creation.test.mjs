@@ -51,7 +51,7 @@ test('all three current TestCraft models can generate and grade with validated e
       const run = await waitForRun(person, (await response.json()).id);
       assert.equal(run.items[0].score, 100); assert.equal(run.items[0].evaluation.judgeModel, model);
     }
-    assert.deepEqual(graded, models); assert.equal((await person.get('/api/session')).budget.used, 6);
+    assert.deepEqual(graded, models);
   } finally { await app.shutdown(); }
 });
 
@@ -68,7 +68,7 @@ test('new run contract rejects missing/forged settings, unavailable models and m
     const rejected = await post(person, { ...settings, evaluationIds: [oldCode.id] });
     assert.equal(rejected.status, 400); assert.match((await rejected.json()).error, /Synthetic login.*Page URL/);
     assert.ok(calls.every(url => url.endsWith('/api/models'))); assert.equal(app.store.runs(person.scope).length, 0);
-    assert.equal(app.store.budget('workshop', 200).used, 0); assert.equal(app.store.budget('workshop', 200).reserved, 0);
+
   } finally { await app.shutdown(); }
 });
 
@@ -102,7 +102,7 @@ test('concurrent environments use distinct catalogs, generation URLs and immutab
       if (url.endsWith('/api/models')) assert.equal(JSON.stringify(init).includes('secret'), false);
       else { assert.equal(JSON.parse(init.body).openAiApiKey, 'generation-secret'); assert.equal(init.body.includes('judge-secret'), false); }
     }
-    assert.equal((await person.get('/api/session')).budget.used, 2);
+
   } finally { await app.shutdown(); }
 });
 
@@ -124,7 +124,7 @@ test('run grader applies across model criteria and keeps grading on the separate
     const run = await waitForRun(person, (await response.json()).id);
     assert.ok(run.items.every(item => item.score === 100 && item.evaluation.judgeModel === 'gpt-4o'));
     assert.equal(calls.filter(url => url.endsWith('/chat/completions')).length, 2);
-    assert.equal((await person.get('/api/session')).budget.used, 4);
+
   } finally { await app.shutdown(); }
 });
 
@@ -157,7 +157,7 @@ test('catalog failure prevents creation without spending allowance and ownership
     const person = await client(app), other = await client(app), saved = await save(person);
     assert.equal((await post(other, { ...settings, evaluationIds: [saved.id] })).status, 404); assert.equal(calls, 0);
     assert.equal((await post(person, { ...settings, evaluationIds: [saved.id] })).status, 503); assert.equal(calls, 1);
-    assert.deepEqual((await person.get('/api/runs')).runs, []); assert.equal((await person.get('/api/session')).budget.used, 0);
+    assert.deepEqual((await person.get('/api/runs')).runs, []);
   } finally { await app.shutdown(); }
 });
 
@@ -189,6 +189,6 @@ test('evaluation deletion during a catalog lookup is revalidated before acceptan
     await pending;
     assert.equal((await person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' })).status, 200);
     release(); assert.equal((await response).status, 404);
-    assert.deepEqual((await person.get('/api/runs')).runs, []); assert.equal((await person.get('/api/session')).budget.reserved, 0);
+    assert.deepEqual((await person.get('/api/runs')).runs, []);
   } finally { release(); await app.shutdown(); }
 });

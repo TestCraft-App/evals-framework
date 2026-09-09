@@ -59,7 +59,7 @@ test('a justified model Fail displays its concise reason and remains distinct fr
   const run = await (await page.request.get('/api/runs/' + runId)).json();
   expect(run.items[0].checks[0].evidence).toBe(evidence);
   const session = await (await page.request.get('/api/session')).json();
-  expect(session.budget.used).toBe(2);
+  expect(session).not.toHaveProperty('budget');
 });
 
 test.describe('provider violates the nonempty-evidence contract', () => {
@@ -76,8 +76,7 @@ test.describe('provider violates the nonempty-evidence contract', () => {
     await page.locator('.detail-expand').click();
     await expect(page.locator('#run-detail [role="alert"]')).toContainText('empty evidence for criterion c1');
     const session = await (await page.request.get('/api/session')).json();
-    expect(session.budget.used).toBe(2);
-    expect(session.budget.reserved).toBe(0);
+    expect(session).not.toHaveProperty('budget');
   });
 });
 

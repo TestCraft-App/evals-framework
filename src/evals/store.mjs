@@ -3,7 +3,6 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AppError, validateEvaluation } from './validation.mjs';
-import { needsModelGrader } from './methods.mjs';
 import { canDeleteRun } from './runs.mjs';
 
 function requireScope(scope) {
@@ -47,10 +46,7 @@ export class Store {
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE, workshop_id TEXT NOT NULL, access_version TEXT NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS access_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS model_usage (workshop_id TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS model_reservations (item_id TEXT PRIMARY KEY, workshop_id TEXT NOT NULL, remaining INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS reservations_workshop ON model_reservations(workshop_id);`);
+      CREATE TABLE IF NOT EXISTS access_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
   }
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
@@ -71,7 +67,6 @@ export class Store {
           this.db.prepare('UPDATE runs SET data=? WHERE id=?').run(JSON.stringify(run), row.id);
         }
       }
-      this.db.exec('DELETE FROM model_reservations');
     });
   }
   evaluations(scope) {
@@ -187,30 +182,9 @@ export class Store {
       // Active jobs still persist their snapshots: deleting one would resurrect it.
       if (!canDeleteRun(run)) throw new AppError('This run is still active. Wait for it to finish before deleting it.', 409);
       this.db.prepare('DELETE FROM runs WHERE id=? AND owner_id=? AND workshop_id=?').run(id, ...requireScope(scope));
-      // Evaluation definitions and workshop usage are independent of run history.
+      // Evaluation definitions are independent of run history.
       return { deletedId: id };
     });
   }
-  budget(workshopId, limit) {
-    const used = this.db.prepare('SELECT used FROM model_usage WHERE workshop_id=?').get(workshopId)?.used || 0;
-    const reserved = this.db.prepare('SELECT COALESCE(SUM(remaining),0) AS total FROM model_reservations WHERE workshop_id=?').get(workshopId).total;
-    return { limit, used, reserved, remaining: Math.max(0, limit - used - reserved), unit: 'model_calls' };
-  }
-  reserveRun(run, scope, limit) {
-    return this.transaction(() => {
-      const reservations = run.items.map(item => ({ id: item.id, calls: Number(item.evaluation.source !== 'pasted') + Number(needsModelGrader(item.evaluation)) }));
-      if (reservations.reduce((sum, item) => sum + item.calls, 0) > this.budget(scope.workshopId, limit).remaining) throw new AppError('The workshop model-call allowance is insufficient for this batch. Try fewer evaluations or wait for active reservations to be released.', 429);
-      this.saveRun(run, scope);
-      for (const item of reservations) if (item.calls) this.db.prepare('INSERT INTO model_reservations VALUES (?,?,?)').run(item.id, scope.workshopId, item.calls);
-    });
-  }
-  consumeCall(itemId, workshopId) {
-    this.transaction(() => {
-      const result = this.db.prepare('UPDATE model_reservations SET remaining=remaining-1 WHERE item_id=? AND workshop_id=? AND remaining>0').run(itemId, workshopId);
-      if (!result.changes) throw new AppError('No model-call allowance was reserved for this evaluation.', 429);
-      this.db.prepare('INSERT INTO model_usage VALUES (?,1) ON CONFLICT(workshop_id) DO UPDATE SET used=used+1').run(workshopId);
-    });
-  }
-  releaseCalls(itemId) { this.db.prepare('DELETE FROM model_reservations WHERE item_id=?').run(itemId); }
   close() { this.db.close(); }
 }

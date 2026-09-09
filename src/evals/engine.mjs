@@ -5,7 +5,7 @@ import { grade } from './graders.mjs';
 import { GRADING_VERSION, needsModelGrader } from './methods.mjs';
 
 export class Engine {
-  constructor(store, env, fetchImpl = fetch, limit = 200) { this.store = store; this.env = env; this.fetchImpl = fetchImpl; this.limit = limit; this.queue = []; this.active = 0; this.inFlight = new Set(); this.accepting = true; this.idleWaiters = new Set(); }
+  constructor(store, env, fetchImpl = fetch) { this.store = store; this.env = env; this.fetchImpl = fetchImpl; this.queue = []; this.active = 0; this.inFlight = new Set(); this.accepting = true; this.idleWaiters = new Set(); }
   get idle() { return this.active === 0 && this.queue.length === 0; }
   drain() {
     this.accepting = false;
@@ -32,7 +32,7 @@ export class Engine {
     evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'Unfiled' }));
     const run = { id: randomUUID(), gradingVersion: GRADING_VERSION, status: 'queued', createdAt: new Date().toISOString(), items: evaluations.map(evaluation => ({ id: randomUUID(), gradingVersion: GRADING_VERSION, evaluationId: evaluation.id, evaluation, status: 'queued', score: null, output: null, checks: [], events: [] })) };
     if (settings) { const { description, ...configuration } = settings; run.description = description; run.settings = configuration; }
-    this.store.reserveRun(run, scope, this.limit);
+    this.store.saveRun(run, scope);
     for (const item of run.items) { this.inFlight.add(item.evaluationId); this.queue.push({ run, item, scope }); }
     setImmediate(() => this.pump());
     return run;
@@ -50,8 +50,6 @@ export class Engine {
   async execute({ run, item, scope }) {
     const started = Date.now();
     const event = message => { item.events.push({ at: new Date().toISOString(), message }); this.store.saveRun(run, scope); };
-    // Persist every actual attempt before dispatch, including timeouts and provider errors.
-    const budgetedFetch = (...args) => { this.store.consumeCall(item.id, scope.workshopId); return this.fetchImpl(...args); };
     run.status = 'running'; item.status = 'generating'; item.startedAt = new Date().toISOString();
     event(item.evaluation.source === 'pasted' ? 'Loading supplied TestCraft output' : `Generating ${item.evaluation.type} from input and HTML`);
     try {
@@ -61,18 +59,16 @@ export class Engine {
         if (!this.env.OPENAI_API_KEY) throw new AppError('Set OPENAI_API_KEY in the backend .env and restart before running LLM as a judge.', 503);
         if (typeof item.evaluation.judgeModel !== 'string' || !item.evaluation.judgeModel.trim()) throw new AppError('Choose a model grader before running model criteria.');
       }
-      const generated = await generateOutput(item.evaluation, run.settings ? { ...this.env, TESTCRAFT_BASE_URL: run.settings.testcraftBaseUrl } : this.env, budgetedFetch);
+      const generated = await generateOutput(item.evaluation, run.settings ? { ...this.env, TESTCRAFT_BASE_URL: run.settings.testcraftBaseUrl } : this.env, this.fetchImpl);
       item.output = generated.output; item.outputSource = generated.source; item.generationModel = generated.model; item.generationUsage = generated.usage;
       item.status = 'grading'; event(`Output received. Applying ${item.evaluation.method.replaceAll('_', ' ')}`);
-      const result = await grade(item.evaluation, item.output, this.env, budgetedFetch);
+      const result = await grade(item.evaluation, item.output, this.env, this.fetchImpl);
       Object.assign(item, result);
       item.status = item.score >= item.evaluation.threshold ? 'passed' : 'failed';
       event(`Evaluation ${item.status}: ${item.score}/100`);
     } catch (error) {
       item.status = 'error'; item.error = error instanceof AppError ? error.message : 'Unexpected evaluation failure. Check the server logs.';
       event(item.error);
-    } finally {
-      this.store.releaseCalls(item.id);
     }
     item.durationMs = Date.now() - started;
     if (run.items.every(x => ['passed', 'failed', 'error'].includes(x.status))) { run.status = 'completed'; run.finishedAt = new Date().toISOString(); }

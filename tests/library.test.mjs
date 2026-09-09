@@ -200,7 +200,7 @@ test('create, edit and duplicate retain normalized weighted hybrid criteria and 
     const copy = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', {}), 201);
     assert.equal(copy.suiteId, second.id); assert.deepEqual(copy.criteria, updatedCriteria); assert.equal(copy.revision, 1);
     assert.deepEqual((await person.get('/api/runs/' + finished.id)).items[0].evaluation.criteria, criteria);
-    assert.equal((await person.get('/api/session')).budget.used, 1);
+
   } finally { await close(app); }
 });
 
@@ -218,12 +218,11 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     const active = await person.get('/api/runs/' + started.id);
     assert.equal(active.status, 'running'); assert.equal(active.items[2].status, 'queued');
     for (const evaluation of saved) assert.equal((await person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' })).status, 409);
-    const budget = (await person.get('/api/session')).budget;
-    assert.equal(budget.used, 2); assert.equal(budget.reserved, 1);
+
     await result(put(person, '/api/evaluations/' + saved[0].id, { ...base, suiteId: group.id, revision: 1 }), 200);
     await result(person.request('/api/suites/' + group.id, { method: 'DELETE' }), 200);
     assert.deepEqual(await person.get('/api/runs/' + started.id), active);
-    assert.deepEqual((await person.get('/api/session')).budget, budget);
+
     for (const [index, original] of saved.entries()) {
       const current = await person.get('/api/evaluations/' + original.id);
       assert.equal(current.suiteId, ''); assert.equal(current.revision, index === 0 ? 3 : 2);
@@ -233,12 +232,10 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     assert.equal(calls, 3);
     assert.deepEqual(finished.items.map(item => item.evaluation), saved.map(e => ({ ...e, model: 'gpt-4o-mini', suiteName: group.name })));
     assert.ok((await person.get('/api/evaluations')).evaluations.every(e => e.latest === null));
-    const finishedBudget = (await person.get('/api/session')).budget;
     for (const evaluation of saved) assert.deepEqual(await result(person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' }), 200), { deletedId: evaluation.id });
     assert.deepEqual(await person.get('/api/evaluations'), { evaluations: [] });
     assert.deepEqual(await person.get('/api/runs/' + started.id), finished);
-    assert.deepEqual((await person.get('/api/session')).budget, finishedBudget);
-    assert.equal(finishedBudget.used, 3); assert.equal(finishedBudget.reserved, 0);
+
     assert.equal((await person.post('/api/runs', { evaluationIds: [saved[0].id] })).status, 404);
     assert.equal((await person.request('/api/evaluations/' + saved[0].id, { method: 'DELETE' })).status, 404);
   } finally { release(); await app.engine.drain(); await close(app); }
@@ -294,28 +291,6 @@ test('PUT, DELETE, duplication and workshop import enforce JSON, Origin and sess
   } finally { await close(app); }
 });
 
-test('mixed criteria reserve the grader call as well as generation and reject unaffordable batches atomically', () => {
-  const store = new Store(':memory:');
-  try {
-    const mixed = {
-      ...base, id: 'mixed-evaluation', source: 'testcraft_api', method: 'hybrid', judgeModel: 'gpt-4o-mini',
-      criteria: [{ id: 'c1', text: 'valid user', method: 'contains' }, { id: 'c2', text: 'Explains the expected behavior', method: 'model_grade' }],
-    };
-    const queued = snapshot(mixed, 'mixed-run', 'queued', 'queued');
-    assert.throws(() => store.reserveRun(queued, testScope, 1), { status: 429 });
-    assert.deepEqual(store.runs(testScope), []); assert.equal(store.budget('workshop', 2).reserved, 0);
-    store.reserveRun(queued, testScope, 2);
-    assert.equal(store.budget('workshop', 2).reserved, 2);
-    store.consumeCall(queued.items[0].id, 'workshop'); store.consumeCall(queued.items[0].id, 'workshop');
-    store.releaseCalls(queued.items[0].id);
-    assert.deepEqual(store.budget('workshop', 2), { limit: 2, used: 2, reserved: 0, remaining: 0, unit: 'model_calls' });
-    const pasted = snapshot({ ...mixed, source: 'pasted' }, 'pasted-mixed', 'queued', 'queued');
-    store.reserveRun(pasted, testScope, 3); assert.equal(store.budget('workshop', 3).reserved, 1);
-    const rules = snapshot({ ...mixed, source: 'pasted', criteria: [{ id: 'c1', text: 'valid', method: 'contains' }, { id: 'c2', text: 'TODO', method: 'not_contains' }] }, 'mixed-rules', 'queued', 'queued');
-    store.reserveRun(rules, testScope, 3); assert.equal(store.budget('workshop', 3).reserved, 1);
-  } finally { store.close(); }
-});
-
 test('workshop import is private, idempotent across restart, preserves edits and can be reimported after deletion', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-workshop-library-')), dbPath = join(dir, 'evals.sqlite');
   let app = await listen(createApp({ dbPath, fetchImpl: noProvider }));
@@ -346,7 +321,7 @@ test('workshop import is private, idempotent across restart, preserves edits and
     assert.deepEqual(restoredImport.suite, renamed); assert.deepEqual(restoredImport.evaluations, currentMembers);
     assert.deepEqual(await restored.get('/api/evaluations/' + first.id), edited);
     assert.deepEqual(await restored.get('/api/evaluations/' + existing.id), existing);
-    assert.equal((await restored.get('/api/session')).budget.used, 0);
+
     await result(restored.request('/api/suites/' + imported.suite.id, { method: 'DELETE' }), 200);
     const unlinked = await restored.get('/api/evaluations/' + first.id);
     assert.equal(unlinked.name, edited.name); assert.equal(unlinked.suiteId, ''); assert.equal(unlinked.revision, 3);
@@ -376,7 +351,7 @@ test('the live workshop import leaves earlier pasted suites, edits and run snaps
     const repeated = await result(person.post('/api/workshop-suite', {}), 200);
     assert.equal(repeated.suite.id, imported.suite.id);
     assert.equal(app.store.suites(person.scope).length, 2);
-    assert.equal((await person.get('/api/session')).budget.used, 1);
+
   } finally { await close(app); }
 });
 
@@ -396,7 +371,7 @@ test('workshop import rejects custom bodies and rolls back the suite and all fix
     assert.deepEqual(app.store.suites(person.scope), []);
     assert.deepEqual(app.store.evaluations(person.scope), [saved]);
     assert.deepEqual(app.store.runs(person.scope), []);
-    assert.equal(app.store.budget('workshop', 200).used, 0);
+
     app.store.db.exec('DROP TRIGGER fail_workshop_insert');
     await result(person.post('/api/workshop-suite', {}), 201);
   } finally { await close(app); }

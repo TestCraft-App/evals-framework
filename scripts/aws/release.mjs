@@ -20,10 +20,8 @@ export function releaseConfig(env) {
   const secretArn = checked('AWS_SECRET_ARN', new RegExp(`^arn:aws:secretsmanager:${region}:${account}:secret:[A-Za-z0-9/_+=.@-]+$`));
   const origin = checked('APP_ORIGIN', /^https:\/\/[a-zA-Z0-9.-]+$/);
   if (new URL(origin).origin !== origin) throw new Error('APP_ORIGIN must be the exact HTTPS origin, without a trailing slash.');
-  const allowance = Number(env.WORKSHOP_MAX_MODEL_CALLS || '200');
-  if (!Number.isSafeInteger(allowance) || allowance < 0 || allowance > 100000) throw new Error('Invalid WORKSHOP_MAX_MODEL_CALLS.');
   return {
-    account, region, repository, secretArn, origin, allowance,
+    account, region, repository, secretArn, origin,
     instance: checked('AWS_INSTANCE_ID', /^i-[a-f0-9]{8,17}$/),
     bucket: checked('AWS_ARTIFACT_BUCKET', /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/),
     release: checked('GITHUB_SHA', /^[a-f0-9]{40}$/),
@@ -34,8 +32,8 @@ export function releaseConfig(env) {
 
 export function manifestFor(config, digest) {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Expected an immutable ECR image digest.');
-  const { account, region, origin, allowance, secretArn, workshop, release } = config;
-  return { account, region, origin, allowance, secretArn, workshop, release, image: `${config.repository}@${digest}` };
+  const { account, region, origin, secretArn, workshop, release } = config;
+  return { account, region, origin, secretArn, workshop, release, image: `${config.repository}@${digest}` };
 }
 
 const exec = (program, args, options = {}) => execFileSync(program, args, { encoding: 'utf8', maxBuffer: 5 * 1024 * 1024, ...options });

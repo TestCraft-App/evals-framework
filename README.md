@@ -26,25 +26,16 @@ Each browser gets a **different anonymous workspace**. The server stores a hash 
 - Reloads and new tabs in the **same browser profile and hostname** retain the workspace. Use one URL consistently: `localhost` and `127.0.0.1` have different cookies.
 - Sessions expire after **24 hours**, configurable with `WORKSHOP_SESSION_HOURS` (1–168). The expiration is fixed, not extended on every visit. The footer shows connection status and the repository link.
 - Clearing cookies, using incognito, changing devices or letting a session expire automatically starts a new empty workspace; this is not cross-device account recovery. Existing records are not automatically deleted at expiry. Sessions issued before removal of the code remain scoped to their original owner until expiry.
-- **Anyone with the app URL can enter and consume the shared allowance.** Data isolation does not restrict admission. There is no enforced seven-person maximum or organizer dashboard. For private admission, use deployment/network access controls separately.
-- Restarting with the same workshop ID and database preserves sessions and usage. CSRF tokens are derived from each random session token, independently of any shared code. Revoke a session by removing its server-side session record, not by changing the obsolete code setting.
+- **Anyone with the app URL can enter and make provider requests.** Data isolation does not restrict admission. There is no enforced seven-person maximum or organizer dashboard. For private admission, use deployment/network access controls separately.
+- Restarting with the same workshop ID and database preserves sessions and saved data. CSRF tokens are derived from each random session token, independently of any shared code. Revoke a session by removing its server-side session record, not by changing the obsolete code setting.
 - Protected mutations require the exact Origin and a session-bound `X-CSRF-Token`. Session creation uses an empty JSON object plus the exact Origin. New sessions are limited to 20 per remote address and 100 globally per minute, persisted across restarts; reusing an existing valid cookie does not consume this limit. Forwarded IP headers are not trusted. Behind an AWS proxy, the per-address limit may be shared by all participants.
 - The UI checks for an existing session, creates one only if needed, then verifies that the cookie was retained. Browsers supporting Web Locks serialize first-visit initialization across tabs. Blocked cookies or network failures show a retry message, not a creation loop. Expired sessions reconnect automatically; paid evaluation requests are never automatically replayed.
 
-### Shared model-call allowance
+### Provider budgets
 
-`WORKSHOP_MAX_MODEL_CALLS` defaults to **200 for the whole workshop**, not per participant. `WORKSHOP_ID` defaults to `workshop` and scopes the persistent usage counter; changing it intentionally starts a different workshop. Opening a fresh session, clearing cookies or restarting does not reset the allowance.
+Manage spending through the configured API keys and provider-side budgets. The app does not enforce a model-call allowance. The obsolete `WORKSHOP_MAX_MODEL_CALLS` setting is ignored. `WORKSHOP_ID` scopes private sessions and saved data.
 
-| Operation | Calls counted |
-| --- | --- |
-| Save a case, load example/suite, view results, load the model catalog | 0 |
-| View historical pasted evidence | 0 |
-| TestCraft generation + text grading | 1 |
-| Generation + LLM as a judge | 2 |
-
-The backend atomically reserves the entire batch before accepting it, including simultaneous requests from different participants. An unaffordable batch returns 429 without starting a partial run. Every outbound model request is counted **before dispatch**; failures/timeouts still count because the provider may have processed them. Unattempted calls are released after errors or restart recovery. No credentials / no dispatched request means no consumed calls. All newly created runs require generation allowance, including runs of legacy pasted definitions. With a limit of 0, evaluations and historical evidence remain viewable, but new runs cannot start.
-
-The UI displays remaining calls and reservations, refreshed after starting/finishing a run and approximately every 30 seconds. **This is not a dollar or token spending cap**, nor a limit on usage outside this app. Set appropriate provider-side restrictions and review input sizes/model choices before the workshop.
+The Evaluations tab opens directly on the evaluation library, without summary cards or a workspace heading.
 
 ### AWS deployment requirements (not deployed by this change)
 
@@ -78,13 +69,13 @@ GET `/api/runs` returns all workspace run summaries, retaining `id`, `createdAt`
 
 **Run configuration:** Prod (the default) resolves to `https://api.testcraft.app`; Dev to `https://openai-api-proxy-dev-rtu664353a-uc.a.run.app`; Local to `http://127.0.0.1:8080`. There is no automatic alternate-URL fallback. Local is enabled only when the backend is bound to loopback, is not in production mode, and has no public APP_ORIGIN. Server validation enforces the same restriction; caller-supplied URLs are never used.
 
-POST `/api/runs` requires `evaluationIds` (1–50 distinct private IDs), `environment` (`prod`, `dev`, or `local`), and `generationModel`. Optional `description` is trimmed and limited to 2,000 characters; `graderModel` is required if any selected criterion needs model grading and otherwise ignored. The selected models must belong to the environment’s successful/cached catalog, and the same catalog models are selectable for generation and grading. Missing settings return 400. An unavailable catalog with no cache returns 503 before reserving model calls.
+POST `/api/runs` requires `evaluationIds` (1–50 distinct private IDs), `environment` (`prod`, `dev`, or `local`), and `generationModel`. Optional `description` is trimmed and limited to 2,000 characters; `graderModel` is required if any selected criterion needs model grading and otherwise ignored. The selected models must belong to the environment’s successful/cached catalog, and the same catalog models are selectable for generation and grading. Missing settings return 400. An unavailable catalog with no cache returns 503 before starting a run.
 
-The run stores `description` and `settings: { environment, testcraftBaseUrl, generationModel, graderModel }`. Effective evaluation snapshots use the run’s TestCraft source and models, while saved definitions and old run snapshots remain unchanged. Concurrent runs can use different environments without changing global configuration. Environment selection changes generation and catalog requests only; grading still uses OPENAI_BASE_URL and OPENAI_API_KEY. Catalog requests send no credentials and do not spend the model-call allowance. The detail header shows environment and grader; each row shows its generation model. The description remains saved in the API but is not displayed in the compact detail view.
+The run stores `description` and `settings: { environment, testcraftBaseUrl, generationModel, graderModel }`. Effective evaluation snapshots use the run’s TestCraft source and models, while saved definitions and old run snapshots remain unchanged. Concurrent runs can use different environments without changing global configuration. Environment selection changes generation and catalog requests only; grading still uses OPENAI_BASE_URL and OPENAI_API_KEY. Catalog requests send no credentials and do not invoke models. The detail header shows environment and grader; each row shows its generation model. The description remains saved in the API but is not displayed in the compact detail view.
 
 **Load example** fills the ordinary form with synthetic login HTML, parameters, and Contains criteria. Its source is TestCraft v1 API, with no supplied answer. Saving makes no model call; Run needs working TestCraft generation and consumes one generation attempt. Opening or saving an evaluation does not fetch models. Literal criteria are teaching examples, not a guaranteed score.
 
-**Suites** are private, flat folders: create or rename a suite, assign evaluations in the form, and filter the library by suite. Deleting a suite moves its evaluations to Unfiled; it does not delete cases or runs. **Delete evaluation** requires confirmation and removes only the saved definition, never historical run snapshots or usage. Active runs block evaluation deletion.
+**Suites** are private, flat folders: create or rename a suite, assign evaluations in the form, and filter the library by suite. Deleting a suite moves its evaluations to Unfiled; it does not delete cases or runs. **Delete evaluation** requires confirmation and removes only the saved definition, never historical run snapshots. Active runs block evaluation deletion.
 
 **Load workshop suite** imports eight input-only templates into **SauceDemo · TestCraft workshop**, without calling an LLM or creating runs. All use the same TestCraft generation flow as manual creation. Five grade with local rules; three add one model-grader call each. A full run uses **8 generation + 3 grading = 11** attempts. See [the one-hour workshop guide](docs/workshop-exercises.md). HTML is synthetic and simplified, not captured live SauceDemo HTML; no responses or grades are preloaded.
 
@@ -179,7 +170,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Backend tests cover automatic private sessions and ownership, cookie/CSRF/origin controls, rate limits, global atomic reservations, failed-call accounting, restart recovery, legacy migration, criteria arrays, the fixed policy, computed scores, catalog failure/secrecy, TestCraft streams, judge schema validation, and generator/judge separation. Run-deletion tests cover ownership, active-run protection, persistence after restart, latest-result recalculation, and unchanged call usage. Browser tests use automatic sessions in an isolated test workshop and cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, direct run links, expandable criteria/output, detail filtering/sorting, normalized scores, missing grader configuration, and deletion confirmation/cancellation/errors.
+Backend tests cover automatic private sessions and ownership, cookie/CSRF/origin controls, rate limits, unrestricted model calls, provider failures, restart recovery, legacy migration, criteria arrays, the fixed policy, computed scores, catalog failure/secrecy, TestCraft streams, judge schema validation, and generator/judge separation. Run-deletion tests cover ownership, active-run protection, persistence after restart, latest-result recalculation, and repeat runs. Browser tests use automatic sessions in an isolated test workshop and cover the two-step form, disabled parameters, criteria editing, dropdown loading/failure, save/reload, selection/batches, direct run links, expandable criteria/output, detail filtering/sorting, normalized scores, missing grader configuration, and deletion confirmation/cancellation/errors.
 
 Tests use temporary databases and mocked LLM responses; **they never consume model credits**. Creation-flow tests check that manual/example payloads match, templates contain no answers, loading makes no generation calls, and Run uses the real adapter with injected provider responses. Historical pasted-answer fixtures live only in `tests/fixtures`, outside the Docker runtime. A live TestCraft + judge smoke test still needs working provider configuration.
 
@@ -188,7 +179,7 @@ Tests use temporary databases and mocked LLM responses; **they never consume mod
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/healthz` | Public readiness check; no sessions, secrets or model calls |
-| GET | `/api/session` | Current session + CSRF token + allowance, or anonymous bootstrap status; no writes |
+| GET | `/api/session` | Current session + CSRF token, or anonymous bootstrap status; no writes |
 | POST | `/api/session` | Send `{}` to create an anonymous-session cookie or reuse the current valid session |
 | GET | `/api/config` | Non-secret configuration |
 | GET | `/api/models` | TestCraft model catalog with grader compatibility and explicit fallback status |

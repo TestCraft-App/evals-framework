@@ -13,7 +13,6 @@ function integer(env, name, fallback, min, max) {
 export function createSessions(store, env) {
   const workshopId = env.WORKSHOP_ID || 'workshop';
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(workshopId)) throw new Error('WORKSHOP_ID must contain 1–80 letters, numbers, underscores or hyphens.');
-  const limit = integer(env, 'WORKSHOP_MAX_MODEL_CALLS', 200, 0, 100000);
   const ttl = integer(env, 'WORKSHOP_SESSION_HOURS', 24, 1, 168) * 3600000;
   let origin;
   if (env.APP_ORIGIN) {
@@ -50,7 +49,7 @@ export function createSessions(store, env) {
   }
   function describe(session) {
     if (!session) return { authenticated: false, accessMode: 'anonymous' };
-    return { authenticated: true, workspaceId: session.ownerId, expiresAt: new Date(session.expiresAt).toISOString(), csrfToken: session.csrfToken, budget: store.budget(workshopId, limit) };
+    return { authenticated: true, workspaceId: session.ownerId, expiresAt: new Date(session.expiresAt).toISOString(), csrfToken: session.csrfToken };
   }
   function requireSession(req) {
     const session = read(req);
@@ -86,5 +85,5 @@ export function createSessions(store, env) {
     res.setHeader('set-cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${ttl / 1000}${secure ? '; Secure' : ''}`);
     return describe({ ownerId, expiresAt, csrfToken: csrf(token) });
   }
-  return { limit, workshopId, checkOrigin, read, describe, requireSession, ensure };
+  return { workshopId, checkOrigin, read, describe, requireSession, ensure };
 }
