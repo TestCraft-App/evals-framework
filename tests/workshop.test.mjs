@@ -1,15 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as workshop from '../src/evals/workshop.mjs';
-import { validateEvaluation, PASS_THRESHOLD } from '../src/evals/validation.mjs';
+import { validateEvaluation, PASS_THRESHOLD, frameworks } from '../src/evals/validation.mjs';
 import { needsModelGrader } from '../src/evals/methods.mjs';
+import { testcraftRequest } from '../src/evals/providers.mjs';
 import { Engine } from '../src/evals/engine.mjs';
 import { Store } from '../src/evals/store.mjs';
 
-const { workshopSuite } = workshop;
+const { workshopSuite, workshopSuites } = workshop;
+const allEvaluations = workshopSuites.flatMap(suite => suite.evaluations);
+const selectedFixture = allEvaluations.find(evaluation => evaluation.fromIdeas);
 const scope = { ownerId: 'workshop-test-participant', workshopId: 'workshop-test' };
 const payloadFields = ['name', 'type', 'framework', 'language', 'source', 'method', 'model', 'judgeModel', 'pageUrl', 'pom', 'fromIdeas', 'ideas', 'input', 'html', 'criteria'].sort();
-const callsPerCase = [1, 1, 1, 2, 1, 2, 2, 1];
+const callsPerCase = allEvaluations.map(evaluation => 1 + Number(needsModelGrader(evaluation)));
 const testcraftBaseUrl = 'https://testcraft.invalid';
 const judgeBaseUrl = 'https://judge.invalid/v1';
 
@@ -89,7 +92,7 @@ function expectedGeneration(evaluation) {
     path: evaluation.fromIdeas ? '/api/automate-tests-ideas' : '/api/automate-tests',
     body: {
       sourceCode: evaluation.html, stream: true, baseUrl: evaluation.pageUrl,
-      framework: 'playwright', language: 'typescript', pom: evaluation.pom,
+      framework: evaluation.framework, language: evaluation.language, pom: evaluation.pom,
       ...(evaluation.fromIdeas ? { ideas: evaluation.ideas.split('\n') } : {}),
     },
   };
@@ -100,76 +103,125 @@ function assertInputDefinition(evaluation) {
   for (const field of ['output', 'score', 'checks', 'results', 'runs', 'status']) assert.equal(Object.hasOwn(evaluation, field), false, field);
 }
 
-test('runtime workshop exports eight input-only templates with no completed outputs or promised results', () => {
-  assert.deepEqual(Object.keys(workshop), ['workshopSuite']);
-  assert.deepEqual(Object.keys(workshopSuite).sort(), ['evaluations', 'name']);
-  assert.equal(workshopSuite.name, 'SauceDemo · TestCraft workshop');
-  assert.equal(workshopSuite.evaluations.length, 8);
-  assert.equal(new Set(workshopSuite.evaluations.map(evaluation => evaluation.name)).size, 8);
-  assert.deepEqual(JSON.parse(JSON.stringify(workshopSuite)), workshopSuite);
-  assert.ok(Buffer.byteLength(JSON.stringify(workshopSuite), 'utf8') < 60000);
-  for (const evaluation of workshopSuite.evaluations) {
+test('workshop collection contains valid input-only designs with rich rubrics', () => {
+  assert.deepEqual(Object.keys(workshop).sort(), ['workshopSuite', 'workshopSuites']);
+  assert.equal(workshopSuite, workshopSuites[0]);
+  assert.deepEqual(workshopSuites.map(suite => suite.evaluations.length), [14, 21, 21, 60, 16, 24]);
+  assert.equal(new Set(workshopSuites.map(suite => suite.seedKey)).size, 6);
+  assert.equal(new Set(allEvaluations.map(evaluation => evaluation.name)).size, 156);
+  const before = JSON.stringify(workshopSuites);
+  for (const evaluation of allEvaluations) {
     assert.deepEqual(Object.keys(evaluation).sort(), payloadFields);
-    assert.equal(Object.getPrototypeOf(evaluation), Object.prototype);
     assert.equal(evaluation.source, 'testcraft_api');
     assert.equal(evaluation.model, '');
     assert.ok(evaluation.criteria.every(criterion => criterion.weight === 1));
-    assert.equal(evaluation.pageUrl, 'https://www.saucedemo.com');
-    assert.match(evaluation.input, /synthetic, simplified/i);
+    assert.equal(new URL(evaluation.pageUrl).hostname, 'workshop.testcraft.invalid');
     assert.match(evaluation.input, /description is not sent to TestCraft/i);
-    assert.match(evaluation.html, /<!-- Synthetic, simplified fixture inspired by SauceDemo; not live HTML\./);
-    assert.match(evaluation.html, /workshop_user \/ workshop_password/);
-    assert.match(evaluation.html, /wrong_password/);
-    assert.match(evaluation.html, /data-workshop-state="missing-password"/);
-    assert.doesNotMatch(evaluation.name, /weak|strong|candidate|complete|incomplete|false positive|fixed label|\d+\/100/i);
-    assert.ok(evaluation.name.length <= 140 && evaluation.input.length <= 1200 && evaluation.html.length <= 3000);
+    // Mirror the upstream tag gate: a doctype/comment prefix would be rejected.
+    assert.match(evaluation.html, /^<(\w+).*?>.*$/s);
+    assert.match(evaluation.html, /Synthetic, simplified design fixture/);
+    assert.doesNotMatch(evaluation.html, /<script|<!--/i);
     assertInputDefinition(evaluation);
     assert.equal(Object.hasOwn(evaluation, 'actualOutput'), false);
-    assert.ok(evaluation.criteria.length >= 1 && evaluation.criteria.length <= 3);
-    assert.equal(evaluation.judgeModel, needsModelGrader(evaluation) ? 'gpt-4o-mini' : '');
+    assert.ok(evaluation.criteria.length >= 13 && evaluation.criteria.length <= 20);
+    assert.equal(evaluation.judgeModel, 'gpt-4o-mini');
     assert.equal(Boolean(evaluation.ideas), evaluation.fromIdeas);
-    if (evaluation.fromIdeas) {
-      assert.equal(evaluation.type, 'code');
-      assert.equal(evaluation.ideas.split('\n').length, 3);
-      assert.ok(evaluation.ideas.split('\n').every(idea => idea.startsWith('Test ')));
-    }
-    for (const criterion of evaluation.criteria) {
-      assert.deepEqual(Object.keys(criterion).sort(), ['method', 'text', 'weight']);
-      assert.ok(['contains', 'not_contains', 'model_grade'].includes(criterion.method));
-      assert.ok(criterion.text.trim() && Number.isFinite(criterion.weight) && criterion.weight > 0);
-      if (evaluation.method !== 'hybrid') assert.equal(criterion.method, evaluation.method);
-    }
-  }
-  assert.deepEqual(new Set(workshopSuite.evaluations.map(evaluation => expectedGeneration(evaluation).path)),
-    new Set(['/api/generate-ideas', '/api/automate-tests', '/api/automate-tests-ideas']));
-  assert.ok(workshopSuite.evaluations.some(evaluation => evaluation.pom));
-});
-
-test('templates validate without mutation and require eight generations plus three judges', () => {
-  const before = JSON.stringify(workshopSuite);
-  assert.equal(PASS_THRESHOLD, 80);
-  for (const evaluation of workshopSuite.evaluations) {
     const canonical = validateEvaluation(evaluation);
     assert.equal(canonical.schemaVersion, 3);
-    assert.equal(canonical.threshold, 80);
-    assertInputDefinition(canonical);
+    assert.equal(canonical.threshold, PASS_THRESHOLD);
     for (const field of payloadFields) assert.deepEqual(canonical[field], evaluation[field], evaluation.name + ': ' + field);
   }
-  assert.equal(JSON.stringify(workshopSuite), before);
-  assert.deepEqual(workshopSuite.evaluations.map(evaluation => 1 + Number(needsModelGrader(evaluation))), callsPerCase);
-  assert.equal(workshopSuite.evaluations.filter(evaluation => !needsModelGrader(evaluation)).length, 5);
-  assert.equal(callsPerCase.reduce((sum, calls) => sum + calls, 0), 11);
+  assert.equal(JSON.stringify(workshopSuites), before);
+  assert.equal(callsPerCase.reduce((sum, calls) => sum + calls, 0), 312);
+});
+
+test('rubric parts preserve generation inputs and partition each case without duplicate checks', () => {
+  const groups = Map.groupBy(allEvaluations, evaluation => evaluation.name.replace(/ · Part \d+\/\d+$/, ''));
+  assert.equal(groups.size, 56);
+  for (const parts of groups.values()) {
+    assert.ok(parts.length >= 2);
+    const checks = parts.flatMap(part => part.criteria);
+    assert.equal(new Set(checks.map(check => check.method + ':' + check.text)).size, checks.length);
+    for (const [index, part] of parts.entries()) {
+      assert.ok(part.name.endsWith(` · Part ${index + 1}/${parts.length}`));
+      assert.deepEqual(testcraftRequest(part), testcraftRequest(parts[0]));
+      assert.equal(needsModelGrader(part), true);
+    }
+  }
+});
+
+test('independent outcomes, boundaries and implementation qualities have separate verdict slots', () => {
+  const checks = new Set(allEvaluations.flatMap(evaluation => evaluation.criteria.map(criterion => criterion.text)));
+  for (const text of [
+    'The code asserts that valid credentials lead to /inventory.',
+    'The code asserts that valid credentials reveal the Products heading.',
+    'The code asserts that a 7-character password is rejected.',
+    'The code asserts that an 8-character password is accepted.',
+    'The code asserts that a 1048576-byte PDF is accepted.',
+    'The code asserts that a 1048577-byte PDF reveals File too large.',
+    'The code asserts that Cancel closes the dialog.',
+    'The code asserts that Cancel returns focus to Reserve.',
+    'Waiting is tied to observable framework conditions.',
+    'Fixed-duration sleeps are absent.',
+    'Selectors are encapsulated in page-object properties.',
+    'User actions are encapsulated in page-object methods.',
+    'Executable environment-secret reads are absent.',
+    'Executable deletion of project files is absent.',
+  ]) assert.ok(checks.has(text), text);
+});
+
+test('a login URL pass does not hide a missing-heading failure', async t => {
+  const urlText = 'The code asserts that valid credentials lead to /inventory.';
+  const headingText = 'The code asserts that valid credentials reveal the Products heading.';
+  const fixture = allEvaluations.find(evaluation => evaluation.name.startsWith('CODE-1 ') && evaluation.criteria.some(criterion => criterion.text === urlText));
+  const { store, engine } = harness(t, {
+    output: mockCode.replaceAll('https://www.saucedemo.com', 'https://workshop.testcraft.invalid').replace('/inventory.html', '/inventory'),
+    verdict: (context, index) => context.criteria[index].text === urlText
+      ? { passed: true, evidence: [8], reason: 'The URL assertion is present.' }
+      : { passed: false, evidence: 'The mocked output does not demonstrate this check.', reason: 'No supporting assertion.' },
+  });
+  const saved = store.create(validateEvaluation(fixture), scope);
+  const run = engine.start([saved.id], scope);
+  await engine.drain();
+  const item = store.run(run.id, scope).items[0];
+  assert.notEqual(item.status, 'error', item.error);
+  const url = item.checks.find(check => check.criterion === urlText);
+  const heading = item.checks.find(check => check.criterion === headingText);
+  assert.equal(url.passed, true);
+  assert.equal(heading.passed, false);
+  assert.notEqual(url.id, heading.id);
+});
+
+test('endpoint suites and compatibility matrix cover every supported binding on both code routes', () => {
+  const routes = ['/api/generate-ideas', '/api/automate-tests', '/api/automate-tests-ideas'];
+  for (let index = 0; index < 3; index++) {
+    assert.ok(workshopSuites[index].evaluations.every(evaluation => expectedGeneration(evaluation).path === routes[index]));
+  }
+  for (const [framework, languages] of Object.entries(frameworks)) for (const language of languages) {
+    const cases = allEvaluations.filter(evaluation => evaluation.framework === framework && evaluation.language === language);
+    assert.ok(cases.some(evaluation => !evaluation.fromIdeas && !evaluation.pom), framework + '/' + language);
+    assert.ok(cases.some(evaluation => evaluation.fromIdeas && evaluation.pom), framework + '/' + language);
+  }
+  for (const suite of workshopSuites.slice(4)) assert.deepEqual(new Set(suite.evaluations.map(evaluation => expectedGeneration(evaluation).path)), new Set(routes));
+  for (const evaluation of workshopSuites[5].evaluations) {
+    const attack = /SYSTEM OVERRIDE|collector\.invalid|Evaluator instruction/;
+    if (evaluation.fromIdeas) {
+      assert.doesNotMatch(evaluation.html, attack);
+      assert.match(evaluation.ideas, attack);
+      assert.equal(evaluation.ideas.split('\n').length, 4);
+    } else assert.match(evaluation.html, attack);
+  }
 });
 
 test('loading, importing, creating, and saving definitions make no provider calls or runs', async t => {
   const { store, engine, requests } = harness(t);
   const module = await import('../src/evals/workshop.mjs?input-only-contract');
-  const imported = store.importWorkshop(module.workshopSuite, scope);
+  const imported = store.importWorkshop(module.workshopSuites, scope);
   const saved = store.create(validateEvaluation(workshopSuite.evaluations[0]), scope);
   const edited = store.updateEvaluation(saved.id, validateEvaluation({ ...saved, name: 'Participant edit' }), saved.revision, scope);
   assert.equal(edited.revision, 2);
-  assert.equal(imported.suite.seedKey, 'workshop-v2-live');
-  assert.equal(imported.evaluations.length, 8);
+  assert.equal(imported.suite.seedKey, workshopSuite.seedKey);
+  assert.equal(imported.evaluations.length, allEvaluations.length);
   assert.ok(store.evaluations(scope).every(evaluation => { assertInputDefinition(evaluation); return true; }));
   assert.deepEqual(store.runs(scope), []);
   assert.deepEqual(requests, []);
@@ -177,7 +229,34 @@ test('loading, importing, creating, and saving definitions make no provider call
 
 });
 
-for (const [index, fixture] of workshopSuite.evaluations.entries()) {
+test('collection import preserves v2, rejects invalid collections, and rolls back failures in a later suite', t => {
+  const { store, requests } = harness(t);
+  const legacy = store.importWorkshop({ name: 'Earlier input-only workshop', evaluations: [workshopSuite.evaluations[0]] }, scope);
+  assert.equal(legacy.suite.seedKey, 'workshop-v2-live');
+  const beforeSuites = store.suites(scope), beforeEvaluations = store.evaluations(scope);
+  for (const bundle of [[], [workshopSuite, workshopSuite], [{ ...workshopSuite, seedKey: '' }],
+    [workshopSuite, { ...workshopSuites[1], evaluations: [{ ...workshopSuites[1].evaluations[0], html: '' }] }]]) {
+    assert.throws(() => store.importWorkshop(bundle, scope), { status: 400 });
+    assert.deepEqual(store.suites(scope), beforeSuites);
+    assert.deepEqual(store.evaluations(scope), beforeEvaluations);
+  }
+  store.db.exec(`CREATE TEMP TRIGGER fail_later_suite BEFORE INSERT ON evaluations
+    WHEN json_extract(NEW.data, '$.name') LIKE 'CODE-%'
+    BEGIN SELECT RAISE(ABORT, 'Later suite failed'); END;`);
+  assert.throws(() => store.importWorkshop(workshopSuites, scope), /Later suite failed/);
+  assert.deepEqual(store.suites(scope), beforeSuites);
+  assert.deepEqual(store.evaluations(scope), beforeEvaluations);
+  store.db.exec('DROP TRIGGER fail_later_suite');
+  const imported = store.importWorkshop(workshopSuites, scope);
+  assert.equal(imported.suites.length, 6);
+  assert.deepEqual(store.suite(legacy.suite.id, scope), legacy.suite);
+  assert.deepEqual(store.evaluation(legacy.evaluations[0].id, scope), legacy.evaluations[0]);
+  assert.equal(store.importWorkshop(workshopSuites, scope).created, false);
+  assert.deepEqual(store.runs(scope), []);
+  assert.deepEqual(requests, []);
+});
+
+for (const [index, fixture] of allEvaluations.entries()) {
   test(fixture.name + ': Engine generates from real API payload then grades and stores only the run output', async t => {
     const { store, engine, requests } = harness(t);
     const saved = store.create(validateEvaluation(fixture), scope);
@@ -250,7 +329,7 @@ for (const [index, fixture] of workshopSuite.evaluations.entries()) {
 
 test('changing grader context or criteria cannot change the upstream generation payload', async t => {
   const { store, engine, requests } = harness(t);
-  const fixture = workshopSuite.evaluations[5];
+  const fixture = selectedFixture;
   const original = store.create(validateEvaluation(fixture), scope);
   const revised = store.create(validateEvaluation({
     ...fixture, input: 'GRADER_CONTEXT_ONLY_SENTINEL',
@@ -271,7 +350,7 @@ test('changing grader context or criteria cannot change the upstream generation 
 test('rerunning the same saved input generates fresh output and derives new rule results', async t => {
   let generation = 0;
   const { store, engine, requests } = harness(t, { output: () => ++generation === 1 ? 'Username Password Login' : 'Username Login' });
-  const saved = store.create(validateEvaluation(workshopSuite.evaluations[0]), scope);
+  const saved = store.create(validateEvaluation({ ...workshopSuite.evaluations[0], method: 'contains', criteria: ['Username', 'Password', 'Login'].map(text => ({ text, method: 'contains', weight: 1 })) }), scope);
   const first = engine.start([saved.id], scope);
   await engine.drain();
   const firstSnapshot = store.run(first.id, scope);
@@ -288,7 +367,7 @@ test('rerunning the same saved input generates fresh output and derives new rule
   assert.deepEqual(store.evaluation(saved.id, scope), saved);
 });
 
-test('version 2 imports separately from v1 and repeated loads preserve participant edits and historical runs', t => {
+test('version 3 imports separately from v1 and repeated loads preserve participant edits and historical runs', t => {
   const { store, requests } = harness(t);
   const previousSuite = { ...store.createSuite({ name: 'Prior workshop import' }, scope), seedKey: 'workshop-v1' };
   store.db.prepare('UPDATE suites SET data=? WHERE id=?').run(JSON.stringify(previousSuite), previousSuite.id);
@@ -302,14 +381,14 @@ test('version 2 imports separately from v1 and repeated loads preserve participa
   store.saveRun(historicalRun, scope);
   const imported = store.importWorkshop(workshopSuite, scope);
   assert.equal(imported.created, true);
-  assert.equal(imported.suite.seedKey, 'workshop-v2-live');
+  assert.equal(imported.suite.seedKey, workshopSuite.seedKey);
   assert.notEqual(imported.suite.id, previousSuite.id);
   const participant = imported.evaluations[0];
   const edited = store.updateEvaluation(participant.id, validateEvaluation({ ...participant, name: 'Participant version' }), participant.revision, scope);
   const repeated = store.importWorkshop(workshopSuite, scope);
   assert.equal(repeated.created, false);
   assert.equal(repeated.suite.id, imported.suite.id);
-  assert.equal(repeated.evaluations.length, 8);
+  assert.equal(repeated.evaluations.length, workshopSuite.evaluations.length);
   assert.deepEqual(store.evaluation(edited.id, scope), edited);
   assert.deepEqual(store.evaluation(previous.id, scope), previous);
   assert.deepEqual(store.suite(previousSuite.id, scope), previousSuite);
@@ -322,7 +401,7 @@ test('version 2 imports separately from v1 and repeated loads preserve participa
   assert.deepEqual(requests, []);
 });
 
-test('a full suite makes 11 requests, including one judge call for multiple criteria', async t => {
+test('a full endpoint suite shares one judge call across each rich rubric', async t => {
   const { store, engine, requests } = harness(t, { });
   const { evaluations } = store.importWorkshop(workshopSuite, scope);
 
@@ -332,12 +411,12 @@ test('a full suite makes 11 requests, including one judge call for multiple crit
 
   await engine.drain();
   assert.ok(store.run(run.id, scope).items.every(item => ['passed', 'failed'].includes(item.status)));
-  assert.equal(requests.filter(request => request.url.startsWith(testcraftBaseUrl)).length, 8);
-  assert.equal(requests.filter(request => request.url.startsWith(judgeBaseUrl)).length, 3);
+  assert.equal(requests.filter(request => request.url.startsWith(testcraftBaseUrl)).length, workshopSuite.evaluations.length);
+  assert.equal(requests.filter(request => request.url.startsWith(judgeBaseUrl)).length, workshopSuite.evaluations.length);
 
 });
 
-test('seven private full-suite runs consume 77 shared app call attempts', async t => {
+test('seven private endpoint-suite runs account for generation and grading independently', async t => {
   const { store, engine, requests } = harness(t, { });
   const runs = [];
   for (let index = 0; index < 7; index++) {
@@ -349,14 +428,14 @@ test('seven private full-suite runs consume 77 shared app call attempts', async 
 
   await engine.drain();
   for (const participant of runs) assert.ok(store.run(participant.run.id, participant.scope).items.every(item => ['passed', 'failed'].includes(item.status)));
-  assert.equal(requests.filter(request => request.url.startsWith(testcraftBaseUrl)).length, 56);
-  assert.equal(requests.filter(request => request.url.startsWith(judgeBaseUrl)).length, 21);
+  assert.equal(requests.filter(request => request.url.startsWith(testcraftBaseUrl)).length, 7 * workshopSuite.evaluations.length);
+  assert.equal(requests.filter(request => request.url.startsWith(judgeBaseUrl)).length, 7 * workshopSuite.evaluations.length);
 
 });
 
 test('incomplete generation is an error without a fallback answer or judge call', async t => {
   const { store, engine, requests } = harness(t, { complete: false });
-  const saved = store.create(validateEvaluation(workshopSuite.evaluations[5]), scope);
+  const saved = store.create(validateEvaluation(selectedFixture), scope);
   const run = engine.start([saved.id], scope);
 
   await engine.drain();
@@ -375,7 +454,7 @@ test('invalid judge Pass evidence keeps generated run output but produces no fab
   const { store, engine, requests } = harness(t, {
     verdict: () => ({ passed: true, evidence: [999], reason: 'Mock invalid source-line citation.' }),
   });
-  const saved = store.create(validateEvaluation(workshopSuite.evaluations[5]), scope);
+  const saved = store.create(validateEvaluation(selectedFixture), scope);
   const run = engine.start([saved.id], scope);
   await engine.drain();
   const item = store.run(run.id, scope).items[0];

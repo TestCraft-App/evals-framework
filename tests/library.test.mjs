@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { createApp, listen, close, client, waitForRun, testScope, syntheticStream } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 import { validateEvaluation } from '../src/evals/validation.mjs';
-import { workshopSuite } from '../src/evals/workshop.mjs';
+import { workshopSuite, workshopSuites } from '../src/evals/workshop.mjs';
+
+const workshopEvaluations = workshopSuites.flatMap(suite => suite.evaluations);
 
 const base = {
   name: 'Login coverage', type: 'ideas', source: 'pasted', method: 'contains',
@@ -353,13 +355,14 @@ test('workshop import is private, idempotent across restart, preserves edits and
     const responses = await Promise.all([person.post('/api/workshop-suite', {}), person.post('/api/workshop-suite', {})]);
     assert.deepEqual(responses.map(res => res.status).sort(), [200, 201]);
     const imported = await responses.find(res => res.status === 201).json(), retry = await responses.find(res => res.status === 200).json();
-    assert.deepEqual(Object.keys(imported).sort(), ['evaluations', 'suite']);
-    assert.equal(imported.suite.seedKey, 'workshop-v2-live'); assert.equal(retry.suite.id, imported.suite.id);
-    assert.notEqual(imported.suite.id, existingGroup.id); assert.equal(imported.evaluations.length, workshopSuite.evaluations.length);
+    assert.deepEqual(Object.keys(imported).sort(), ['evaluations', 'suite', 'suites']);
+    assert.equal(imported.suite.seedKey, workshopSuite.seedKey); assert.equal(retry.suite.id, imported.suite.id);
+    assert.notEqual(imported.suite.id, existingGroup.id); assert.equal(imported.evaluations.length, workshopEvaluations.length);
     assert.deepEqual(retry.evaluations.map(e => e.id).sort(), imported.evaluations.map(e => e.id).sort());
     for (const evaluation of imported.evaluations) {
-      assert.equal(evaluation.suiteId, imported.suite.id); assert.equal(evaluation.revision, 1);
-      assert.deepEqual(validateEvaluation(evaluation), validateEvaluation({ ...workshopSuite.evaluations.find(e => e.name === evaluation.name), suiteId: imported.suite.id }));
+      const definition = workshopSuites.find(suite => suite.seedKey === imported.suites.find(saved => saved.id === evaluation.suiteId)?.seedKey);
+      assert.ok(definition); assert.equal(evaluation.revision, 1);
+      assert.deepEqual(validateEvaluation(evaluation), validateEvaluation({ ...definition.evaluations.find(e => e.name === evaluation.name), suiteId: evaluation.suiteId }));
     }
     const first = imported.evaluations[0];
     const edited = await result(put(person, '/api/evaluations/' + first.id, { ...first, name: 'Participant edit', revision: 1 }), 200);
@@ -371,7 +374,10 @@ test('workshop import is private, idempotent across restart, preserves edits and
     await close(app); app = await listen(createApp({ dbPath, fetchImpl: noProvider }));
     const restored = await client(app, { cookie: person.cookie });
     const restoredImport = await result(restored.post('/api/workshop-suite', {}), 200);
-    assert.deepEqual(restoredImport.suite, renamed); assert.deepEqual(restoredImport.evaluations, currentMembers);
+    assert.deepEqual(restoredImport.suite, renamed);
+    assert.deepEqual(restoredImport.evaluations.filter(e => e.suiteId === renamed.id), currentMembers);
+    assert.equal(restoredImport.evaluations.length, workshopEvaluations.length - 1);
+    assert.deepEqual(restoredImport.suites.slice(1), imported.suites.slice(1));
     assert.deepEqual(await restored.get('/api/evaluations/' + first.id), edited);
     assert.deepEqual(await restored.get('/api/evaluations/' + existing.id), existing);
 
@@ -382,7 +388,7 @@ test('workshop import is private, idempotent across restart, preserves edits and
     assert.equal(unlinked.name, edited.name); assert.equal(unlinked.suiteId, ''); assert.equal(unlinked.revision, 3);
     const reimport = await result(restored.post('/api/workshop-suite', {}), 201);
     assert.notEqual(reimport.suite.id, imported.suite.id);
-    assert.equal(reimport.evaluations.length, workshopSuite.evaluations.length);
+    assert.equal(reimport.evaluations.length, workshopEvaluations.length);
     assert.deepEqual(await restored.get('/api/evaluations/' + first.id), unlinked);
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
@@ -397,7 +403,7 @@ test('the live workshop import leaves earlier pasted suites, edits and run snaps
     const oldEvaluation = await save(person, { ...base, name: 'Participant edited old example', suiteId: oldSuite.id });
     const oldRun = await run(person, oldEvaluation.id);
     const imported = await result(person.post('/api/workshop-suite', {}), 201);
-    assert.equal(imported.suite.seedKey, 'workshop-v2-live');
+    assert.equal(imported.suite.seedKey, workshopSuite.seedKey);
     assert.notEqual(imported.suite.id, oldSuite.id);
     assert.ok(imported.evaluations.every(e => e.source === 'testcraft_api' && e.actualOutput === ''));
     assert.deepEqual(await person.get('/api/suites/' + oldSuite.id), oldSuite);
@@ -405,7 +411,7 @@ test('the live workshop import leaves earlier pasted suites, edits and run snaps
     assert.deepEqual(await person.get('/api/runs/' + oldRun.id), oldRun);
     const repeated = await result(person.post('/api/workshop-suite', {}), 200);
     assert.equal(repeated.suite.id, imported.suite.id);
-    assert.equal(app.store.suites(person.scope).length, 2);
+    assert.equal(app.store.suites(person.scope).length, 1 + workshopSuites.length);
 
   } finally { await close(app); }
 });

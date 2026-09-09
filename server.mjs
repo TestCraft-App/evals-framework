@@ -10,7 +10,7 @@ import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
 import { createSessions } from './src/evals/sessions.mjs';
-import { workshopSuite } from './src/evals/workshop.mjs';
+import { workshopSuites } from './src/evals/workshop.mjs';
 import { loadRuntimeSecrets } from './src/runtime/secrets.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -75,7 +75,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       if (req.method === 'POST' && url.pathname === '/api/workshop-suite') {
         const body = await readBody(req, 2048);
         if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('Workshop import expects an empty JSON object.');
-        const { created, ...result } = store.importWorkshop(workshopSuite, scope);
+        const { created, ...result } = store.importWorkshop(workshopSuites, scope);
         return json(res, created ? 201 : 200, result);
       }
       if (url.pathname === '/api/suites') {

@@ -1,4 +1,7 @@
+import { workshopSuites } from '../src/evals/workshop.mjs';
 import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
+
+const workshopCount = workshopSuites.reduce((sum, suite) => sum + suite.evaluations.length, 0);
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/models', route => route.fulfill({ json: { source: 'testcraft', warning: null, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true }] } }));
@@ -173,17 +176,23 @@ test('model criteria retain their badge and text alongside rules', async ({ page
   await expect(page.getByLabel('Criterion 4', { exact: true })).toHaveValue('The negative test states the expected error.');
 });
 
-test('workshop suite loads once without spending model calls', async ({ page }) => {
+test('workshop collection loads once, filters by suite, and makes no provider calls', async ({ page, generationCalls }) => {
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
+  const imported = (await (await page.request.get('/api/suites')).json()).suites;
+  expect(imported).toHaveLength(workshopSuites.length);
+  await page.locator('#filter-suite').selectOption(imported.find(suite => suite.seedKey === workshopSuites[3].seedKey).id);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopSuites[3].evaluations.length);
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
+  expect(generationCalls).toHaveLength(0);
+  expect((await (await page.request.get('/api/runs')).json()).runs).toHaveLength(0);
   const session = await (await page.request.get('/api/session')).json();
   expect(session).not.toHaveProperty('budget');
   await page.reload();
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
 });
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 780 }]) {

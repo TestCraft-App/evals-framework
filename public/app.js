@@ -156,12 +156,28 @@ function updateCriteriaState() {
   $('criteria-empty').hidden = criteria.length > 0;
   $('add-criterion').disabled = criteria.length >= 20 || (draftMethod() === 'exact_match' && criteria.some(c => c.method === 'exact_match'));
 }
+function updateCriterionTooltip(preview) {
+  const field = preview.parentElement.querySelector('textarea');
+  if (preview.clientWidth && preview.scrollWidth > preview.clientWidth) field.title = field.value;
+  else field.removeAttribute('title');
+}
+const criterionPreviewObserver = new ResizeObserver(entries => entries.forEach(entry => updateCriterionTooltip(entry.target)));
+function syncCriterionPreview(field) {
+  const preview = field.parentElement.querySelector('.criterion-text-preview');
+  preview.textContent = field.value.replace(/\r?\n/g, ' ↵ ');
+  updateCriterionTooltip(preview);
+}
 function renderCriteria() {
+  criterionPreviewObserver.disconnect();
   $('criteria-list').innerHTML = criteria.map((value, index) => '<li><div class="criterion-card-header"><span class="criterion-number" aria-hidden="true">' + (index + 1) + '.</span>' + badge(value.method === 'model_grade' ? 'model_grade' : 'rule_based')
     + (value.method !== 'model_grade' ? '<label class="criterion-description-editor"><span class="sr-only">Description for criterion ' + (index + 1) + '</span><input data-criterion-description="' + index + '" maxlength="2000" placeholder="Description (optional)" value="' + escape(value.description || '') + '"></label>' : '')
     + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></div><div class="criterion-card-body">'
     + (value.method !== 'model_grade' ? '<select class="criterion-rule-pill" data-criterion-method="' + index + '" aria-label="Rule for criterion ' + (index + 1) + '">' + ['contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (method === value.method ? ' selected' : '') + '>' + names[method] + '</option>').join('') + '</select>' : '')
-    + '<label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea></div></li>').join('');
+    + '<div class="criterion-text-editor"><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea><span class="criterion-text-preview" aria-hidden="true"></span></div></div></li>').join('');
+  $('criteria-list').querySelectorAll('[data-criterion]').forEach(field => {
+    syncCriterionPreview(field);
+    criterionPreviewObserver.observe(field.parentElement.querySelector('.criterion-text-preview'));
+  });
   updateCriteriaState();
 }
 function addCriterion() {
@@ -415,7 +431,7 @@ async function loadWorkshop() {
   const requestSession = session; $('workshop-button').disabled = true; error('');
   try {
     const imported = await api('/api/workshop-suite', { method: 'POST', body: '{}' });
-    await loadLibrary(); $('filter-suite').value = imported.suite.id; renderSuites(); renderLibrary();
+    await loadLibrary(); $('filter-suite').value = imported.suites?.length > 1 ? '' : imported.suite.id; renderSuites(); renderLibrary();
     toast('Workshop templates ready. Open Runs and choose Create Run to generate and evaluate with TestCraft.');
   } catch (e) { if (requestSession === session) error(e.message); }
   finally { $('workshop-button').disabled = false; }
@@ -732,8 +748,19 @@ $('criterion-draft').addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && draftMethod() !== 'exact_match') { event.preventDefault(); addCriterion(); }
 });
 $('criteria-list').addEventListener('input', event => {
-  if (event.target.dataset.criterion !== undefined) criteria[Number(event.target.dataset.criterion)].text = event.target.value;
+  if (event.target.dataset.criterion !== undefined) {
+    criteria[Number(event.target.dataset.criterion)].text = event.target.value;
+    syncCriterionPreview(event.target);
+  }
   if (event.target.dataset.criterionDescription !== undefined) criteria[Number(event.target.dataset.criterionDescription)].description = event.target.value;
+});
+$('criteria-list').addEventListener('focusout', event => {
+  const field = event.target;
+  if (field.dataset.criterion === undefined) return;
+  // Focus can enter and leave between observer deliveries without a net resize.
+  requestAnimationFrame(() => {
+    if (field.isConnected) updateCriterionTooltip(field.parentElement.querySelector('.criterion-text-preview'));
+  });
 });
 $('criteria-list').addEventListener('change', event => {
   const index = event.target.dataset.criterionMethod;

@@ -166,16 +166,36 @@ export class Store {
   }
   importWorkshop(bundle, scope) {
     return this.transaction(() => {
-      // A new input-only seed must never silently change older pasted cases into
-      // paid generation or overwrite participant edits and run snapshots.
-      const existing = this.suites(scope).find(suite => suite.seedKey === 'workshop-v2-live');
-      if (existing) return { created: false, suite: existing, evaluations: this.evaluations(scope).filter(evaluation => evaluation.suiteId === existing.id) };
-      requireObject(bundle, ['name', 'evaluations']);
-      if (!Array.isArray(bundle.evaluations) || !bundle.evaluations.length) throw new AppError('Workshop import requires evaluations.');
-      const suite = { ...this.createSuite({ name: bundle.name }, scope), seedKey: 'workshop-v2-live' };
-      this.db.prepare('UPDATE suites SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(suite), suite.id, ...requireScope(scope));
-      const evaluations = bundle.evaluations.map(data => this.#insertEvaluation(validateEvaluation({ ...data, suiteId: suite.id }), scope));
-      return { created: true, suite, evaluations };
+      // Stable per-suite seeds preserve previous imports, edits and snapshots.
+      // Validate the whole collection before writing; a later failure rolls back
+      // every new suite. The legacy single-bundle shape remains supported.
+      const bundles = Array.isArray(bundle) ? bundle : [bundle];
+      if (!bundles.length) throw new AppError('Workshop import requires suites.');
+      const keys = new Set();
+      for (const entry of bundles) {
+        requireObject(entry, ['name', 'evaluations', 'seedKey']);
+        requireName(entry.name);
+        const key = entry.seedKey ?? 'workshop-v2-live';
+        if (typeof key !== 'string' || !/^workshop-[a-z0-9-]{1,80}$/.test(key) || keys.has(key)) throw new AppError('Workshop suites require distinct valid seed keys.');
+        keys.add(key);
+        if (!Array.isArray(entry.evaluations) || !entry.evaluations.length) throw new AppError('Workshop import requires evaluations.');
+        entry.evaluations.forEach(data => validateEvaluation(data));
+      }
+      let created = false;
+      const suites = [], evaluations = [];
+      for (const entry of bundles) {
+        const seedKey = entry.seedKey ?? 'workshop-v2-live';
+        let suite = this.suites(scope).find(item => item.seedKey === seedKey);
+        if (suite) evaluations.push(...this.evaluations(scope).filter(item => item.suiteId === suite.id));
+        else {
+          created = true;
+          suite = { ...this.createSuite({ name: entry.name }, scope), seedKey };
+          this.db.prepare('UPDATE suites SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(suite), suite.id, ...requireScope(scope));
+          evaluations.push(...entry.evaluations.map(data => this.#insertEvaluation(validateEvaluation({ ...data, suiteId: suite.id }), scope)));
+        }
+        suites.push(suite);
+      }
+      return { created, suite: suites[0], ...(Array.isArray(bundle) ? { suites } : {}), evaluations };
     });
   }
   runs(scope) { return this.db.prepare('SELECT data FROM runs WHERE owner_id=? AND workshop_id=?').all(...requireScope(scope)).map(row => JSON.parse(row.data)).sort((a,b) => b.createdAt.localeCompare(a.createdAt)); }

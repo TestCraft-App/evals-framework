@@ -1,4 +1,7 @@
+import { workshopSuites } from '../src/evals/workshop.mjs';
 import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
+
+const workshopCount = workshopSuites.reduce((sum, suite) => sum + suite.evaluations.length, 0);
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/models', route => route.fulfill({ json: { source: 'testcraft', warning: null, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true }] } }));
@@ -55,14 +58,15 @@ test('Load example and manual creation submit the same input-only contract and g
   await expect(page.locator('.detail-eval-row')).toContainText('Graded');
 });
 
-test('workshop templates have no supplied output and use the same editor and generation path', async ({ page, generationCalls }) => {
+test('workshop templates have no supplied output and use the same editor and generation path', async ({ page, generationCalls, browserApp }) => {
+  browserApp.engine.env.OPENAI_API_KEY = 'mock-judge-key';
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
   const entries = (await (await page.request.get('/api/evaluations')).json()).evaluations;
   expect(entries.every(e => e.source === 'testcraft_api' && e.actualOutput === '' && e.latest === null)).toBe(true);
   expect(generationCalls).toHaveLength(0);
-  const example = entries.find(e => e.name.startsWith('01'));
+  const example = entries.find(e => e.name.startsWith('IDEAS-1 '));
   await page.getByRole('button', { name: example.name, exact: true }).click();
   await expect(page.locator('#source, #model, #judge-model')).toHaveCount(0);
   await expect(page.locator('#actual-output, #actual-field')).toHaveCount(0);
