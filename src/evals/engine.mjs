@@ -29,7 +29,7 @@ export class Engine {
       return effective;
     });
     if (ids.some(id => this.inFlight.has(id))) throw new AppError('One of these evaluations is already running.', 409);
-    evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'Unfiled' }));
+    evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None' }));
     const run = { id: randomUUID(), gradingVersion: GRADING_VERSION, status: 'queued', createdAt: new Date().toISOString(), items: evaluations.map(evaluation => ({ id: randomUUID(), gradingVersion: GRADING_VERSION, evaluationId: evaluation.id, evaluation, status: 'queued', score: null, output: null, checks: [], events: [] })) };
     if (settings) { const { description, ...configuration } = settings; run.description = description; run.settings = configuration; }
     this.store.saveRun(run, scope);

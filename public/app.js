@@ -2,6 +2,7 @@ import { createRunDetail, scoreMarkup, evaluationFamily } from './run-detail.js'
 const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Automate tests', code_ideas: 'Automate test ideas', model_grade: 'Model-graded', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Not Contains', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
+names.rule_based = 'Rule-based';
 const languages = { playwright: ['typescript','javascript','python','java','csharp'], cypress: ['typescript','javascript'], selenium: ['javascript','python','java','csharp'] };
 const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
@@ -9,6 +10,7 @@ let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
 let session = null, sessionTimer, sessionSetup;
 let suiteDraft = null, savingSuite = false;
+let inlineName = null, duplicatingEvaluation = false, renderingLibrary = false;
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
 let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
@@ -43,6 +45,7 @@ function showConnecting() {
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
+  inlineName = null; duplicatingEvaluation = false;
   suiteDraft = null; savingSuite = false; closeSuiteEditor(false);
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   closeRunDraft(); $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
@@ -79,7 +82,7 @@ async function loadRuns() {
   if (request !== runsRequest) return;
   runs = data.runs; $('runs-count').textContent = runs.length; renderRunList();
 }
-const evaluationSuite = e => suites.find(s => s.id === e.suiteId)?.name || 'Unfiled';
+const evaluationSuite = e => suites.find(s => s.id === e.suiteId)?.name || 'None';
 const evaluationMethod = e => ({ rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[evaluationFamily(e)]);
 function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
@@ -95,12 +98,18 @@ function visibleEvaluations() {
 }
 function renderLibrary() {
   $('eval-count').textContent = evaluations.length;
-  const visible = visibleEvaluations();
+  const visible = visibleEvaluations().filter(e => e.id !== inlineName?.record.id);
+  if (inlineName) visible.unshift(inlineName.record);
+  const focused = document.activeElement?.id === 'duplicate-name', selection = focused ? [$('duplicate-name').selectionStart, $('duplicate-name').selectionEnd] : null;
+  renderingLibrary = true;
   $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
-    + '<td><button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button></td>'
+    + '<td>' + (e.id === inlineName?.record.id ? inlineNameMarkup() : '<button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button>') + '</td>'
     + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(endpoint(e)) + '</td>'
     + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
+  renderingLibrary = false;
+  document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = duplicatingEvaluation; });
+  if (focused && $('duplicate-name')) { $('duplicate-name').focus(); $('duplicate-name').setSelectionRange(...selection); }
   document.querySelectorAll('[data-eval-sort]').forEach(button => button.parentElement.setAttribute('aria-sort', button.dataset.evalSort === evalSort ? (evalSortDirection === 1 ? 'ascending' : 'descending') : 'none'));
   $('empty-library').hidden = visible.length > 0;
   $('empty-library').querySelector('h3').textContent = evaluations.length ? 'No evaluations match these filters.' : 'Your first evaluation starts here.';
@@ -118,6 +127,8 @@ function syncForm() {
   $('ideas-field').hidden = !fromIdeas; $('ideas').required = fromIdeas; $('ideas').disabled = !fromIdeas;
   $('criterion-rule-field').hidden = $('method').value !== 'rule_based';
   $('criterion-rule').disabled = $('method').value !== 'rule_based';
+  $('criterion-description-field').hidden = $('method').value !== 'rule_based';
+  $('criterion-description').disabled = $('method').value !== 'rule_based';
   $('criterion-draft').placeholder = config?.evaluationMethods?.[draftMethod()]?.placeholder || '';
   updateCriteriaState(); resizeTextareas();
 }
@@ -136,7 +147,6 @@ function setStep(step, focus = true) {
   }
   $('back-step').hidden = step === 1;
   $('save-evaluation').textContent = step === 1 ? 'Next →' : editing ? 'Save' : 'Create evaluation';
-  $('save-as-new').hidden = step === 1 || !editing;
   $('form-error').textContent = ''; $('wizard-body').scrollTop = 0;
   resizeTextareas();
   if (focus) $(step === 1 ? 'name' : 'method').focus();
@@ -147,9 +157,11 @@ function updateCriteriaState() {
   $('add-criterion').disabled = criteria.length >= 20 || (draftMethod() === 'exact_match' && criteria.some(c => c.method === 'exact_match'));
 }
 function renderCriteria() {
-  $('criteria-list').innerHTML = criteria.map((value, index) => '<li>' + badge(value.method)
-    + '<label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea>'
-    + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></li>').join('');
+  $('criteria-list').innerHTML = criteria.map((value, index) => '<li><div class="criterion-card-header"><span class="criterion-number" aria-hidden="true">' + (index + 1) + '.</span>' + badge(value.method === 'model_grade' ? 'model_grade' : 'rule_based')
+    + (value.method !== 'model_grade' ? '<label class="criterion-description-editor"><span class="sr-only">Description for criterion ' + (index + 1) + '</span><input data-criterion-description="' + index + '" maxlength="2000" placeholder="Description (optional)" value="' + escape(value.description || '') + '"></label>' : '')
+    + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></div><div class="criterion-card-body">'
+    + (value.method !== 'model_grade' ? '<select class="criterion-rule-pill" data-criterion-method="' + index + '" aria-label="Rule for criterion ' + (index + 1) + '">' + ['contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (method === value.method ? ' selected' : '') + '>' + names[method] + '</option>').join('') + '</select>' : '')
+    + '<label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea></div></li>').join('');
   updateCriteriaState();
 }
 function addCriterion() {
@@ -159,7 +171,10 @@ function addCriterion() {
   if (method === 'exact_match' && criteria.some(c => c.method === method)) { $('form-error').textContent = 'Use at most one Exact match criterion.'; return false; }
   if (criteria.map(c => c.text).join('').length + value.length > 8000) { $('form-error').textContent = 'Keep all criteria within 8000 characters.'; return false; }
   if (criteria.some(c => c.method === method && c.text.trim() === value)) { $('form-error').textContent = 'This criterion is already in the list.'; return false; }
-  criteria.push({ text: value, method, weight: 1 }); $('criterion-draft').value = ''; $('form-error').textContent = ''; renderCriteria(); syncForm();
+  const description = method !== 'model_grade' ? $('criterion-description').value.trim() : '';
+  criteria.push({ text: value, method, weight: 1, ...(description ? { description } : {}) });
+  if (method !== 'model_grade') $('criterion-description').value = '';
+  $('criterion-draft').value = ''; $('form-error').textContent = ''; renderCriteria(); syncForm();
   $('criterion-draft').focus(); return true;
 }
 function validateStep(step) {
@@ -175,7 +190,7 @@ function openForm(example = false, existing) {
   $('dialog-title').textContent = existing ? 'Edit evaluation' : 'New evaluation';
   $('edit-version').hidden = !editing;
   $('edit-version').textContent = editing ? 'Version ' + (editing.revision || 1) + ' · Previous runs keep their original inputs and results.' : '';
-  $('duplicate-evaluation').hidden = !editing; $('delete-evaluation').hidden = !editing;
+  $('delete-evaluation').hidden = !editing;
   setSavingEvaluation(false); renderSuites();
   $('evaluation-suite').value = existing?.suiteId || (suites.some(s => s.id === $('filter-suite').value) ? $('filter-suite').value : '');
   criteria = [];
@@ -217,30 +232,29 @@ async function saveEvaluation(event) {
   if (criteria.filter(c => c.method === 'exact_match').length > 1) {
     $('form-error').textContent = 'Use at most one Exact match criterion.'; return;
   }
-  const target = editing, requestSession = session, asNew = event.submitter?.id === 'save-as-new';
+  const target = editing, requestSession = session;
   const payload = { ...Object.fromEntries(new FormData($('evaluation-form'))), source: 'testcraft_api' };
-  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: 1 }));
+  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: 1, ...(value.method !== 'model_grade' && value.description?.trim() ? { description: value.description.trim() } : {}) }));
   payload.method = new Set(criteria.map(c => c.method)).size === 1 ? criteria[0].method : 'hybrid';
   payload.type = $('type').value === 'ideas' ? 'ideas' : 'code';
   payload.fromIdeas = $('type').value === 'code_ideas';
   if (payload.type === 'code') payload.pom = $('pom').checked;
-  if (target && !asNew) payload.revision = target.revision || 1;
-  if (asNew && payload.name === target.name) payload.name = payload.name.slice(0, 133) + ' (copy)';
+  if (target) payload.revision = target.revision || 1;
   setSavingEvaluation(true);
   let saved = false;
   try {
-    await api('/api/evaluations' + (target && !asNew ? '/' + target.id : ''), { method: target && !asNew ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-    saved = true; $('evaluation-dialog').close(); await loadLibrary(); toast(target && !asNew ? 'Changes saved. Run this version to evaluate it.' : 'Evaluation saved. Open Runs to create a run.');
-  } catch (e) { if (requestSession === session) { if (saved) error('Saved, but the library could not refresh. Reload the page.'); else $('form-error').textContent = e.status === 409 ? e.message + ' Your draft is preserved. Save as new, or reopen the evaluation to load its latest version.' : e.message; } }
+    await api('/api/evaluations' + (target ? '/' + target.id : ''), { method: target ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    saved = true; $('evaluation-dialog').close(); await loadLibrary(); toast(target ? 'Changes saved. Run this version to evaluate it.' : 'Evaluation saved. Open Runs to create a run.');
+  } catch (e) { if (requestSession === session) { if (saved) error('Saved, but the library could not refresh. Reload the page.'); else $('form-error').textContent = e.status === 409 ? e.message + ' Your draft is preserved. Copy any changes you want to keep, then reopen the evaluation to load its latest version.' : e.message; } }
   finally { if (requestSession === session) setSavingEvaluation(false); }
 }
 function setSavingEvaluation(busy) {
   savingEvaluation = busy;
-  ['save-evaluation','save-as-new','duplicate-evaluation','delete-evaluation','close-dialog','cancel-dialog','back-step'].forEach(id => { $(id).disabled = busy || savingSuite; });
+  ['save-evaluation','delete-evaluation','close-dialog','cancel-dialog','back-step'].forEach(id => { $(id).disabled = busy || savingSuite; });
   syncSuiteActions();
 }
 function renderSuites() {
-  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">Unfiled</option>'], ['evaluation-suite', '<option value="">Unfiled</option>']]) {
+  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">None</option>'], ['evaluation-suite', '<option value="">None</option>']]) {
     const current = $(id).value;
     $(id).innerHTML = empty + suites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if ([...$(id).options].some(o => o.value === current)) $(id).value = current;
@@ -313,17 +327,66 @@ async function saveSuite() {
     }
   }
 }
+function inlineNameMarkup() {
+  const draft = inlineName;
+  return '<div class="inline-eval-name"><input id="duplicate-name" aria-label="Duplicated evaluation name" aria-describedby="duplicate-name-error" maxlength="140" required value="' + escape(draft.text) + '"' + (draft.pending ? ' disabled' : '') + (draft.error ? ' aria-invalid="true"' : '') + '><button type="button" class="icon-button" data-save-duplicate-name aria-label="Save evaluation name" title="Save name"' + (draft.pending ? ' disabled' : '') + '><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button></div><p id="duplicate-name-error" class="inline-name-error" role="alert">' + escape(draft.error || '') + '</p>';
+}
+function finishInlineName(draft, focus = false) {
+  if (inlineName !== draft) return;
+  inlineName = null; renderLibrary();
+  if (focus) [...document.querySelectorAll('#evaluation-rows .eval-name')].find(button => button.dataset.inspect === draft.record.id)?.focus();
+}
+async function saveDuplicateName(focus = false) {
+  const draft = inlineName;
+  if (!draft) return true;
+  if (draft.pending) return draft.pending;
+  const name = draft.text.trim();
+  if (!name || name.length > 140) {
+    draft.error = 'Enter a name from 1 to 140 characters.'; renderLibrary();
+    if (focus) $('duplicate-name')?.focus(); return false;
+  }
+  if (name === draft.record.name) { finishInlineName(draft, focus); return true; }
+  const requestSession = session;
+  draft.pending = (async () => {
+    try {
+      const saved = await api('/api/evaluations/' + draft.record.id, { method: 'PATCH', body: JSON.stringify({ name, revision: draft.record.revision || 1 }) });
+      if (requestSession !== session || inlineName !== draft) return false;
+      libraryRequest++; evaluations = evaluations.map(e => e.id === saved.id ? { ...saved, latest: null } : e);
+      finishInlineName(draft, focus); return true;
+    } catch (e) {
+      if (requestSession === session && inlineName === draft) {
+        draft.error = e.message + (e.status === 409 ? ' Press Escape to keep the saved name, then reopen the evaluation for the latest version.' : ' Your name is preserved; retry saving.');
+      }
+      return false;
+    } finally {
+      draft.pending = null;
+      if (requestSession === session && inlineName === draft) { renderLibrary(); if (focus) $('duplicate-name')?.focus(); }
+    }
+  })();
+  const input = $('duplicate-name');
+  if (input) { input.disabled = true; input.parentElement.querySelector('button').disabled = true; }
+  return draft.pending;
+}
 async function duplicateEvaluation(id) {
-  if (savingEvaluation) return;
-  const requestSession = session; setSavingEvaluation(true); error('');
-  let copy;
+  if (savingEvaluation || duplicatingEvaluation) return;
+  duplicatingEvaluation = true;
+  const requestSession = session; error('');
+  document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = true; });
   try {
+    if (!await saveDuplicateName()) return;
     const original = evaluations.find(e => e.id === id);
-    copy = await api('/api/evaluations/' + id + '/duplicate', { method: 'POST', body: JSON.stringify(original ? { name: original.name.slice(0, 133) + ' (copy)' } : {}) });
-    await loadLibrary();
-    $('evaluation-dialog').close(); openForm(false, copy); toast('Duplicate created. Edit it to make a variant.');
-  } catch (e) { if (requestSession === session) error(copy ? 'Duplicate saved, but the library could not refresh. Reload the page.' : e.message); }
-  finally { if (requestSession === session) setSavingEvaluation(false); }
+    const copy = await api('/api/evaluations/' + id + '/duplicate', { method: 'POST', body: JSON.stringify(original ? { name: original.name.slice(0, 133) + ' (copy)' } : {}) });
+    libraryRequest++; evaluations = [{ ...copy, latest: null }, ...evaluations];
+    inlineName = { record: copy, text: copy.name, error: '', pending: null };
+    renderLibrary(); $('duplicate-name').focus(); $('duplicate-name').select();
+    toast('Duplicate created. Rename it here, then open it to edit.');
+  } catch (e) { if (requestSession === session) error(e.message); }
+  finally {
+    if (requestSession === session) {
+      duplicatingEvaluation = false;
+      document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = false; });
+    }
+  }
 }
 function askDeleteLibrary(kind, record) {
   if (!record || deletingLibrary || savingEvaluation) return;
@@ -632,7 +695,6 @@ $('delete-library-form').addEventListener('submit', deleteLibrary);
 $('cancel-delete-library').addEventListener('click', () => { if (!deletingLibrary) $('delete-library-dialog').close(); });
 $('delete-library-dialog').addEventListener('cancel', event => { if (deletingLibrary) event.preventDefault(); });
 $('delete-library-dialog').addEventListener('close', lockBody);
-$('duplicate-evaluation').addEventListener('click', () => { if (editing) void duplicateEvaluation(editing.id); });
 $('delete-evaluation').addEventListener('click', () => askDeleteLibrary('evaluation', editing));
 ['close-dialog','cancel-dialog'].forEach(id => $(id).addEventListener('click', () => $('evaluation-dialog').close()));
 $('evaluation-dialog').addEventListener('close', lockBody);
@@ -671,6 +733,17 @@ $('criterion-draft').addEventListener('keydown', event => {
 });
 $('criteria-list').addEventListener('input', event => {
   if (event.target.dataset.criterion !== undefined) criteria[Number(event.target.dataset.criterion)].text = event.target.value;
+  if (event.target.dataset.criterionDescription !== undefined) criteria[Number(event.target.dataset.criterionDescription)].description = event.target.value;
+});
+$('criteria-list').addEventListener('change', event => {
+  const index = event.target.dataset.criterionMethod;
+  if (index === undefined) return;
+  const criterion = criteria[Number(index)], method = event.target.value;
+  const others = criteria.filter((_, i) => i !== Number(index));
+  const message = method === 'exact_match' && others.some(c => c.method === method) ? 'Use at most one Exact match criterion.'
+    : others.some(c => c.method === method && c.text.trim() === criterion.text.trim()) ? 'This criterion is already in the list.' : '';
+  if (message) { event.target.value = criterion.method; $('form-error').textContent = message; return; }
+  criterion.method = method; $('form-error').textContent = ''; updateCriteriaState();
 });
 $('criteria-list').addEventListener('click', event => {
   const button = event.target.closest('[data-remove-criterion]');
@@ -678,14 +751,35 @@ $('criteria-list').addEventListener('click', event => {
   const index = Number(button.dataset.removeCriterion); criteria.splice(index, 1); renderCriteria(); syncForm();
   ($('criterion-' + Math.min(index, criteria.length - 1)) || $('criterion-draft')).focus();
 });
+$('evaluation-rows').addEventListener('input', event => {
+  if (event.target.id === 'duplicate-name' && inlineName) inlineName.text = event.target.value;
+});
+$('evaluation-rows').addEventListener('focusout', event => {
+  // Table actions save the name in their click handler before using the row.
+  // Replacing the row during pointer-down would discard that pending click.
+  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation]')) return;
+  if (!renderingLibrary && event.target.id === 'duplicate-name' && !event.target.parentElement.contains(event.relatedTarget)) void saveDuplicateName();
+});
+$('evaluation-rows').addEventListener('click', event => {
+  if (event.target.closest('[data-save-duplicate-name]')) void saveDuplicateName(true);
+});
+$('evaluation-rows').addEventListener('keydown', event => {
+  if (event.target.id !== 'duplicate-name' || !inlineName) return;
+  if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void saveDuplicateName(true); }
+  if (event.key === 'Escape' && !inlineName.pending) {
+    event.preventDefault(); finishInlineName(inlineName, true);
+    void loadLibrary().catch(e => error(e.message));
+  }
+});
 $('evaluation-form').addEventListener('input', resizeTextareas);
 new ResizeObserver(resizeTextareas).observe($('wizard-body'));
 $('framework').addEventListener('change', () => setLanguages());
 ['search','filter-type','filter-method','filter-status'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
 $('filter-suite').addEventListener('change', () => { renderSuites(); renderLibrary(); });
-document.addEventListener('click', event => {
+document.addEventListener('click', async event => {
   const el = event.target.closest('button');
   if (!el) return;
+  if (inlineName && (el.dataset.inspect || el.dataset.deleteEvaluation) && !await saveDuplicateName()) return;
   if (el.dataset.inspect) openForm(false, evaluations.find(e => e.id === el.dataset.inspect));
   if (el.dataset.duplicateEvaluation) void duplicateEvaluation(el.dataset.duplicateEvaluation);
   if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));

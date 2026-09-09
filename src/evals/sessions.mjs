@@ -33,10 +33,11 @@ export function createSessions(store, env) {
     if (!loopback(candidate.hostname) || !loopback(req.socket.remoteAddress)) throw new AppError('Configure APP_ORIGIN before allowing remote access.', 403);
     return candidate.origin;
   }
-  function checkOrigin(req, required = false) {
+  function checkOrigin(req, required = false, allowNavigation = false) {
     const expected = expectedOrigin(req);
     if ((required || req.headers.origin) && req.headers.origin !== expected) throw new AppError('Cross-origin requests are not allowed.', 403);
-    if (req.headers['sec-fetch-site'] === 'cross-site') throw new AppError('Cross-site requests are not allowed.', 403);
+    const publicNavigation = allowNavigation && req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+    if (req.headers['sec-fetch-site'] === 'cross-site' && !publicNavigation) throw new AppError('Cross-site requests are not allowed.', 403);
   }
   function read(req) {
     const cookies = (req.headers.cookie || '').split(';').map(part => part.trim()).filter(part => part.startsWith(cookieName + '='));

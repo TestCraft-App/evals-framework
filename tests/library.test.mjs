@@ -22,6 +22,7 @@ async function result(response, status) {
 }
 const save = (person, data = base) => result(person.post('/api/evaluations', data), 201);
 const suite = (person, name = 'Login suite') => result(person.post('/api/suites', { name }), 201);
+const rename = (person, id, body) => person.request('/api/evaluations/' + id, { method: 'PATCH', body: JSON.stringify(body) });
 const run = async (person, id) => waitForRun(person, (await result(person.post('/api/runs', { evaluationIds: [id] }), 202)).id);
 function snapshot(evaluation, id = 'saved-run', status = 'completed', itemStatus = 'passed') {
   return { id, createdAt: '2026-01-01T00:00:00.000Z', status, items: [{
@@ -45,6 +46,36 @@ test('suite deletion rechecks membership added by another store after an empty r
     assert.equal(second.suite(group.id, testScope), undefined);
     assert.equal(second.evaluation(member.id, testScope).suiteId, '');
   } finally { second.close(); first.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('name-only updates preserve copied legacy definitions and historical snapshots', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  try {
+    const person = await client(app);
+    const legacy = app.store.create({ ...base, schemaVersion: 1, criteria: 'Legacy scalar rubric', expectedOutput: 'Original target', customLegacyField: 'Retain me' }, person.scope);
+    const originalRun = snapshot(legacy); app.store.saveRun(originalRun, person.scope);
+    const copy = await result(person.post('/api/evaluations/' + legacy.id + '/duplicate', { name: 'Legacy (copy)' }), 201);
+    const renamed = await result(rename(person, copy.id, { name: '  Renamed copy  ', revision: copy.revision }), 200);
+    assert.deepEqual(renamed, { ...copy, name: 'Renamed copy', revision: 2 });
+    assert.deepEqual(await person.get('/api/evaluations/' + legacy.id), legacy);
+    assert.deepEqual(await person.get('/api/runs/' + originalRun.id), originalRun);
+    assert.equal((await rename(person, copy.id, { name: 'Stale name', revision: 1 })).status, 409);
+    assert.deepEqual(await person.get('/api/evaluations/' + copy.id), renamed);
+  } finally { await close(app); }
+});
+
+test('name-only updates validate names, exact fields, revisions, ownership and body limits', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  try {
+    const person = await client(app), other = await client(app), saved = await save(person);
+    for (const body of [null, [], {}, { name: 'Name' }, { name: '', revision: 1 }, { name: '   ', revision: 1 }, { name: 5, revision: 1 }, { name: 'x'.repeat(141), revision: 1 }, { name: 'Name', revision: '1' }, { name: 'Name', revision: 1, criteria: [] }]) {
+      assert.equal((await rename(person, saved.id, body)).status, 400);
+    }
+    assert.equal((await rename(person, saved.id, { name: 'x'.repeat(3000), revision: 1 })).status, 413);
+    assert.equal((await rename(other, saved.id, { name: 'Foreign name', revision: 1 })).status, 404);
+    assert.equal((await rename(person, 'missing', { name: 'Missing', revision: 1 })).status, 404);
+    assert.deepEqual(await person.get('/api/evaluations/' + saved.id), saved);
+  } finally { await close(app); }
 });
 
 test('private suites and evaluation revisions persist across restart and two store connections', async () => {
@@ -290,6 +321,7 @@ test('PUT, DELETE, duplication and workshop import enforce JSON, Origin and sess
   try {
     const person = await client(app), other = await client(app), saved = await save(person), group = await suite(person);
     const routes = [
+      ['PATCH', '/api/evaluations/' + saved.id, { name: 'Renamed', revision: 1 }],
       ['PUT', '/api/evaluations/' + saved.id, { ...base, revision: 1 }],
       ['PUT', '/api/suites/' + group.id, { name: 'Updated', revision: 1 }],
       ['DELETE', '/api/evaluations/' + saved.id, {}], ['DELETE', '/api/suites/' + group.id, {}],

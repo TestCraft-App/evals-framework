@@ -11,7 +11,7 @@ async function seed(page, app, status = 'completed') {
     ['c', 'Gamma', 79.99, 'failed', { suiteId: 'missing', method: 'hybrid', criteria: [{ text: 'login', method: 'contains' }, { text: 'logout', method: 'model_grade' }] }],
     ['d', 'Delta', 80, 'passed', { suiteName: 'Saved suite' }],
     ['e', 'Epsilon', 0, 'failed', { method: 'not_contains' }],
-    ['f', 'Zeta', null, status === 'running' ? 'grading' : 'error', { source: 'pasted' }],
+    ['f', 'Zeta', null, status === 'running' ? 'grading' : 'error', { source: 'pasted', suiteName: 'Unfiled' }],
   ];
   const run = { id: 'detail-example', createdAt: '2026-09-08T12:00:00Z', status, description: 'Hidden description', settings: { environment: 'dev', generationModel: 'gpt-4o-mini', graderModel: 'gpt-4o' }, items: cases.map(([id, name, score, itemStatus, extra], index) => ({
     id, evaluationId: evaluation.id, evaluation: { ...evaluation, name, ...extra }, status: itemStatus, score,
@@ -47,8 +47,8 @@ test('detail table has concise metadata, normalized score boundaries and combine
 
 test('all columns sort both ways with stable ties and missing numeric values last', async ({ page, browserApp }) => {
   await seed(page, browserApp);
-  const ascending = { name: ['a', 'b', 'd', 'e', 'c', 'f'], suite: ['a', 'b', 'd', 'c', 'e', 'f'], model: ['b', 'a', 'c', 'd', 'e', 'f'], method: ['c', 'b', 'a', 'd', 'e', 'f'], status: ['f', 'b', 'a', 'c', 'd', 'e'], score: ['e', 'b', 'a', 'c', 'd', 'f'], met: ['e', 'a', 'c', 'b', 'd', 'f'] };
-  const descending = { name: ['f', 'c', 'e', 'd', 'b', 'a'], suite: ['e', 'f', 'c', 'b', 'd', 'a'], model: ['a', 'c', 'd', 'e', 'b', 'f'], method: ['a', 'd', 'e', 'f', 'b', 'c'], status: ['b', 'a', 'c', 'd', 'e', 'f'], score: ['d', 'c', 'a', 'b', 'e', 'f'], met: ['b', 'd', 'a', 'c', 'e', 'f'] };
+  const ascending = { name: ['a', 'b', 'd', 'e', 'c', 'f'], suite: ['a', 'e', 'f', 'b', 'd', 'c'], model: ['b', 'a', 'c', 'd', 'e', 'f'], method: ['c', 'b', 'a', 'd', 'e', 'f'], status: ['f', 'b', 'a', 'c', 'd', 'e'], score: ['e', 'b', 'a', 'c', 'd', 'f'], met: ['e', 'a', 'c', 'b', 'd', 'f'] };
+  const descending = { name: ['f', 'c', 'e', 'd', 'b', 'a'], suite: ['c', 'b', 'd', 'e', 'f', 'a'], model: ['a', 'c', 'd', 'e', 'b', 'f'], method: ['a', 'd', 'e', 'f', 'b', 'c'], status: ['b', 'a', 'c', 'd', 'e', 'f'], score: ['d', 'c', 'a', 'b', 'e', 'f'], met: ['b', 'd', 'a', 'c', 'e', 'f'] };
   for (const key of Object.keys(ascending)) {
     await page.locator('#detail-sort-' + key).click(); expect(await ids(page), key + ' ascending').toEqual(ascending[key]);
     await expect(page.locator('#detail-sort-' + key).locator('..')).toHaveAttribute('aria-sort', 'ascending');
@@ -85,12 +85,12 @@ test('polling retains focus, filters, sort and output expansion while the final 
   const { run, scope } = await seed(page, browserApp, 'running');
   await page.locator('#expand-f').click(); await page.locator('#output-toggle-f').click();
   await expect(page.locator('#criteria-f')).toContainText('Waiting for grading results');
-  await page.locator('#detail-filter-suite').selectOption('Unfiled'); await page.locator('#detail-sort-score').click();
+  await page.locator('#detail-filter-suite').selectOption('None'); await page.locator('#detail-sort-score').click();
   await page.locator('#output-toggle-f').focus();
   run.items[5].status = 'failed'; run.items[5].score = 50; run.items[5].checks = run.items[1].checks; run.status = 'completed';
   browserApp.store.saveRun(run, scope);
   await expect(page.locator('[data-detail-item="f"] .badge')).toHaveText('Graded');
-  await expect(page.locator('#detail-filter-suite')).toHaveValue('Unfiled'); await expect(page.locator('#detail-sort-score').locator('..')).toHaveAttribute('aria-sort', 'ascending');
+  await expect(page.locator('#detail-filter-suite')).toHaveValue('None'); await expect(page.locator('#detail-sort-score').locator('..')).toHaveAttribute('aria-sort', 'ascending');
   await expect(page.locator('#expand-f')).toHaveAttribute('aria-expanded', 'true'); await expect(page.locator('#criteria-f details')).toHaveAttribute('open', '');
   await expect(page.locator('#output-toggle-f')).toBeFocused();
 });

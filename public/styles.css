@@ -198,9 +198,11 @@ html { scrollbar-gutter: stable; }
 #code-parameters .check-label { display: flex; margin-top: 14px; }
 #evaluation-dialog .parameter-panel > label:last-child { margin-bottom: 0; }
 .criteria-toolbar { display: flex; align-items: end; gap: 12px; margin-top: 18px; }
-.criteria-toolbar label { width: 200px; max-width: 60%; }
-.criteria-toolbar .button { min-height: 42px; }
-.criteria-composer { display: flex; align-items: end; flex-direction: row; gap: 12px; margin-top: 16px; }
+.criteria-toolbar > label:first-child { flex: 0 0 160px; min-width: 0; }
+#criterion-description-field { flex: 1; min-width: 0; }
+.criteria-composer .button { flex: none; min-height: 38px; height: 38px; padding-block: 0; }
+.criteria-composer { display: flex; align-items: end; flex-direction: row; gap: 12px; margin-top: 0; }
+#criterion-composer-label { margin-top: 16px; }
 #criterion-rule-field { flex: 0 0 160px; }
 #evaluation-dialog #criterion-draft, #evaluation-dialog #criteria-list textarea { height: 38px; min-height: 38px; max-height: 38px; white-space: pre; overflow: auto; resize: none; line-height: 24px; padding: 6px 8px; box-sizing: border-box; }
 #criterion-draft { flex: 1; width: 100%; min-width: 0; }
@@ -208,8 +210,36 @@ html { scrollbar-gutter: stable; }
 #criteria-list .badge { white-space: nowrap; font-size: .6875rem; }
 @media (max-width: 520px) {
   .identity-row, .automation-row { grid-template-columns: minmax(0, 1fr); }
-  #criterion-rule-field { flex-basis: 115px; }
+  #criterion-rule-field, .criteria-toolbar > label:first-child { flex-basis: 115px; }
   .criteria-composer { gap: 8px; }
   .criteria-toolbar { gap: 8px; }
   #criteria-list li { gap: 5px; padding: 5px; }
+}
+
+.inline-eval-name { position: relative; width: 100%; min-width: 0; }
+.inline-eval-name input { width: 100%; margin: 0; padding-right: 40px; }
+.inline-eval-name .icon-button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; }
+.inline-name-error { color: #b55049; font-size: .8125rem; white-space: normal; overflow-wrap: anywhere; margin: 5px 0 0; }
+.inline-name-error:empty { display: none; }
+#delete-evaluation { display: inline-flex; align-items: center; justify-content: center; }
+
+/* The composer is visually separate from the numbered, editable criteria. */
+.criterion-create-panel { padding: 14px; background: #f3f8f6; border: 1px solid var(--line); border-radius: 8px; }
+.criteria-added-section { margin-top: 24px; }
+#criteria-list { margin-top: 12px; }
+#criteria-list li { display: block; padding: 8px; background: #fff; }
+.criterion-card-header, .criterion-card-body { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.criterion-card-header { min-height: 32px; }
+.criterion-card-body { margin-top: 6px; }
+.criterion-number { flex: none; color: #647b71; font-size: .75rem; font-variant-numeric: tabular-nums; }
+#criteria-list .criterion-card-header > .icon-button { margin-left: auto; flex: none; }
+#criteria-list .criterion-description-editor { flex: 1; min-width: 0; }
+#criteria-list .criterion-description-editor input { margin: 0; padding: 4px 6px; min-height: 32px; font-size: .8125rem; border-color: transparent; }
+#criteria-list .criterion-description-editor input:focus { border-color: var(--teal); }
+#criteria-list .criterion-rule-pill { flex: 0 0 112px; width: 112px; margin: 0; padding: 3px 6px; height: 28px; border-radius: 14px; background-color: #fff; font-size: .6875rem; }
+#criteria-list .criterion-card-body textarea { flex: 1; min-width: 0; }
+@media (max-width: 520px) {
+  .criterion-create-panel { padding: 10px; }
+  #method, #criterion-rule { padding-inline: 6px; font-size: .75rem; height: 41px; }
+  .criterion-card-header, .criterion-card-body { gap: 5px; }
 }

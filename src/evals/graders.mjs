@@ -24,7 +24,7 @@ function ruleGrade(criterion, output) {
     evidence = forbidden ? (found ? `Forbidden fragment found: ${text}` : `Not found: ${text}`) : (found ? text : `Missing: ${text}`);
     reason = 'Case-sensitive substring check. Text in comments also matches; this does not prove code safety or correctness.';
   }
-  return { id, criterion: text, method, weight, source: 'rule', passed, score: passed ? 100 : 0, evidence, reason };
+  return { id, criterion: text, method, weight, ...(criterion.description ? { description: criterion.description } : {}), source: 'rule', passed, score: passed ? 100 : 0, evidence, reason };
 }
 
 async function modelGrade(evaluation, output, criteria, env, fetchImpl) {

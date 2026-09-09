@@ -40,7 +40,8 @@ export function normalizeCriteria(evaluation, { allowLegacy = true } = {}) {
     const text = string(legacyString ? value : value.text, 'Each criterion', 8000);
     const weight = legacyString || value.weight === undefined ? 1 : value.weight;
     if (!Number.isFinite(weight) || weight < 0.01 || weight > 100) throw new AppError('Each criterion weight must be a finite number from 0.01 to 100.');
-    return { text, method: criterionMethod, weight };
+    const description = !legacyString && criterionMethod !== 'model_grade' ? string(value.description, 'Criterion description', 2000, false) : '';
+    return { text, method: criterionMethod, weight, ...(description ? { description } : {}) };
   });
   if (criteria.reduce((sum, criterion) => sum + criterion.text.length, 0) > 8000) throw new AppError('Keep all criteria within 8000 characters.');
   if (new Set(criteria.map(criterion => JSON.stringify([criterion.method, criterion.text]))).size !== criteria.length) throw new AppError('Each criterion must have a distinct method and text.');
@@ -59,7 +60,7 @@ export function validateEvaluation(body) {
   const model = source === 'pasted' ? '' : string(body.model, 'Generation model', 120, source === 'llm');
   const judgeModel = needsModelGrader({ method, criteria }) ? string(body.judgeModel, 'Model grader', 120, false) : '';
   const suiteId = string(body.suiteId, 'Suite ID', 36, false);
-  if (suiteId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suiteId)) throw new AppError('Suite ID must be a UUID or empty for an unfiled evaluation.');
+  if (suiteId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suiteId)) throw new AppError('Suite ID must be a UUID or empty for an evaluation without a suite.');
   const pageUrl = string(body.pageUrl, 'Page URL', 2000, false);
   if (source === 'testcraft_api' && type === 'code' && !pageUrl) throw new AppError('Page URL is required for TestCraft code generation.');
   if (body.pom !== undefined && typeof body.pom !== 'boolean') throw new AppError('POM must be a boolean.');

@@ -6,6 +6,8 @@ TestCraft's browser extension is the application being evaluated. This project s
 
 ## Participant flow
 
+Open the workshop URL directly or follow a shared link from another site or phone app in your browser. External links can load the public dashboard, which then creates or restores the browser's private session. Cross-site API access remains blocked.
+
 1. Inspect a UI with TestCraft and obtain its selected HTML.
 2. Open New evaluation. Step 1: choose the TestCraft endpoint and parameters, then provide a name, optional test description, HTML, and page URL. Framework/language apply only to code.
 3. Choose Next. Step 2: choose the evaluation family and concrete method. Rule-based offers Contains, Does not contain and Exact match; Model-based offers LLM as a judge. Choose models later in Create Run. Add literal fragments for rules or observable quality criteria for the judge. Each method preserves its own draft while editing. No separate reference-response field or configurable percentage is required.
@@ -22,13 +24,13 @@ TestCraft's browser extension is the application being evaluated. This project s
 - **Forbidden fragments:** use Does not contain with `waitForTimeout` and `TODO`; inspect the individual checks. Show that comments also match and different spellings may escape a literal check. The overall score is an average, not a guarantee that every criterion passed.
 - **Ideas coverage:** grade positive, negative, and boundary coverage of a login form. v1's ideas route consumes HTML; the separate intent is judge context.
 - **Code quality:** assess grounded selectors, meaningful assertions, and waiting in a selected framework/language. These are artifact checks, not runtime results.
-- **Code from ideas:** enable the selected-ideas option and enter one idea per line in its dedicated field for the automate-tests-ideas endpoint. The test description remains optional evaluator context.
+- **Code from ideas:** select Automate test ideas and enter one idea per line in its dedicated field.
 - **Error versus failure:** missing credentials or a failed provider call means Error and no score, not a failed quality check.
 - **Prompt injection:** use synthetic hostile HTML/output to study judge robustness. Never use real secrets or execute the generated code.
 
 ## Rubric example
 
-Use Add criteria for each item; all criteria have equal weight. The backend stores a list of strings:
+Select Model-graded and use **Add**, to the right of the text field, for each item. All criteria have equal weight; the backend stores objects with text, method, and weight. Example criterion texts:
 
 ```json
 [

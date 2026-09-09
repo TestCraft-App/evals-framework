@@ -29,7 +29,7 @@ export function createRunDetail({ root, getSuites, getCatalog, getMethods, getCr
     const status = interrupted ? 'Interrupted' : ['passed', 'failed'].includes(item.status) ? 'Graded' : ['queued', 'running', 'generating', 'grading'].includes(item.status) ? 'In progress' : 'Error';
     const modelId = item.generationModel || evaluation.model || (evaluation.source === 'testcraft_api' ? 'API default' : 'Unknown');
     return { item, index, name: evaluation.name || 'Unnamed evaluation',
-      suite: evaluation.suiteName ?? (evaluation.suiteId ? getSuites().find(suite => suite.id === evaluation.suiteId)?.name || 'Unavailable suite' : 'Unfiled'),
+      suite: (!evaluation.suiteId && evaluation.suiteName === 'Unfiled' ? 'None' : evaluation.suiteName) ?? (evaluation.suiteId ? getSuites().find(suite => suite.id === evaluation.suiteId)?.name || 'Unavailable suite' : 'None'),
       model: evaluation.source === 'pasted' ? '—' : modelLabel(modelId),
       method: { rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[evaluationFamily(evaluation)] || evaluation.method || '—', status,
       score: Number.isFinite(item.score) ? item.score : null, met: complete ? passed / total : null, metText: (passed ?? '—') + '/' + total };
@@ -42,7 +42,8 @@ export function createRunDetail({ root, getSuites, getCatalog, getMethods, getCr
     const target = String(check.criterion || '').replace(/\s+/g, ' ').trim();
     const ruleResult = typeof check.passed !== 'boolean' ? 'Historical result' : check.passed ? 'Met' : 'Not met';
     const reason = model ? check.reason || 'Reason unavailable.' : (getMethods()[method]?.label || method || 'Rule') + ': “' + target + '” — ' + ruleResult;
-    return '<li class="criterion-result"><span class="criterion-verdict ' + (check.passed === true ? 'score-high' : check.passed === false ? 'score-low' : 'score-missing') + '" role="img" aria-label="' + escape(verdict) + '">' + icon + '</span><div><div class="criterion-description">' + escape(model ? check.criterion : 'Description not added yet') + '</div><p class="criterion-reason" title="' + escape(reason) + '">' + escape(reason) + '</p></div></li>';
+    const description = check.description || getCriteria(evaluation || {}).find(criterion => criterion.method === method && criterion.text === check.criterion)?.description || 'Description not added yet';
+    return '<li class="criterion-result"><span class="criterion-verdict ' + (check.passed === true ? 'score-high' : check.passed === false ? 'score-low' : 'score-missing') + '" role="img" aria-label="' + escape(verdict) + '">' + icon + '</span><div><div class="criterion-description">' + escape(model ? check.criterion : description) + '</div><p class="criterion-reason" title="' + escape(reason) + '">' + escape(reason) + '</p></div></li>';
   }
   function expandedHtml(view, state) {
     const { item } = view, checks = item.checks || [];

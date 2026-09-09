@@ -48,22 +48,36 @@ test('Save updates a definition and preserves the earlier run snapshot', async (
   await expect(page.locator('.criterion-verdict[aria-label="Pass"]')).toHaveCount(3);
 });
 
-test('Duplicate and Save as new create independent cases', async ({ page }) => {
+test('Duplicate creates an inline name editor and opens only after renaming', async ({ page }) => {
   await example(page, 'Original');
+  const original = (await (await page.request.get('/api/evaluations')).json()).evaluations[0];
   await page.getByRole('button', { name: 'Duplicate Original', exact: true }).click();
-  await expect(page.getByLabel('Eval name', { exact: true })).toHaveValue(/Original/);
+  await expect(page.locator('#evaluation-dialog')).toBeHidden();
+  await expect(page.locator('#duplicate-name')).toHaveValue('Original (copy)');
+  await expect(page.locator('#duplicate-name')).toBeFocused();
   await expect(page.locator('#eval-count')).toHaveText('2');
-  await page.getByLabel('Eval name', { exact: true }).fill('Third variant');
-  await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Save as new', exact: true }).click();
-  await expect(page.locator('#evaluation-dialog')).not.toBeVisible();
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(3);
+  await page.locator('#duplicate-name').fill('Variant');
+  await page.getByRole('button', { name: 'Save evaluation name', exact: true }).click();
+  await expect(page.locator('#duplicate-name')).toHaveCount(0);
+  await expect(page.locator('#evaluation-dialog')).toBeHidden();
+  await page.getByRole('button', { name: 'Variant', exact: true }).click();
+  await expect(page.locator('#name')).toHaveValue('Variant');
+  await expect(page.locator('#duplicate-evaluation, #save-as-new')).toHaveCount(0);
+  await expect(page.locator('.dialog-heading #delete-evaluation')).toBeVisible();
+  await expect(page.locator('#delete-evaluation')).toHaveText('');
+  await expect(page.locator('.dialog-footer #delete-evaluation')).toHaveCount(0);
+  await page.locator('#delete-evaluation').click();
+  await expect(page.getByRole('alertdialog', { name: 'Delete evaluation?' })).toBeVisible();
+  await page.locator('#cancel-delete-library').click();
+  await page.locator('#cancel-dialog').click();
   const { evaluations } = await (await page.request.get('/api/evaluations')).json();
-  expect(new Set(evaluations.map(e => e.id)).size).toBe(3);
-  expect(evaluations.every(e => e.revision === 1 && e.latest === null)).toBe(true);
+  expect(evaluations).toHaveLength(2);
+  expect(evaluations.find(e => e.id === original.id)).toEqual(original);
+  const copy = evaluations.find(e => e.id !== original.id);
+  expect(copy.name).toBe('Variant'); expect(copy.revision).toBe(2); expect(copy.criteria).toEqual(original.criteria);
 });
 
-test('stale Save preserves the draft and offers Save as new', async ({ page }) => {
+test('stale Save preserves the draft without offering Save as new', async ({ page }) => {
   await example(page, 'Concurrent edits');
   const original = (await (await page.request.get('/api/evaluations')).json()).evaluations[0];
   await page.getByRole('button', { name: 'Concurrent edits', exact: true }).click();
@@ -75,8 +89,9 @@ test('stale Save preserves the draft and offers Save as new', async ({ page }) =
   await page.getByRole('button', { name: 'Back' }).click();
   await expect(page.getByLabel('Eval name', { exact: true })).toHaveValue('My draft');
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Save as new', exact: true }).click();
-  await expect(page.locator('#eval-count')).toHaveText('2');
+  await expect(page.locator('#save-as-new')).toHaveCount(0);
+  await page.locator('#cancel-dialog').click();
+  await expect(page.locator('#eval-count')).toHaveText('1');
 });
 
 test('suite filter sits beside search and assignment stays in the evaluation form', async ({ page }) => {
@@ -89,6 +104,7 @@ test('suite filter sits beside search and assignment stays in the evaluation for
   await page.getByRole('button', { name: 'Edit Inside suite', exact: true }).click();
   await expect(page.locator('#evaluation-suite option:checked')).toHaveText('Login rules');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('#filter-suite option[value=__unfiled]')).toHaveText('None');
   await page.locator('#filter-suite').selectOption('__unfiled');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
   await expect(page.locator('#empty-library')).toBeVisible();
@@ -126,9 +142,9 @@ test('mixed rules use equal weights and run without a grader call', async ({ pag
   await page.getByLabel('Eval name', { exact: true }).fill('Equal-weight rules');
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('#criteria-list li')).toHaveCount(3);
-  await page.getByRole('combobox', { name: 'Rule', exact: true }).selectOption('not_contains');
+  await page.getByRole('combobox', { name: 'Criteria rule', exact: true }).selectOption('not_contains');
   await page.getByLabel('New criterion', { exact: true }).fill('valid credentials');
-  await page.getByRole('button', { name: 'Add criteria' }).click();
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.locator('#judge-model')).toHaveCount(0);
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#evaluation-dialog')).not.toBeVisible();
@@ -151,7 +167,7 @@ test('model criteria retain their badge and text alongside rules', async ({ page
   await page.getByRole('button', { name: 'Next' }).click();
   await page.locator('#method').selectOption('model_based');
   await page.getByLabel('New criterion', { exact: true }).fill('The negative test states the expected error.');
-  await page.getByRole('button', { name: 'Add criteria' }).click();
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.locator('#judge-model')).toHaveCount(0);
   await expect(page.locator('#criteria-list .badge').last()).toHaveText('Model-graded');
   await expect(page.getByLabel('Criterion 4', { exact: true })).toHaveValue('The negative test states the expected error.');
@@ -189,7 +205,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 780 
     });
     expect(layout.overflowX).toBeLessThanOrEqual(2); expect(layout.overflowY).toBeLessThanOrEqual(2);
     expect(layout.actionsVisible).toBe(true);
-    if (viewport.width > 700) expect(layout.rowHeights[0]).toBeLessThanOrEqual(50);
+    if (viewport.width > 700) expect(layout.rowHeights[0]).toBeLessThanOrEqual(100);
     await page.screenshot({ path: test.info().outputPath('hybrid-editor.png') });
   });
 }

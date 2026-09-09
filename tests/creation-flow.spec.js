@@ -38,7 +38,7 @@ test('Load example and manual creation submit the same input-only contract and g
   await page.locator('#method').selectOption('rule_based');
   for (const criterion of loaded.payload.criteria) {
     await page.getByLabel('New criterion', { exact: true }).fill(criterion.text);
-    await page.getByRole('button', { name: 'Add criteria', exact: false }).click();
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
   }
   const manual = await save(page);
   expect({ ...manual.payload, name: loaded.payload.name }).toEqual(loaded.payload);

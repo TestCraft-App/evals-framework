@@ -108,7 +108,7 @@ test('suite failures, in-flight saves, and stale deletion keep the evaluation dr
   await expect(page.locator('#delete-suite')).toBeDisabled();
 });
 
-test('criteria classify by family, reset weights on edit, and retain classification in Save as new', async ({ page }) => {
+test('criteria classify by family and reset weights on edit', async ({ page }) => {
   await newEvaluation(page, 'Mixed rules'); await page.locator('#save-evaluation').click();
   await add(page, 'contains', 'valid credentials'); await add(page, 'not_contains', 'TODO');
   const { saved } = await save(page); expect(saved.method).toBe('hybrid');
@@ -124,8 +124,8 @@ test('criteria classify by family, reset weights on edit, and retain classificat
   expect(response.ok()).toBe(true); await page.goto('/');
   await page.getByRole('button', { name: saved.name, exact: true }).click(); await page.locator('#save-evaluation').click();
   await add(page, 'model_grade', 'Covers the login flow.');
-  await expect(page.locator('#criteria-list .badge')).toHaveText(['Contains', 'Not Contains', 'Model-graded']);
-  const copy = await save(page, 'save-as-new'); expect(copy.saved.id).not.toBe(saved.id);
+  await expect(page.locator('#criteria-list .badge')).toHaveText(['Rule-based', 'Rule-based', 'Model-graded']);
+  const copy = await save(page, 'save-evaluation', 'PUT'); expect(copy.saved.id).toBe(saved.id);
   expect(copy.saved.criteria.map(c => c.weight)).toEqual([1, 1, 1]);
   await page.locator('#filter-method').selectOption('hybrid'); await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await page.getByRole('button', { name: copy.saved.name, exact: true }).click(); await page.locator('#save-evaluation').click();
@@ -163,10 +163,19 @@ for (const width of [1280, 390]) test(`modal hierarchy and single-row criteria a
   const toolbar = await page.locator('.criteria-toolbar').boundingBox(), draft = await page.locator('#criterion-draft').boundingBox(), list = await page.locator('#criteria-list').boundingBox();
   expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(draft.y); expect(draft.y + draft.height).toBeLessThan(list.y);
   expect(draft.height).toBeLessThanOrEqual(42);
+  const addButton = await page.locator('#add-criterion').boundingBox();
+  await expect(page.locator('#add-criterion')).toHaveText('Add');
+  expect(addButton.x).toBeGreaterThanOrEqual(draft.x + draft.width);
+  expect(addButton.y).toBeCloseTo(draft.y, 0);
   const geometry = await page.locator('#evaluation-dialog').evaluate(dialog => {
     const footer = dialog.querySelector('.wizard-actions').getBoundingClientRect();
     return { overflow: dialog.scrollWidth - dialog.clientWidth, footer: footer.bottom <= innerHeight, heights: [...dialog.querySelectorAll('#criteria-list textarea')].map(el => el.getBoundingClientRect().height) };
   });
   expect(geometry.overflow).toBeLessThanOrEqual(2); expect(geometry.footer).toBe(true); expect(geometry.heights).toEqual([38, 38]);
   await page.screenshot({ path: test.info().outputPath('criteria.png') });
+  await page.locator('#method').selectOption('rule_based');
+  const ruleDraft = await page.locator('#criterion-draft').boundingBox(), ruleAdd = await page.locator('#add-criterion').boundingBox();
+  expect(ruleAdd.x).toBeGreaterThanOrEqual(ruleDraft.x + ruleDraft.width);
+  expect(ruleDraft.width).toBeGreaterThan(70);
+  await page.screenshot({ path: test.info().outputPath('rule-criteria.png') });
 });

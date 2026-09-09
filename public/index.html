@@ -31,7 +31,7 @@
         <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><div class="library-actions"><button id="library-actions-toggle" class="button" aria-expanded="false" aria-controls="library-actions-menu">Actions <svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div id="library-actions-menu" class="library-actions-menu" hidden><button id="example-button" type="button">Load example</button><button id="workshop-button" type="button">Load workshop suite</button></div></div><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
-          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">Unfiled</option></select></label>
+          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">None</option></select></label>
           <label>Endpoint<select id="filter-type"><option value="">All endpoints</option><option value="ideas">Generate ideas</option><option value="code">Automate tests</option><option value="code_ideas">Automate test ideas</option></select></label>
           <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">rule-based</option><option value="model_based">model-graded</option><option value="hybrid">hybrid</option></select></label>
           <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
@@ -76,7 +76,7 @@
 
   <dialog id="evaluation-dialog" aria-labelledby="dialog-title">
     <form id="evaluation-form" novalidate>
-      <div class="dialog-heading"><div><h2 id="dialog-title">New evaluation</h2><p id="edit-version" hidden></p></div><div class="actions"><button type="button" id="duplicate-evaluation" class="button small" hidden>Duplicate</button><button type="button" id="close-dialog" class="icon-button" aria-label="Close evaluation">×</button></div></div>
+      <div class="dialog-heading"><div><h2 id="dialog-title">New evaluation</h2><p id="edit-version" hidden></p></div><div class="actions"><button type="button" id="delete-evaluation" class="icon-button danger" aria-label="Delete evaluation" title="Delete evaluation" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" id="close-dialog" class="icon-button" aria-label="Close evaluation">×</button></div></div>
       <ol class="wizard-steps" aria-label="Evaluation setup">
         <li id="step-indicator-1" aria-current="step"><span class="step-number">1</span><span>Parameters &amp; input</span></li>
         <li id="step-indicator-2"><span class="step-number">2</span><span>Evaluation criteria</span></li>
@@ -88,7 +88,7 @@
             <div class="identity-row">
               <div id="suite-control">
                 <label for="evaluation-suite">Suite</label>
-                <div class="suite-picker"><select name="suiteId" id="evaluation-suite"><option value="">Unfiled</option></select><button type="button" id="suite-actions" class="button" aria-label="Suite actions" aria-expanded="false" aria-controls="suite-menu">⋯</button></div>
+                <div class="suite-picker"><select name="suiteId" id="evaluation-suite"><option value="">None</option></select><button type="button" id="suite-actions" class="button" aria-label="Suite actions" aria-expanded="false" aria-controls="suite-menu">⋯</button></div>
                 <div id="suite-menu" class="suite-menu" hidden>
                   <button type="button" id="create-suite" class="button">Create suite</button>
                   <button type="button" id="rename-suite" class="button">Rename suite</button>
@@ -121,18 +121,24 @@
         </section>
         <section id="step-2" aria-label="Evaluation criteria" hidden>
           <div class="criteria-section" aria-labelledby="criteria-title">
-            <div class="criteria-heading"><h3 id="criteria-title">Evaluation criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
-            <div class="criteria-toolbar"><label for="method">Method<select id="method"><option value="rule_based">Rule-based</option><option value="model_based" selected>Model-graded</option></select></label><button id="add-criterion" type="button" class="button">＋ Add criteria</button></div>
+            <section class="criterion-create-panel" aria-labelledby="criteria-title">
+            <h3 id="criteria-title">Add criterion</h3>
+            <div class="criteria-toolbar"><label for="method">Method<select id="method"><option value="rule_based">Rule-based</option><option value="model_based" selected>Model-graded</option></select></label><label id="criterion-description-field" for="criterion-description" hidden>Description<input id="criterion-description" maxlength="2000" placeholder="What this rule checks" disabled></label></div>
+            <label id="criterion-composer-label" for="criterion-draft">Criteria</label>
             <div class="criteria-composer">
-              <label id="criterion-rule-field" for="criterion-rule" hidden>Rule<select id="criterion-rule"><option value="contains">Contains</option><option value="not_contains">Not Contains</option><option value="exact_match">Exact match</option></select></label>
-              <label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="1" maxlength="8000"></textarea>
+              <label id="criterion-rule-field" for="criterion-rule" hidden><span class="sr-only">Criteria rule</span><select id="criterion-rule"><option value="contains">Contains</option><option value="not_contains">Not Contains</option><option value="exact_match">Exact match</option></select></label>
+              <label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="1" maxlength="8000"></textarea><button id="add-criterion" type="button" class="button">Add</button>
             </div>
+            </section>
+            <section class="criteria-added-section" aria-labelledby="added-criteria-title">
+            <div class="criteria-heading"><h3 id="added-criteria-title">Added criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
             <ol id="criteria-list" aria-label="Evaluation criteria"></ol>
-            <p id="criteria-empty" class="criteria-empty">Add your first criterion above.</p>
+            <p id="criteria-empty" class="criteria-empty">No criteria added yet.</p>
+            </section>
           </div>
         </section>
       </div>
-      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="delete-evaluation" class="button danger" hidden>Delete evaluation</button><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-as-new" class="button" hidden>Save as new</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
+      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
     </form>
   </dialog>
   <dialog id="create-run-dialog" aria-labelledby="create-run-title">

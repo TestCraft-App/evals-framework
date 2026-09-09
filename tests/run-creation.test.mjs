@@ -30,7 +30,7 @@ test('run suite names are private snapshots unaffected by later renames or delet
     app.store.deleteSuite(suite.id, person.scope);
     assert.deepEqual(await person.get('/api/runs/' + run.id), run);
     const unfiled = await post(person, { ...settings, evaluationIds: [evaluation.id] });
-    assert.equal((await waitForRun(person, (await unfiled.json()).id)).items[0].evaluation.suiteName, 'Unfiled');
+    assert.equal((await waitForRun(person, (await unfiled.json()).id)).items[0].evaluation.suiteName, 'None');
   } finally { await app.shutdown(); }
 });
 

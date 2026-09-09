@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { createApp, listen, close, client, waitForRun, testScope } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 
@@ -35,6 +36,43 @@ test('anonymous bootstrap needs no code, but private APIs still require the brow
     assert.deepEqual((await participant.get('/api/evaluations')).evaluations, []);
     assert.equal(JSON.stringify(await participant.get('/api/config')).includes('never-public'), false);
     assert.equal(calls, 0); assert.equal((await fetch(url + '/')).status, 200);
+  } finally { await close(app); }
+});
+
+test('external dashboard navigation is allowed without weakening cross-site API protection', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:' }));
+  const url = `http://127.0.0.1:${app.server.address().port}`;
+  const navigation = { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+  // Node fetch overwrites Sec-Fetch-Mode; use HTTP to preserve browser metadata.
+  const navigate = (path, headers) => new Promise((resolve, reject) => {
+    httpRequest(url + path, { headers }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode, headers: response.headers })));
+    }).on('error', reject).end();
+  });
+  try {
+    const response = await navigate('/', navigation);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html/);
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal(app.store.db.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0);
+    for (const headers of [
+      { ...navigation, 'sec-fetch-mode': 'cors' },
+      { ...navigation, 'sec-fetch-dest': 'iframe' },
+      { 'sec-fetch-site': 'cross-site' },
+      { ...navigation, origin: 'https://attacker.example' },
+    ]) assert.equal((await navigate('/', headers)).status, 403);
+    const participant = await client(app);
+    for (const path of ['/api/session', '/api/evaluations', '/app.js', '/healthz']) {
+      const blocked = await navigate(path, { ...navigation, cookie: participant.cookie });
+      assert.equal(blocked.status, 403);
+      assert.deepEqual(await blocked.json(), { error: 'Cross-site requests are not allowed.' });
+    }
+    for (const path of ['/', '/api/session', '/api/evaluations']) {
+      const blocked = await participant.request(path, { method: 'POST', headers: navigation, body: '{}' });
+      assert.equal(blocked.status, 403);
+    }
   } finally { await close(app); }
 });
 

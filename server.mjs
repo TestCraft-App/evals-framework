@@ -43,7 +43,8 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
     res.setHeader('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     try {
       const url = new URL(req.url, 'http://localhost');
-      sessions.checkOrigin(req, req.method === 'POST');
+      // External links may open the public dashboard; API requests remain protected.
+      sessions.checkOrigin(req, req.method === 'POST', url.pathname === '/');
       if (env.APP_ORIGIN?.startsWith('https://')) res.setHeader('strict-transport-security', 'max-age=31536000');
       if (req.method === 'GET' && url.pathname === '/healthz') {
         store.db.prepare('SELECT 1').get();
@@ -107,6 +108,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         const evaluation = store.evaluation(evaluationMatch[1], scope);
         if (!evaluation) throw new AppError('Evaluation not found.', 404);
         if (req.method === 'GET') return json(res, 200, evaluation);
+        if (req.method === 'PATCH') return json(res, 200, store.renameEvaluation(evaluation.id, await readBody(req, 2048), scope));
         if (req.method === 'PUT') {
           const body = await readBody(req);
           return json(res, 200, store.updateEvaluation(evaluation.id, validateEvaluationBody(body), body.revision, scope));

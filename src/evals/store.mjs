@@ -107,6 +107,18 @@ export class Store {
       return this.#insertEvaluation({ ...current, name }, scope);
     });
   }
+  renameEvaluation(id, body, scope) {
+    return this.transaction(() => {
+      const current = this.evaluation(id, scope);
+      if (!current) throw new AppError('Evaluation not found.', 404);
+      requireObject(body, ['name', 'revision']);
+      const name = requireName(body.name);
+      requireRevision(body.revision, current.revision);
+      const record = { ...current, name, revision: current.revision + 1 };
+      this.db.prepare('UPDATE evaluations SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(record), id, ...requireScope(scope));
+      return record;
+    });
+  }
   deleteEvaluation(id, scope) {
     return this.transaction(() => {
       if (!this.evaluation(id, scope)) throw new AppError('Evaluation not found.', 404);

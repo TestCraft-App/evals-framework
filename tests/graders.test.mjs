@@ -18,6 +18,44 @@ const response = (checks, overrides = {}) => Response.json({ model: 'mock-judge'
 const noFetch = async () => { assert.fail('Unexpected provider request'); };
 const isAppError = status => error => error instanceof AppError && error.status === status;
 
+test('rule descriptions are optional bounded metadata and leave legacy criteria unchanged', () => {
+  const definition = { ...base, criteria: [{ ...criterion('valid user'), description: '  Checks login coverage  ' }] };
+  const before = structuredClone(definition);
+  assert.deepEqual(validateEvaluation(definition).criteria, [{ ...criterion('valid user'), description: 'Checks login coverage' }]);
+  assert.deepEqual(definition, before);
+  assert.deepEqual(normalizeCriteria(base), base.criteria.map(text => criterion(text)));
+  assert.deepEqual(normalizeCriteria({ ...base, criteria: [{ ...criterion('valid user'), description: '  ' }] }), [criterion('valid user')]);
+  for (const description of [null, 42, {}, [], 'x'.repeat(2001)]) {
+    assert.throws(() => validateEvaluation({ ...definition, criteria: [{ ...criterion('valid user'), description }] }), /Criterion description/);
+  }
+  assert.equal(normalizeCriteria({ ...definition, criteria: [{ ...criterion('valid user'), description: 'x'.repeat(2000) }] })[0].description.length, 2000);
+  assert.deepEqual(normalizeCriteria(modelCase([{ ...criterion('Quality', 'model_grade'), description: 'Inapplicable' }])), [criterion('Quality', 'model_grade')]);
+});
+
+test('all local rules retain their descriptions without changing matching or score', async () => {
+  const criteria = [
+    { ...criterion('valid user'), description: 'Success scenario is present' },
+    { ...criterion('TODO', 'not_contains'), description: 'No unfinished test placeholders' },
+    { ...criterion('valid user', 'exact_match'), description: 'Complete response is the required label' },
+  ];
+  const described = await grade({ ...base, method: 'hybrid', criteria }, 'valid user', {}, noFetch);
+  const plain = await grade({ ...base, method: 'hybrid', criteria: criteria.map(({ description, ...value }) => value) }, 'valid user', {}, noFetch);
+  assert.deepEqual(described.checks.map(c => c.description), criteria.map(c => c.description));
+  assert.deepEqual({ ...described, checks: described.checks.map(({ description, ...value }) => value) }, plain);
+});
+
+test('rule descriptions are excluded from model grader requests in mixed criteria', async () => {
+  const criteria = [{ ...criterion('valid user'), description: 'PRIVATE RULE DESCRIPTION' }, criterion('Quality', 'model_grade')];
+  const result = await grade({ ...base, method: 'hybrid', criteria }, 'valid user', env, async (url, init) => {
+    assert.ok(!init.body.includes('PRIVATE RULE DESCRIPTION'));
+    const rubric = JSON.parse(JSON.parse(init.body).messages[1].content).criteria;
+    assert.deepEqual(rubric, [{ id: 'c2', text: 'Quality' }]);
+    return response([check('c2')]);
+  });
+  assert.equal(result.checks[0].description, 'PRIVATE RULE DESCRIPTION');
+  assert.equal(result.score, 100);
+});
+
 function setupEngine(t, { environment = env, fetchImpl = noFetch } = {}) {
   const store = new Store(':memory:');
   const scope = { ownerId: 'grader-test-owner', workshopId: 'grader-test-workshop' };
