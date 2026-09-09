@@ -2,9 +2,10 @@ import { test, expect } from './browser-fixtures.mjs';
 
 const longText = 'After invalid credentials are submitted, the visible error identifies the rejected login without exposing the entered password. '.repeat(3).trim();
 
-for (const width of [1280, 390]) test(`added criteria truncate safely and remain editable at ${width}px`, async ({ page }) => {
+for (const { width, font } of [{ width: 1280 }, { width: 390 }, { width: 1280, font: 'Arial, sans-serif' }]) test(`added criteria truncate safely and remain editable at ${width}px${font ? ' with Arial fallback' : ''}`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   await page.goto('/');
+  if (font) await page.evaluate(font => { document.documentElement.style.fontFamily = font; }, font);
   await page.locator('#new-button').click();
   await page.locator('#name').fill('Criterion overflow');
   await page.locator('#html').fill('<button>Login</button>');
@@ -28,12 +29,17 @@ for (const width of [1280, 390]) test(`added criteria truncate safely and remain
   await expect(previews.nth(2)).toHaveText('Short.');
   await page.screenshot({ path: test.info().outputPath('criteria-ellipsis.png') });
   if (width === 1280) {
-    const medium = 'A moderately long criterion for the current field.';
+    // Leave ample room between desktop and mobile widths across system fonts.
+    const medium = 'A moderately long criterion that fits the desktop field but overflows a narrow mobile field.';
     await fields.nth(2).fill(medium); await page.locator('#criterion-draft').focus();
+    await expect(previews.nth(2)).toHaveText(medium);
+    await expect.poll(() => previews.nth(2).evaluate(el => el.clientWidth > 0 && el.scrollWidth <= el.clientWidth)).toBe(true);
     await expect(fields.nth(2)).not.toHaveAttribute('title');
     await page.setViewportSize({ width: 390, height: 900 });
+    await expect.poll(() => previews.nth(2).evaluate(el => el.clientWidth > 0 && el.scrollWidth > el.clientWidth)).toBe(true);
     await expect(fields.nth(2)).toHaveAttribute('title', medium);
     await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => previews.nth(2).evaluate(el => el.clientWidth > 0 && el.scrollWidth <= el.clientWidth)).toBe(true);
     await expect(fields.nth(2)).not.toHaveAttribute('title');
     await fields.nth(2).fill('Short.'); await page.locator('#criterion-draft').focus();
   }
