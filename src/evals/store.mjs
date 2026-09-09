@@ -147,10 +147,7 @@ export class Store {
   deleteSuite(id, scope) {
     return this.transaction(() => {
       if (!this.suite(id, scope)) throw new AppError('Suite not found.', 404);
-      for (const evaluation of this.evaluations(scope)) if (evaluation.suiteId === id) {
-        const record = { ...evaluation, suiteId: '', revision: evaluation.revision + 1 };
-        this.db.prepare('UPDATE evaluations SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(record), evaluation.id, ...requireScope(scope));
-      }
+      if (this.evaluations(scope).some(evaluation => evaluation.suiteId === id)) throw new AppError('Only empty suites can be deleted.', 409);
       this.db.prepare('DELETE FROM suites WHERE id=? AND owner_id=? AND workshop_id=?').run(id, ...requireScope(scope));
       return { deletedId: id };
     });

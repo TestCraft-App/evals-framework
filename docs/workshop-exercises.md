@@ -4,7 +4,7 @@ One hour, seven people. Goal: distinguish literal checks from quality judgments,
 
 ## One creation and execution flow
 
-**Load example**, **Load workshop suite**, and **New evaluation** use the same input-only flow: HTML and parameters → save definition → Create Run generates through TestCraft → grade the response → inspect the saved run. There is no output-paste field or preloaded answer. Loading or saving makes no model calls or completed runs. Model catalogs preload for enabled environments when the app opens and are reused in Create Run. Reload the page to refresh the lists, or use Retry after a catalog failure. The grader can be selected immediately and is required only for model-based criteria.
+**Load example**, **Load workshop suite**, and **New evaluation** use the same input-only flow: Eval name, Suite, endpoint, and applicable parameters → Evaluation criteria → save definition → Create Run generates through TestCraft → grade the response → inspect the saved run. There is no output-paste field or preloaded answer. Loading or saving makes no model calls or completed runs. Model catalogs preload for enabled environments when the app opens and are reused in Create Run. Reload the page to refresh the lists, or use Retry after a catalog failure. The grader can be selected immediately and is required only for model-based criteria.
 
 Load the suite **SauceDemo · TestCraft workshop**, then open **Runs → Create Run**. Choose an environment and models, select cases, and create the run. Use **Duplicate** or **Save as new** to make evaluation variants. Every rerun generates a fresh response; it does not regrade the previous output.
 
@@ -32,17 +32,17 @@ No template has a promised Pass, Fail, or score. Contains and Does not contain a
 | 03 · Code · Playwright structure | Imports, navigation, and assertion tokens are structural hints, not proof of implemented login behavior. | 1 generation |
 | 04 · Code · behavior review | Review executable actions, HTML-grounded selectors, and meaningful awaited assertions against the judge's evidence. | 1 generation + 1 judge |
 | 05 · Code · waiting and placeholders | Check absence of `waitForTimeout` and `TODO`. Comments count, alternate spellings escape the rules, and absence is not correctness. | 1 generation |
-| 06 · Code · selected login scenarios | Send three explicit login ideas to code generation; combine structural rules with a higher-weight semantic criterion. | 1 generation + 1 judge |
+| 06 · Code · selected login scenarios | Send three explicit login ideas to code generation; combine structural rules with an equally weighted semantic criterion. | 1 generation + 1 judge |
 | 07 · Ideas · grounded coverage | Combine a forbidden-fragment rule with semantic review of scenario coverage and unsupported invented features. | 1 generation + 1 judge |
 | 08 · Code · page object structure | Enable Page Object Model and selected ideas; inspect class/test/assertion fragments and whether the design is genuinely useful. | 1 generation |
 
-Descriptions are **grader context**, not extra instructions sent to TestCraft. The ideas and direct-code routes receive HTML and applicable generation settings. **Generate code from selected ideas** additionally sends the selected ideas. Changing a description or criterion does not direct generation; changing HTML or selected ideas does. Criteria and expected judgments never go to the generator.
+Legacy descriptions remain **grader context** and are no longer editable in the modal. The ideas and direct-code routes receive HTML and applicable generation settings. **Automate test ideas** additionally sends the selected ideas. Changing a criterion does not direct generation; changing HTML or selected ideas does. Criteria and expected judgments never go to the generator.
 
 ## Interpret results carefully
 
-Every criterion returns Pass or Fail with evidence and a reason. The backend calculates `100 × sum(passed weights) / sum(all weights)`. Weights default to 1; **Custom weights** allows 0.01–100. Dashboard scores divide that stored value by 100 and display two decimals; overall Pass uses the fixed 0.80 displayed threshold without rounding the decision. Red is below 0.50, yellow is 0.50 to below 0.80, and green is 0.80 or above. Inspect individual checks even when the overall result passes.
+Every criterion returns Pass or Fail with evidence and a reason. Workshop templates and the evaluation modal use equal weights of 1, so the score is passed criteria divided by total criteria. Dashboard scores display two decimals; overall Pass uses the fixed 0.80 threshold without rounding the decision. Red is below 0.50, yellow is 0.50 to below 0.80, and green is 0.80 or above. Inspect individual checks even when the overall result passes.
 
-For a weight exercise, take an observed run with mixed verdicts and calculate how different weights would change its aggregate using those same verdicts. Then save a variant and run it. That new run generates a new response, so any score difference cannot be attributed to weights alone. The app does not currently offer isolated regrading of a frozen output in the UI.
+To make a variant, open an evaluation and use **Evaluation criteria** to add or remove a rule or model-graded requirement, then **Save as new** and run it. The Method selector applies only to the new criterion. Mixed rules remain Rule-based; combining rules and model criteria displays Hybrid. A new run generates a new response, so compare both the output and the criterion results.
 
 In Run Detail, use Suite, Model, Eval method, and score filters, sort any column, and expand multiple evaluations to compare concise criterion results. **Criteria met** counts passing criteria, independently of the weighted score. Rule descriptions currently display a placeholder; their actual rule result appears underneath. Open **Inspect generated output** below the criteria to see the saved response.
 

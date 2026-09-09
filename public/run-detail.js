@@ -1,3 +1,10 @@
+// Classify the actual criterion families, including rule-only mixed-method records.
+export function evaluationFamily(evaluation) {
+  const methods = Array.isArray(evaluation.criteria) ? evaluation.criteria.map(c => typeof c === 'string' ? evaluation.method : c.method || evaluation.method) : [];
+  if (!methods.length) return evaluation.method === 'hybrid' ? 'hybrid' : evaluation.method === 'model_grade' ? 'model_based' : 'rule_based';
+  const model = methods.includes('model_grade'), rules = methods.some(method => method !== 'model_grade');
+  return model && rules ? 'hybrid' : model ? 'model_based' : 'rule_based';
+}
 export const scoreText = value => Number.isFinite(value) ? (value / 100).toFixed(2) : '—';
 export const scoreClass = value => !Number.isFinite(value) ? 'score-missing' : value < 50 ? 'score-low' : value < 80 ? 'score-medium' : 'score-high';
 export const scoreBand = value => !Number.isFinite(value) ? '' : value < 50 ? 'low' : value < 80 ? 'medium' : 'high';
@@ -24,7 +31,7 @@ export function createRunDetail({ root, getSuites, getCatalog, getMethods, getCr
     return { item, index, name: evaluation.name || 'Unnamed evaluation',
       suite: evaluation.suiteName ?? (evaluation.suiteId ? getSuites().find(suite => suite.id === evaluation.suiteId)?.name || 'Unavailable suite' : 'Unfiled'),
       model: evaluation.source === 'pasted' ? '—' : modelLabel(modelId),
-      method: { rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[getMethods()[evaluation.method]?.family] || evaluation.method || '—', status,
+      method: { rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[evaluationFamily(evaluation)] || evaluation.method || '—', status,
       score: Number.isFinite(item.score) ? item.score : null, met: complete ? passed / total : null, metText: (passed ?? '—') + '/' + total };
   }
   function criterionHtml(check, evaluation) {

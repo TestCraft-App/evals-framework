@@ -120,47 +120,40 @@ test('evaluation deletion requires confirmation and keeps run history', async ({
   await expect(page.locator('.result-score')).toContainText('1.00');
 });
 
-test('hybrid rules with custom weights calculate Pass/Fail without a grader call', async ({ page }) => {
+test('mixed rules use equal weights and run without a grader call', async ({ page }) => {
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example', exact: true }).click();
-  await page.getByLabel('Eval name', { exact: true }).fill('Weighted hybrid');
+  await page.getByLabel('Eval name', { exact: true }).fill('Equal-weight rules');
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('hybrid');
   await expect(page.locator('#criteria-list li')).toHaveCount(3);
-  await page.getByRole('combobox', { name: 'New criterion method', exact: true }).selectOption('not_contains');
+  await page.getByRole('combobox', { name: 'Rule', exact: true }).selectOption('not_contains');
   await page.getByLabel('New criterion', { exact: true }).fill('valid credentials');
   await page.getByRole('button', { name: 'Add criteria' }).click();
-  await page.getByRole('checkbox', { name: 'Custom weights' }).check();
-  await page.getByLabel('Weight for criterion 4', { exact: true }).fill('3');
   await expect(page.locator('#judge-model')).toHaveCount(0);
-  await expect(page.locator('#grading-cost')).toContainText('0 model calls');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   await expect(page.locator('#evaluation-dialog')).not.toBeVisible();
   await openRunCreator(page);
-  await page.getByRole('checkbox', { name: 'Select Weighted hybrid', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Select Equal-weight rules', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('0.50');
+  await expect(page.locator('.result-score')).toContainText('0.75');
   await page.locator('.detail-expand').click();
   await expect(page.locator('.criterion-verdict[aria-label="Pass"]')).toHaveCount(3);
   await expect(page.locator('.criterion-verdict[aria-label="Fail"]')).toHaveCount(1);
   await expect(page.locator('.criteria-met')).toHaveText('3/4');
-  await expect(page.locator('#run-detail')).not.toContainText('weight');
+  await expect(page.locator('.criterion-panel')).not.toContainText('weight');
   const session = await (await page.request.get('/api/session')).json();
   expect(session).not.toHaveProperty('budget');
 });
 
-test('hybrid model criteria enable the model dropdown and retain method-specific text', async ({ page }) => {
+test('model criteria retain their badge and text alongside rules', async ({ page }) => {
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example', exact: true }).click();
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('hybrid');
-  await page.getByRole('combobox', { name: 'New criterion method', exact: true }).selectOption('model_grade');
+  await page.locator('#method').selectOption('model_based');
   await page.getByLabel('New criterion', { exact: true }).fill('The negative test states the expected error.');
   await page.getByRole('button', { name: 'Add criteria' }).click();
   await expect(page.locator('#judge-model')).toHaveCount(0);
-  await expect(page.locator('#grading-cost')).toContainText('1 model call');
-  await page.getByRole('combobox', { name: 'Method for criterion 4', exact: true }).selectOption('contains');
-  await expect(page.locator('#judge-model')).toHaveCount(0);
+  await expect(page.locator('#criteria-list .badge').last()).toHaveText('Model-graded');
   await expect(page.getByLabel('Criterion 4', { exact: true })).toHaveValue('The negative test states the expected error.');
 });
 
@@ -178,15 +171,12 @@ test('workshop suite loads once without spending model calls', async ({ page }) 
 });
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 780 }]) {
-  test(`hybrid editor stays compact with weights and edit actions at ${viewport.width}px`, async ({ page }) => {
+  test(`criteria editor stays compact with badges and edit actions at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await example(page, 'Compact editor');
     await page.getByRole('button', { name: 'Compact editor', exact: true }).click();
     await page.getByRole('button', { name: 'Next' }).click();
-    await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('hybrid');
-    await page.getByRole('checkbox', { name: 'Custom weights' }).check();
-    await page.getByLabel('Criterion 2', { exact: true }).fill('A longer requirement that wraps cleanly without adding its own scroll area to the editor.');
-    await page.getByLabel('Weight for criterion 2', { exact: true }).fill('2');
+    await page.getByLabel('Criterion 2', { exact: true }).fill('A longer requirement remains on one row and scrolls inside its text field.');
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
     const layout = await page.locator('#evaluation-dialog').evaluate(dialog => {
       const footer = dialog.querySelector('.wizard-actions').getBoundingClientRect();
@@ -198,7 +188,7 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 780 
       };
     });
     expect(layout.overflowX).toBeLessThanOrEqual(2); expect(layout.overflowY).toBeLessThanOrEqual(2);
-    expect(layout.nestedScroll).toBe(false); expect(layout.actionsVisible).toBe(true);
+    expect(layout.actionsVisible).toBe(true);
     if (viewport.width > 700) expect(layout.rowHeights[0]).toBeLessThanOrEqual(50);
     await page.screenshot({ path: test.info().outputPath('hybrid-editor.png') });
   });

@@ -113,6 +113,7 @@ test('runtime workshop exports eight input-only templates with no completed outp
     assert.equal(Object.getPrototypeOf(evaluation), Object.prototype);
     assert.equal(evaluation.source, 'testcraft_api');
     assert.equal(evaluation.model, '');
+    assert.ok(evaluation.criteria.every(criterion => criterion.weight === 1));
     assert.equal(evaluation.pageUrl, 'https://www.saucedemo.com');
     assert.match(evaluation.input, /synthetic, simplified/i);
     assert.match(evaluation.input, /description is not sent to TestCraft/i);

@@ -73,7 +73,7 @@ test('run modal selects across filters, requires a conditional grader and create
   await page.locator('#create-select-all').uncheck();
   await expect(page.locator('#create-selected-count')).toHaveText('1 selected · maximum 50'); await expect(page.locator('#create-grader-model')).toBeEnabled();
   await page.locator('#create-eval-search').clear(); await page.locator('#create-eval-type').selectOption('code');
-  await expect(page.locator('#create-eval-rows')).toContainText('Gamma code'); await page.locator('#create-eval-method').selectOption('model_grade');
+  await expect(page.locator('#create-eval-rows')).toContainText('Gamma code'); await page.locator('#create-eval-method').selectOption('model_based');
   await expect(page.locator('#create-eval-empty')).toBeVisible();
   await page.locator('#run-description').fill('Dev check <script>inert</script>');
   await page.locator('#create-environment').selectOption('dev');

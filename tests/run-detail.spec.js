@@ -8,7 +8,7 @@ async function seed(page, app, status = 'completed') {
   const cases = [
     ['b', 'Beta', 49.99, 'passed', { suiteName: 'Saved suite', model: 'gpt-4o', method: 'model_grade' }],
     ['a', 'Alpha', 50, 'failed', { suiteId: suite.id }],
-    ['c', 'Gamma', 79.99, 'failed', { suiteId: 'missing', method: 'hybrid' }],
+    ['c', 'Gamma', 79.99, 'failed', { suiteId: 'missing', method: 'hybrid', criteria: [{ text: 'login', method: 'contains' }, { text: 'logout', method: 'model_grade' }] }],
     ['d', 'Delta', 80, 'passed', { suiteName: 'Saved suite' }],
     ['e', 'Epsilon', 0, 'failed', { method: 'not_contains' }],
     ['f', 'Zeta', null, status === 'running' ? 'grading' : 'error', { source: 'pasted' }],

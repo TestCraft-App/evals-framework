@@ -30,6 +30,23 @@ function snapshot(evaluation, id = 'saved-run', status = 'completed', itemStatus
   }] };
 }
 
+test('suite deletion rechecks membership added by another store after an empty read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'testcraft-suite-delete-')), dbPath = join(dir, 'evals.sqlite');
+  const first = new Store(dbPath), second = new Store(dbPath);
+  try {
+    const group = first.createSuite({ name: 'Initially empty' }, testScope);
+    assert.deepEqual(first.evaluations(testScope), []);
+    const member = second.create({ ...validateEvaluation(base), suiteId: group.id }, testScope);
+    assert.throws(() => first.deleteSuite(group.id, testScope), { status: 409, message: 'Only empty suites can be deleted.' });
+    assert.deepEqual(first.suite(group.id, testScope), group);
+    assert.deepEqual(first.evaluation(member.id, testScope), member);
+    second.updateEvaluation(member.id, { ...member, suiteId: '' }, member.revision, testScope);
+    assert.deepEqual(first.deleteSuite(group.id, testScope), { deletedId: group.id });
+    assert.equal(second.suite(group.id, testScope), undefined);
+    assert.equal(second.evaluation(member.id, testScope).suiteId, '');
+  } finally { second.close(); first.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('private suites and evaluation revisions persist across restart and two store connections', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-library-')), dbPath = join(dir, 'evals.sqlite');
   let app = await listen(createApp({ dbPath, fetchImpl: noProvider }));
@@ -220,6 +237,10 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     for (const evaluation of saved) assert.equal((await person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' })).status, 409);
 
     await result(put(person, '/api/evaluations/' + saved[0].id, { ...base, suiteId: group.id, revision: 1 }), 200);
+    const beforeDelete = await person.get('/api/evaluations');
+    assert.deepEqual(await result(person.request('/api/suites/' + group.id, { method: 'DELETE' }), 409), { error: 'Only empty suites can be deleted.' });
+    assert.deepEqual(await person.get('/api/evaluations'), beforeDelete);
+    for (const current of beforeDelete.evaluations) await result(put(person, '/api/evaluations/' + current.id, { ...current, suiteId: '' }), 200);
     await result(person.request('/api/suites/' + group.id, { method: 'DELETE' }), 200);
     assert.deepEqual(await person.get('/api/runs/' + started.id), active);
 
@@ -250,15 +271,15 @@ test('stored queued runs block deletion and suite deletion preserves unrelated m
     const unfiled = store.create(validateEvaluation(base), testScope);
     const queued = snapshot(member, 'queued-run', 'queued', 'queued'); store.saveRun(queued, testScope);
     assert.throws(() => store.deleteEvaluation(member.id, testScope), { status: 409 });
-    store.deleteSuite(group.id, testScope);
-    assert.equal(store.evaluation(member.id, testScope).suiteId, '');
-    assert.equal(store.evaluation(member.id, testScope).revision, 2);
+    assert.throws(() => store.deleteSuite(group.id, testScope), { status: 409, message: 'Only empty suites can be deleted.' });
+    assert.deepEqual(store.evaluation(member.id, testScope), member);
     assert.deepEqual(store.evaluation(unrelated.id, testScope), unrelated);
     assert.deepEqual(store.evaluation(unfiled.id, testScope), unfiled);
     assert.deepEqual(store.run(queued.id, testScope), queued);
     store.recoverInterruptedRuns();
     const recovered = store.run(queued.id, testScope);
     store.deleteEvaluation(member.id, testScope);
+    store.deleteSuite(group.id, testScope);
     assert.deepEqual(store.run(queued.id, testScope), recovered);
     assert.throws(() => store.deleteSuite(group.id, testScope), { status: 404 });
   } finally { store.close(); }
@@ -322,6 +343,8 @@ test('workshop import is private, idempotent across restart, preserves edits and
     assert.deepEqual(await restored.get('/api/evaluations/' + first.id), edited);
     assert.deepEqual(await restored.get('/api/evaluations/' + existing.id), existing);
 
+    await result(restored.request('/api/suites/' + imported.suite.id, { method: 'DELETE' }), 409);
+    for (const member of currentMembers) await result(put(restored, '/api/evaluations/' + member.id, { ...member, suiteId: '' }), 200);
     await result(restored.request('/api/suites/' + imported.suite.id, { method: 'DELETE' }), 200);
     const unlinked = await restored.get('/api/evaluations/' + first.id);
     assert.equal(unlinked.name, edited.name); assert.equal(unlinked.suiteId, ''); assert.equal(unlinked.revision, 3);

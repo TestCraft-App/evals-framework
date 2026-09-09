@@ -1,6 +1,6 @@
-import { createRunDetail, scoreMarkup } from './run-detail.js';
+import { createRunDetail, scoreMarkup, evaluationFamily } from './run-detail.js';
 const $ = id => document.getElementById(id);
-const names = { ideas: 'Generate ideas', code: 'Generate code', model_grade: 'LLM as a judge', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Does not contain', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
+const names = { ideas: 'Generate ideas', code: 'Automate tests', code_ideas: 'Automate test ideas', model_grade: 'Model-graded', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Not Contains', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
 const languages = { playwright: ['typescript','javascript','python','java','csharp'], cypress: ['typescript','javascript'], selenium: ['javascript','python','java','csharp'] };
 const activeStatuses = ['queued','running','generating','grading'];
@@ -8,7 +8,7 @@ let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollF
 let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
 let session = null, sessionTimer, sessionSetup;
-let currentMethod = null, methodDrafts = new Map(), familyChoices = {};
+let suiteDraft = null, savingSuite = false;
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
 let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
@@ -18,7 +18,8 @@ const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
 };
-const formNeedsGrader = () => $('method').value === 'model_grade' || ($('method').value === 'hybrid' && criteria.some(c => c.method === 'model_grade'));
+const draftMethod = () => $('method').value === 'model_based' ? 'model_grade' : $('criterion-rule').value;
+const endpoint = e => e.type === 'code' && e.fromIdeas ? 'code_ideas' : e.type;
 const runDetail = createRunDetail({ root: $('run-detail'), getSuites: () => suites, getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, canDelete: canDeleteRun });
 function lockBody() { document.body.classList.toggle('modal-open', !!document.querySelector('dialog[open]')); }
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -42,7 +43,7 @@ function showConnecting() {
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
-  methodDrafts.clear(); currentMethod = null; familyChoices = {};
+  suiteDraft = null; savingSuite = false; closeSuiteEditor(false);
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   closeRunDraft(); $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
   $('delete-library-dialog').close();
@@ -79,16 +80,16 @@ async function loadRuns() {
   runs = data.runs; $('runs-count').textContent = runs.length; renderRunList();
 }
 const evaluationSuite = e => suites.find(s => s.id === e.suiteId)?.name || 'Unfiled';
-const evaluationMethod = e => e.method === 'hybrid' ? 'hybrid' : e.method === 'model_grade' ? 'model-graded' : 'rule-based';
+const evaluationMethod = e => ({ rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[evaluationFamily(e)]);
 function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
-  const value = e => evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[e.type] : e[evalSort];
+  const value = e => evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
   return evaluations.filter(e => {
     const status = e.latest?.status || 'not_run';
     return (!query || (e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
-      && (!$('filter-type').value || e.type === $('filter-type').value)
+      && (!$('filter-type').value || endpoint(e) === $('filter-type').value)
       && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
-      && (!$('filter-method').value || e.method === $('filter-method').value || config.evaluationMethods[e.method]?.family === $('filter-method').value)
+      && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value)
       && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
   }).sort((a, b) => String(value(a)).localeCompare(String(value(b))) * evalSortDirection || a.id.localeCompare(b.id));
 }
@@ -97,7 +98,7 @@ function renderLibrary() {
   const visible = visibleEvaluations();
   $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
     + '<td><button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button></td>'
-    + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(e.type) + '</td>'
+    + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(endpoint(e)) + '</td>'
     + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
   document.querySelectorAll('[data-eval-sort]').forEach(button => button.parentElement.setAttribute('aria-sort', button.dataset.evalSort === evalSort ? (evalSortDirection === 1 ? 'ascending' : 'descending') : 'none'));
@@ -109,48 +110,19 @@ function setLanguages(preferred = $('language').value) {
   $('language').innerHTML = languages[$('framework').value].map(value => '<option value="' + value + '">' + names[value] + '</option>').join('');
   if (languages[$('framework').value].includes(preferred)) $('language').value = preferred;
 }
-function selectMethod(method, preserveDraft = true) {
-  const definition = config.evaluationMethods[method];
-  if (!definition) return;
-  const previous = currentMethod;
-  if (preserveDraft && currentMethod) methodDrafts.set(currentMethod, { criteria: structuredClone(criteria), draft: $('criterion-draft').value });
-  $('method-family').value = definition.family;
-  $('method').innerHTML = Object.entries(config.evaluationMethods).filter(([, value]) => value.family === definition.family).map(([id, value]) => '<option value="' + escape(id) + '">' + escape(value.label) + '</option>').join('');
-  $('method').value = method;
-  familyChoices[definition.family] = method; currentMethod = method;
-  if (preserveDraft) {
-    const savedDraft = methodDrafts.get(method) || (method === 'hybrid' ? methodDrafts.get(previous) : null);
-    criteria = structuredClone(savedDraft?.criteria || []); $('criterion-draft').value = savedDraft?.draft || '';
-    if (method === 'hybrid' && previous && previous !== 'hybrid') $('criterion-method').value = previous;
-  }
-  renderCriteria(); syncForm();
-}
 function syncForm() {
-  const source = 'testcraft_api', method = $('method').value, code = $('type').value === 'code';
-  const definition = config?.evaluationMethods?.[method];
-  const judge = formNeedsGrader();
-  $('criterion-method-field').hidden = method !== 'hybrid';
-  $('framework').disabled = !code; $('language').disabled = !code;
-  $('pom').disabled = !code || source !== 'testcraft_api'; $('from-ideas').disabled = !code || source !== 'testcraft_api';
-  $('page-url').required = source === 'testcraft_api' && code;
-  const fromIdeas = !$('from-ideas').disabled && $('from-ideas').checked;
+  const code = $('type').value !== 'ideas', fromIdeas = $('type').value === 'code_ideas';
+  $('code-parameters').hidden = !code;
+  for (const id of ['framework', 'language', 'pom', 'page-url']) $(id).disabled = !code;
+  $('page-url').required = code;
   $('ideas-field').hidden = !fromIdeas; $('ideas').required = fromIdeas; $('ideas').disabled = !fromIdeas;
-  $('code-params-hint').hidden = code;
-  $('source-hint').textContent = source === 'llm' ? 'Calls a separate backend prompt adapter. This is not the TestCraft v1 generation pipeline.'
-    : code ? `Calls ${fromIdeas ? '/api/automate-tests-ideas' : '/api/automate-tests'} with the HTML and code parameters. Description is evaluator context.`
-    : 'Calls /api/generate-ideas with the HTML. Description is evaluator context, not an extra instruction to TestCraft.';
-  if (editing && editing.source !== 'testcraft_api') $('source-hint').textContent += ' New runs generate fresh output through TestCraft. Previous runs stay unchanged.';
-  $('method-hint').textContent = definition?.description || '';
-  $('method-limitation').textContent = definition?.limitation || '';
-  $('grading-cost').textContent = judge ? 'Grading: 1 model call for all model criteria' + (!config?.llmReady ? ' · Model grader not configured' : '') : 'Grading: 0 model calls · Deterministic for the same output and criteria';
-  $('criteria-hint').textContent = definition?.criteriaHint || '';
-  $('criterion-draft').placeholder = (method === 'hybrid' ? config?.evaluationMethods?.[$('criterion-method').value] : definition)?.placeholder || '';
-  $('criteria-empty').textContent = method === 'model_grade' ? 'What makes a good response? Add your first quality criterion.' : method === 'not_contains' ? 'Add the first text fragment that must not appear.' : method === 'exact_match' ? 'Add the complete text that the output must match.' : 'Add the first text fragment that must appear.';
-  updateCriteriaState();
-  resizeTextareas();
+  $('criterion-rule-field').hidden = $('method').value !== 'rule_based';
+  $('criterion-rule').disabled = $('method').value !== 'rule_based';
+  $('criterion-draft').placeholder = config?.evaluationMethods?.[draftMethod()]?.placeholder || '';
+  updateCriteriaState(); resizeTextareas();
 }
 function resizeTextareas() {
-  document.querySelectorAll('#evaluation-dialog textarea').forEach(el => {
+  document.querySelectorAll('#step-1 textarea').forEach(el => {
     if (!el.getClientRects().length) return;
     el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px';
   });
@@ -167,35 +139,28 @@ function setStep(step, focus = true) {
   $('save-as-new').hidden = step === 1 || !editing;
   $('form-error').textContent = ''; $('wizard-body').scrollTop = 0;
   resizeTextareas();
-  if (focus) $(step === 1 ? 'name' : 'method-family').focus();
+  if (focus) $(step === 1 ? 'name' : 'method').focus();
 }
 function updateCriteriaState() {
   $('criteria-count').textContent = criteria.length + (criteria.length === 1 ? ' criterion' : ' criteria');
   $('criteria-empty').hidden = criteria.length > 0;
-  const full = criteria.length >= ($('method').value === 'exact_match' ? 1 : 20);
-  $('add-criterion').disabled = full;
+  $('add-criterion').disabled = criteria.length >= 20 || (draftMethod() === 'exact_match' && criteria.some(c => c.method === 'exact_match'));
 }
 function renderCriteria() {
-  const hybrid = $('method').value === 'hybrid', weighted = $('use-weights').checked;
-  $('criteria-list').classList.toggle('weighted', weighted); $('criteria-list').classList.toggle('hybrid', hybrid);
-  $('criteria-list').innerHTML = criteria.map((value, index) => '<li><span class="criterion-number" aria-hidden="true">' + (index + 1) + '</span><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea>'
-    + (hybrid ? '<label class="criterion-kind"><span class="sr-only">Method for criterion ' + (index + 1) + '</span><select data-criterion-method="' + index + '">' + ['model_grade', 'contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (value.method === method ? ' selected' : '') + '>' + escape(names[method]) + '</option>').join('') + '</select></label>' : '')
-    + (weighted ? '<label class="criterion-weight"><span class="sr-only">Weight for criterion ' + (index + 1) + '</span><input type="number" aria-label="Weight for criterion ' + (index + 1) + '" data-criterion-weight="' + index + '" min="0.01" max="100" step="0.01" required value="' + escape(value.weight) + '"></label>' : '')
+  $('criteria-list').innerHTML = criteria.map((value, index) => '<li>' + badge(value.method)
+    + '<label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea>'
     + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></li>').join('');
-  $('score-formula').textContent = weighted ? 'Score = passed weight / total weight. A larger weight gives that criterion more influence.' : 'Score = passed criteria / total criteria. Every criterion returns Pass or Fail.';
-  updateCriteriaState(); resizeTextareas();
+  updateCriteriaState();
 }
 function addCriterion() {
-  const value = $('criterion-draft').value.trim();
+  const value = $('criterion-draft').value.trim(), method = draftMethod();
   if (!value) { $('form-error').textContent = 'Write a criterion before adding it.'; $('criterion-draft').focus(); return false; }
-  if (criteria.length >= ($('method').value === 'exact_match' ? 1 : 20)) { $('form-error').textContent = $('method').value === 'exact_match' ? 'Exact match uses exactly one criterion.' : 'Use at most 20 criteria.'; return false; }
+  if (criteria.length >= 20) { $('form-error').textContent = 'Use at most 20 criteria.'; return false; }
+  if (method === 'exact_match' && criteria.some(c => c.method === method)) { $('form-error').textContent = 'Use at most one Exact match criterion.'; return false; }
   if (criteria.map(c => c.text).join('').length + value.length > 8000) { $('form-error').textContent = 'Keep all criteria within 8000 characters.'; return false; }
-  const method = $('method').value === 'hybrid' ? $('criterion-method').value : $('method').value;
   if (criteria.some(c => c.method === method && c.text.trim() === value)) { $('form-error').textContent = 'This criterion is already in the list.'; return false; }
   criteria.push({ text: value, method, weight: 1 }); $('criterion-draft').value = ''; $('form-error').textContent = ''; renderCriteria(); syncForm();
-  if (!$('criterion-draft').disabled) $('criterion-draft').focus();
-  else $('criterion-' + (criteria.length - 1)).focus();
-  return true;
+  $('criterion-draft').focus(); return true;
 }
 function validateStep(step) {
   const invalid = [...$('step-' + step).querySelectorAll('input,select,textarea')].find(el => !el.disabled && !el.checkValidity());
@@ -205,7 +170,7 @@ function validateStep(step) {
 function openForm(example = false, existing) {
   if (!session || !config) return;
   $('evaluation-form').reset(); $('form-error').textContent = '';
-  currentMethod = null; methodDrafts.clear(); familyChoices = {};
+  closeSuiteEditor(false);
   editing = existing ? structuredClone(existing) : null;
   $('dialog-title').textContent = existing ? 'Edit evaluation' : 'New evaluation';
   $('edit-version').hidden = !editing;
@@ -223,36 +188,45 @@ function openForm(example = false, existing) {
   };
   const data = existing || (example ? sample : null);
   if (data) {
-    for (const key of ['name','type','input','html']) if (data[key] !== undefined) $(key).value = data[key];
+    for (const key of ['name','html']) if (data[key] !== undefined) $(key).value = data[key];
     if (languages[data.framework]) $('framework').value = data.framework;
     setLanguages(data.language);
     if (data.pageUrl !== undefined) $('page-url').value = data.pageUrl;
-    $('pom').checked = !!data.pom; $('from-ideas').checked = !!data.fromIdeas;
+    $('type').value = endpoint(data); $('pom').checked = !!data.pom;
     $('ideas').value = data.ideas ?? (data.fromIdeas ? data.input : '') ?? '';
     criteria = criterionObjects(data);
-    $('use-weights').checked = criteria.some(c => c.weight !== 1);
+
   }
-  selectMethod(data?.method || 'model_grade', false); syncForm(); setStep(1, false);
+  const initialMethod = criteria[0]?.method || 'model_grade';
+  $('method').value = initialMethod === 'model_grade' ? 'model_based' : 'rule_based';
+  $('criterion-rule').value = initialMethod === 'model_grade' ? 'contains' : initialMethod;
+  renderCriteria(); syncForm(); syncSuiteActions(); setStep(1, false);
   $('evaluation-dialog').showModal(); document.body.classList.add('modal-open'); resizeTextareas(); $('name').focus();
 }
 async function saveEvaluation(event) {
   event.preventDefault(); $('form-error').textContent = '';
-  if (savingEvaluation) return;
+  if (savingEvaluation || savingSuite) return;
+  if (suiteDraft) { $('form-error').textContent = 'Save or cancel the suite change first.'; $('save-suite').focus(); return; }
   if (!validateStep(1)) return;
   if (formStep === 1) { setStep(2); return; }
   if ($('criterion-draft').value.trim() && !addCriterion()) return;
   if (!validateStep(2)) return;
-  if (!criteria.length || ($('method').value === 'exact_match' && criteria.length !== 1)) {
-    $('form-error').textContent = $('method').value === 'exact_match' ? 'Exact match needs exactly one criterion. Edit or remove the extra items.' : 'Add at least one evaluation criterion.';
-    $('criterion-draft').focus(); return;
+  if (!criteria.length) {
+    $('form-error').textContent = 'Add at least one evaluation criterion.'; $('criterion-draft').focus(); return;
+  }
+  if (criteria.filter(c => c.method === 'exact_match').length > 1) {
+    $('form-error').textContent = 'Use at most one Exact match criterion.'; return;
   }
   const target = editing, requestSession = session, asNew = event.submitter?.id === 'save-as-new';
-  setSavingEvaluation(true);
   const payload = { ...Object.fromEntries(new FormData($('evaluation-form'))), source: 'testcraft_api' };
-  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: $('use-weights').checked ? value.weight : 1 }));
-  payload.pom = !$('pom').disabled && $('pom').checked; payload.fromIdeas = !$('from-ideas').disabled && $('from-ideas').checked;
+  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: 1 }));
+  payload.method = new Set(criteria.map(c => c.method)).size === 1 ? criteria[0].method : 'hybrid';
+  payload.type = $('type').value === 'ideas' ? 'ideas' : 'code';
+  payload.fromIdeas = $('type').value === 'code_ideas';
+  if (payload.type === 'code') payload.pom = $('pom').checked;
   if (target && !asNew) payload.revision = target.revision || 1;
   if (asNew && payload.name === target.name) payload.name = payload.name.slice(0, 133) + ' (copy)';
+  setSavingEvaluation(true);
   let saved = false;
   try {
     await api('/api/evaluations' + (target && !asNew ? '/' + target.id : ''), { method: target && !asNew ? 'PUT' : 'POST', body: JSON.stringify(payload) });
@@ -262,13 +236,81 @@ async function saveEvaluation(event) {
 }
 function setSavingEvaluation(busy) {
   savingEvaluation = busy;
-  ['save-evaluation','save-as-new','duplicate-evaluation','delete-evaluation','close-dialog','cancel-dialog','back-step'].forEach(id => { $(id).disabled = busy; });
+  ['save-evaluation','save-as-new','duplicate-evaluation','delete-evaluation','close-dialog','cancel-dialog','back-step'].forEach(id => { $(id).disabled = busy || savingSuite; });
+  syncSuiteActions();
 }
 function renderSuites() {
   for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">Unfiled</option>'], ['evaluation-suite', '<option value="">Unfiled</option>']]) {
     const current = $(id).value;
     $(id).innerHTML = empty + suites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if ([...$(id).options].some(o => o.value === current)) $(id).value = current;
+  }
+  syncSuiteActions();
+}
+function closeSuiteMenu() {
+  $('suite-menu').hidden = true; $('suite-actions').setAttribute('aria-expanded', 'false');
+}
+function syncSuiteActions() {
+  const selected = suites.find(s => s.id === $('evaluation-suite').value), busy = savingSuite || savingEvaluation;
+  const nonempty = !!selected && evaluations.some(e => e.suiteId === selected.id);
+  $('suite-actions').disabled = busy; $('evaluation-suite').disabled = busy || !!suiteDraft;
+  $('create-suite').disabled = busy;
+  $('rename-suite').disabled = busy || !selected; $('delete-suite').disabled = busy || !selected || nonempty;
+  $('suite-delete-hint').hidden = !nonempty;
+  $('save-suite').disabled = busy; $('cancel-suite').disabled = busy;
+  $('suite-name').disabled = busy || !suiteDraft || suiteDraft.kind === 'delete';
+}
+function closeSuiteEditor(focus = true) {
+  suiteDraft = null; $('suite-editor').hidden = true; $('suite-error').textContent = '';
+  closeSuiteMenu(); syncSuiteActions();
+  if (focus) $('suite-actions').focus();
+}
+function openSuiteEditor(kind) {
+  if (savingSuite || savingEvaluation) return;
+  const record = suites.find(s => s.id === $('evaluation-suite').value);
+  if (kind !== 'create' && !record) return;
+  if (kind === 'delete' && evaluations.some(e => e.suiteId === record.id)) return;
+  suiteDraft = { kind, record: record ? { ...record } : null, session };
+  closeSuiteMenu(); $('suite-editor').hidden = false; $('suite-error').textContent = '';
+  $('suite-name-field').hidden = kind === 'delete'; $('suite-delete-confirmation').hidden = kind !== 'delete';
+  $('suite-editor-title').textContent = kind === 'create' ? 'Create suite' : 'Rename suite';
+  $('suite-name').value = kind === 'create' ? '' : record.name;
+  $('suite-delete-confirmation').textContent = kind === 'delete' ? 'Delete suite “' + record.name + '”?' : '';
+  $('save-suite').textContent = kind === 'delete' ? 'Delete suite' : 'Save suite';
+  syncSuiteActions(); $(kind === 'delete' ? 'cancel-suite' : 'suite-name').focus();
+}
+async function saveSuite() {
+  const draft = suiteDraft;
+  if (!draft || savingSuite || savingEvaluation || draft.session !== session) return;
+  const name = $('suite-name').value.trim();
+  if (draft.kind !== 'delete' && (!name || name.length > 140)) {
+    $('suite-error').textContent = 'Enter a suite name from 1 to 140 characters.'; $('suite-name').focus(); return;
+  }
+  savingSuite = true; setSavingEvaluation(false); $('suite-error').textContent = '';
+  let saved = false;
+  try {
+    const record = await api('/api/suites' + (draft.kind === 'create' ? '' : '/' + draft.record.id), {
+      method: draft.kind === 'create' ? 'POST' : draft.kind === 'rename' ? 'PUT' : 'DELETE',
+      ...(draft.kind === 'delete' ? {} : { body: JSON.stringify({ name, ...(draft.kind === 'rename' ? { revision: draft.record.revision } : {}) }) }),
+    });
+    saved = true;
+    if (draft.session !== session) return;
+    if (draft.kind === 'delete') suites = suites.filter(s => s.id !== draft.record.id);
+    else suites = [record, ...suites.filter(s => s.id !== record.id)];
+    renderSuites(); $('evaluation-suite').value = draft.kind === 'delete' ? '' : record.id;
+    closeSuiteEditor(false); await loadLibrary();
+    toast(draft.kind === 'delete' ? 'Suite deleted.' : 'Suite saved.');
+  } catch (e) {
+    if (draft.session === session) {
+      if (saved) $('form-error').textContent = 'Suite saved, but the library could not refresh. Reload the page.';
+      else $('suite-error').textContent = e.message + (e.status === 409 && draft.kind === 'rename' ? ' Cancel and retry to load the latest suite.' : '');
+      if (!saved && e.status === 409) { try { await loadLibrary(); } catch {} }
+    }
+  } finally {
+    if (draft.session === session) {
+      savingSuite = false; setSavingEvaluation(false);
+      if (saved) $('suite-actions').focus();
+    }
   }
 }
 async function duplicateEvaluation(id) {
@@ -288,7 +330,7 @@ function askDeleteLibrary(kind, record) {
   libraryDeleteTarget = { kind, record, session };
   $('delete-library-title').textContent = kind === 'suite' ? 'Delete suite?' : 'Delete evaluation?';
   $('delete-library-name').textContent = record.name;
-  $('delete-library-description').textContent = kind === 'suite' ? 'Only this folder is removed. Its evaluations move to Unfiled; all runs remain saved.' : 'This definition will be permanently removed. Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
+  $('delete-library-description').textContent = kind === 'suite' ? 'Only this empty suite is removed; all runs remain saved.' : 'This definition will be permanently removed. Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
   $('delete-library-error').textContent = ''; $('confirm-delete-library').textContent = kind === 'suite' ? 'Delete suite' : 'Delete evaluation';
   $('delete-library-dialog').showModal(); lockBody(); $('cancel-delete-library').focus();
 }
@@ -301,7 +343,7 @@ async function deleteLibrary(event) {
     await api('/api/' + (target.kind === 'suite' ? 'suites' : 'evaluations') + '/' + target.record.id, { method: 'DELETE' });
     deleted = true; $('delete-library-dialog').close();
     if (target.kind === 'evaluation' && editing?.id === target.record.id) $('evaluation-dialog').close();
-    await loadLibrary(); toast(target.kind === 'suite' ? 'Suite deleted. Its evaluations are now unfiled.' : 'Evaluation deleted. Previous runs are unchanged.');
+    await loadLibrary(); toast(target.kind === 'suite' ? 'Suite deleted.' : 'Evaluation deleted. Previous runs are unchanged.');
   } catch (e) { if (target.session === session) { if (deleted) error('Deleted. Reload to refresh the library.'); else $('delete-library-error').textContent = e.message; } }
   finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; } }
 }
@@ -324,7 +366,7 @@ function selectedNeedsGrader() {
 }
 function visibleRunEvaluations() {
   const query = $('create-eval-search').value.trim().toLowerCase(), type = $('create-eval-type').value, method = $('create-eval-method').value;
-  return evaluations.filter(e => (!query || e.name.toLowerCase().includes(query)) && (!type || e.type === type) && (!method || e.method === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return evaluations.filter(e => (!query || e.name.toLowerCase().includes(query)) && (!type || endpoint(e) === type) && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 function updateRunSubmit() {
   const needsGrader = selectedNeedsGrader();
@@ -337,7 +379,7 @@ function updateRunSubmit() {
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
-  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td>' + escape(e.name) + '</td><td>' + escape(names[e.type]) + '</td><td>' + escape(names[e.method]) + '</td></tr>').join('');
+  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td>' + escape(e.name) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
   $('create-select-all').checked = !!visible.length && visible.every(e => runSelection.has(e.id));
   $('create-select-all').indeterminate = visible.some(e => runSelection.has(e.id)) && !$('create-select-all').checked;
   $('create-select-all').disabled = creatingRun || !visible.length;
@@ -386,7 +428,7 @@ async function openCreateRun() {
   runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
   $('create-environment').innerHTML = config.environments.map(e => '<option value="' + e.id + '"' + (e.enabled ? '' : ' disabled') + '>' + escape(e.label) + '</option>').join('');
   $('create-environment').value = 'prod';
-  $('create-eval-method').innerHTML = '<option value="">All methods</option>' + Object.entries(config.evaluationMethods).map(([id, method]) => '<option value="' + escape(id) + '">' + escape(method.label) + '</option>').join('');
+  $('create-eval-method').innerHTML = '<option value="">All methods</option>' + Object.entries({ rule_based: 'Rule-based', model_based: 'Model-graded', hybrid: 'Hybrid' }).map(([id, label]) => '<option value="' + id + '">' + label + '</option>').join('');
   setCreatingRun(false); $('create-run-dialog').showModal(); lockBody(); renderRunEvaluations(); $('create-environment').focus();
   void loadRunModels(true);
   try { await loadLibrary(); if (draft === runDraftRevision) renderRunEvaluations(); }
@@ -605,21 +647,30 @@ $('delete-run-dialog').addEventListener('close', () => {
   [...container.querySelectorAll('[data-delete-run]')].find(button => button.dataset.deleteRun === target.id)?.focus();
 });
 $('back-step').addEventListener('click', () => setStep(1));
-['type','from-ideas'].forEach(id => $(id).addEventListener('change', syncForm));
-$('method').addEventListener('change', () => selectMethod($('method').value));
-$('method-family').addEventListener('change', () => selectMethod(familyChoices[$('method-family').value] || ({ model_based: 'model_grade', rule_based: 'contains', hybrid: 'hybrid' }[$('method-family').value])));
-$('criterion-method').addEventListener('change', syncForm);
-$('use-weights').addEventListener('change', renderCriteria);
+$('suite-actions').addEventListener('click', () => {
+  const open = $('suite-menu').hidden; $('suite-menu').hidden = !open;
+  $('suite-actions').setAttribute('aria-expanded', String(open)); syncSuiteActions();
+});
+$('evaluation-suite').addEventListener('change', syncSuiteActions);
+for (const kind of ['create', 'rename', 'delete']) $(kind + '-suite').addEventListener('click', () => openSuiteEditor(kind));
+$('save-suite').addEventListener('click', saveSuite);
+$('cancel-suite').addEventListener('click', () => closeSuiteEditor());
+$('suite-control').addEventListener('keydown', event => {
+  if (event.key === 'Escape' && (suiteDraft || !$('suite-menu').hidden)) {
+    event.preventDefault(); event.stopPropagation();
+    if (!savingSuite) closeSuiteEditor();
+  }
+  if (event.key === 'Enter' && event.target === $('suite-name')) { event.preventDefault(); void saveSuite(); }
+});
+document.addEventListener('click', event => { if (!$('suite-control').contains(event.target)) closeSuiteMenu(); });
+$('evaluation-dialog').addEventListener('cancel', event => { if (savingSuite) event.preventDefault(); });
+['type','method','criterion-rule'].forEach(id => $(id).addEventListener('change', syncForm));
 $('add-criterion').addEventListener('click', addCriterion);
 $('criterion-draft').addEventListener('keydown', event => {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && $('method').value !== 'exact_match' && !($('method').value === 'hybrid' && $('criterion-method').value === 'exact_match')) { event.preventDefault(); addCriterion(); }
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && draftMethod() !== 'exact_match') { event.preventDefault(); addCriterion(); }
 });
 $('criteria-list').addEventListener('input', event => {
   if (event.target.dataset.criterion !== undefined) criteria[Number(event.target.dataset.criterion)].text = event.target.value;
-  if (event.target.dataset.criterionWeight !== undefined) criteria[Number(event.target.dataset.criterionWeight)].weight = event.target.value === '' ? '' : Number(event.target.value);
-});
-$('criteria-list').addEventListener('change', event => {
-  if (event.target.dataset.criterionMethod !== undefined) { criteria[Number(event.target.dataset.criterionMethod)].method = event.target.value; syncForm(); }
 });
 $('criteria-list').addEventListener('click', event => {
   const button = event.target.closest('[data-remove-criterion]');

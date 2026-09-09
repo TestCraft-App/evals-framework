@@ -24,7 +24,7 @@ test('Load example and manual creation submit the same input-only contract and g
   await expect(page.locator('#source, #model, #judge-model')).toHaveCount(0);
   await expect(page.locator('#actual-output, #actual-field, #source option[value="pasted"]')).toHaveCount(0);
   const inputs = {};
-  for (const id of ['name', 'input', 'html', 'page-url']) inputs[id] = await page.locator('#' + id).inputValue();
+  for (const id of ['name', 'html']) inputs[id] = await page.locator('#' + id).inputValue();
   await page.getByRole('button', { name: 'Next', exact: false }).click();
   const loaded = await save(page);
   expect(loaded.payload).not.toHaveProperty('actualOutput');
@@ -35,7 +35,7 @@ test('Load example and manual creation submit the same input-only contract and g
   await page.getByRole('button', { name: 'New evaluation', exact: false }).click();
   for (const [id, value] of Object.entries(inputs)) await page.locator('#' + id).fill(id === 'name' ? value + ' manual' : value);
   await page.getByRole('button', { name: 'Next', exact: false }).click();
-  await page.locator('#method-family').selectOption('rule_based');
+  await page.locator('#method').selectOption('rule_based');
   for (const criterion of loaded.payload.criteria) {
     await page.getByLabel('New criterion', { exact: true }).fill(criterion.text);
     await page.getByRole('button', { name: 'Add criteria', exact: false }).click();
@@ -78,7 +78,7 @@ test('workshop templates have no supplied output and use the same editor and gen
   await expect(page.locator('.saved-output')).toContainText('Generated ideas:');
 });
 
-test('editing an older pasted case warns before switching to generation and preserves its saved snapshot', async ({ page, generationCalls, browserApp }) => {
+test('editing an older pasted case switches to generation on save and preserves its saved snapshot', async ({ page, generationCalls, browserApp }) => {
   const headers = await auth(page);
   const legacy = { name: 'Older pasted example', type: 'ideas', source: 'pasted', method: 'contains', html: '<button>Login</button>', actualOutput: 'OLD SUPPLIED RESPONSE', criteria: ['OLD'], judgeModel: '' };
   const saved = await (await page.request.post('/api/evaluations', { headers, data: legacy })).json();
@@ -89,7 +89,7 @@ test('editing an older pasted case warns before switching to generation and pres
   await page.getByRole('button', { name: legacy.name, exact: true }).click();
   await expect(page.locator('#actual-output, #actual-field')).toHaveCount(0);
   await expect(page.locator('#evaluation-dialog')).not.toContainText(legacy.actualOutput);
-  await expect(page.locator('#source-hint')).toContainText('New runs generate fresh output');
+  await expect(page.locator('#source-hint, #input')).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect((await (await page.request.get('/api/evaluations/' + saved.id)).json()).source).toBe('pasted');
   await page.getByRole('button', { name: legacy.name, exact: true }).click();
