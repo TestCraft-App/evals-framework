@@ -280,7 +280,7 @@ test('Does not contain saves a rule-based case and runs without a model grader',
   await page.getByRole('checkbox', { name: 'Select No placeholder code', exact: true }).check();
   await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('1.00');
-  await expect(page.locator('.detail-eval-row')).toContainText('Does not contain');
+  await expect(page.locator('.detail-eval-row')).toContainText('rule-based');
   await page.locator('.detail-expand').click();
   await expect(page.getByText('Does not contain: “TODO” — Met', { exact: true })).toBeVisible();
 });

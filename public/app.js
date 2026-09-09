@@ -57,8 +57,6 @@ function renderSession() {
   const b = session.budget;
   $('model-allowance').textContent = `${b.remaining} / ${b.limit} calls left${b.reserved ? ` · ${b.reserved} reserved` : ''}`;
   $('model-allowance').title = 'Shared model-call allowance for the workshop, not a dollar limit.';
-  $('workspace-id').textContent = session.workspaceId;
-  $('session-expiry').textContent = new Date(session.expiresAt).toLocaleString();
 }
 function scheduleSessionCheck() {
   clearTimeout(sessionTimer);

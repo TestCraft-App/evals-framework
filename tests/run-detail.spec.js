@@ -38,7 +38,8 @@ test('detail table has concise metadata, normalized score boundaries and combine
   await page.locator('#detail-filter-score').selectOption('');
   await page.locator('#detail-filter-suite').selectOption('Saved suite');
   await page.locator('#detail-filter-model').selectOption('GPT 4o');
-  await page.locator('#detail-filter-method').selectOption('LLM as a judge');
+  await expect(page.locator('#detail-filter-method option')).toHaveText(['All methods', 'hybrid', 'model-graded', 'rule-based']);
+  await page.locator('#detail-filter-method').selectOption('model-graded');
   expect(await ids(page)).toEqual(['b']); await expect(page.locator('.detail-count')).toHaveText('1 of 6 evaluations');
   await page.locator('#detail-filter-score').selectOption('high');
   await expect(page.locator('.detail-empty')).toHaveText('No evaluations match these filters.');
@@ -46,8 +47,8 @@ test('detail table has concise metadata, normalized score boundaries and combine
 
 test('all columns sort both ways with stable ties and missing numeric values last', async ({ page, browserApp }) => {
   await seed(page, browserApp);
-  const ascending = { name: ['a', 'b', 'd', 'e', 'c', 'f'], suite: ['a', 'b', 'd', 'c', 'e', 'f'], model: ['b', 'a', 'c', 'd', 'e', 'f'], method: ['a', 'd', 'f', 'e', 'c', 'b'], status: ['f', 'b', 'a', 'c', 'd', 'e'], score: ['e', 'b', 'a', 'c', 'd', 'f'], met: ['e', 'a', 'c', 'b', 'd', 'f'] };
-  const descending = { name: ['f', 'c', 'e', 'd', 'b', 'a'], suite: ['e', 'f', 'c', 'b', 'd', 'a'], model: ['a', 'c', 'd', 'e', 'b', 'f'], method: ['b', 'c', 'e', 'a', 'd', 'f'], status: ['b', 'a', 'c', 'd', 'e', 'f'], score: ['d', 'c', 'a', 'b', 'e', 'f'], met: ['b', 'd', 'a', 'c', 'e', 'f'] };
+  const ascending = { name: ['a', 'b', 'd', 'e', 'c', 'f'], suite: ['a', 'b', 'd', 'c', 'e', 'f'], model: ['b', 'a', 'c', 'd', 'e', 'f'], method: ['c', 'b', 'a', 'd', 'e', 'f'], status: ['f', 'b', 'a', 'c', 'd', 'e'], score: ['e', 'b', 'a', 'c', 'd', 'f'], met: ['e', 'a', 'c', 'b', 'd', 'f'] };
+  const descending = { name: ['f', 'c', 'e', 'd', 'b', 'a'], suite: ['e', 'f', 'c', 'b', 'd', 'a'], model: ['a', 'c', 'd', 'e', 'b', 'f'], method: ['a', 'd', 'e', 'f', 'b', 'c'], status: ['b', 'a', 'c', 'd', 'e', 'f'], score: ['d', 'c', 'a', 'b', 'e', 'f'], met: ['b', 'd', 'a', 'c', 'e', 'f'] };
   for (const key of Object.keys(ascending)) {
     await page.locator('#detail-sort-' + key).click(); expect(await ids(page), key + ' ascending').toEqual(ascending[key]);
     await expect(page.locator('#detail-sort-' + key).locator('..')).toHaveAttribute('aria-sort', 'ascending');
@@ -119,7 +120,20 @@ test('errors retain saved output and historical empty runs have explicit empty s
 });
 
 for (const width of [1280, 390]) test('detail layout stays usable at ' + width + 'px', async ({ page, browserApp }, testInfo) => {
-  await page.setViewportSize({ width, height: 850 }); await seed(page, browserApp); await page.locator('#expand-b').click(); await page.locator('#expand-a').click();
+  await page.setViewportSize({ width, height: 850 });
+  const { run, scope } = await seed(page, browserApp);
+  const longName = 'Login form · negative test coverage ' + '(copy) '.repeat(14);
+  run.items[0].evaluation.name = longName; browserApp.store.saveRun(run, scope); await page.reload();
+  await page.locator('#expand-b').click(); await page.locator('#expand-a').click();
+  await expect(page.locator('#expand-b')).toHaveAttribute('title', longName);
+  await expect(page.locator('#expand-b')).toHaveAccessibleName(longName.trim());
+  const layout = await page.locator('[data-detail-item="b"]').evaluate(row => {
+    const label = row.querySelector('.detail-name'), cells = [...row.cells].map(cell => cell.getBoundingClientRect());
+    return { truncated: label.scrollWidth > label.clientWidth, ellipsis: getComputedStyle(label).textOverflow, nameRight: label.getBoundingClientRect().right, suiteLeft: cells[1].left, widths: cells.map(cell => cell.width) };
+  });
+  expect(layout.truncated).toBe(true); expect(layout.ellipsis).toBe('ellipsis'); expect(layout.nameRight).toBeLessThan(layout.suiteLeft);
+  expect(layout.widths[0]).toBeGreaterThan(layout.widths[1]);
+  expect(Math.abs(layout.widths[2] - layout.widths[3])).toBeLessThan(1); expect(Math.abs(layout.widths[3] - layout.widths[4])).toBeLessThan(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
   const reason = page.locator('#criteria-b .criterion-reason').first();
   expect(await reason.evaluate(el => getComputedStyle(el).whiteSpace)).toBe(width > 760 ? 'nowrap' : 'normal');
