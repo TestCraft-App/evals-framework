@@ -24,10 +24,10 @@ test('Save updates a definition and preserves the earlier run snapshot', async (
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Editable login', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
   const runUrl = page.url();
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
-  await page.getByRole('button', { name: 'Editable login', exact: true }).click();
+  await page.locator('#evaluation-rows').getByRole('button', { name: 'Editable login', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Edit evaluation' })).toBeVisible();
   await page.getByLabel('Eval name', { exact: true }).fill('Updated login');
   await page.getByRole('button', { name: 'Next' }).click();
@@ -40,9 +40,10 @@ test('Save updates a definition and preserves the earlier run snapshot', async (
   const updated = (await (await page.request.get('/api/evaluations/' + original.id)).json());
   expect(updated.revision).toBe(2); expect(updated.createdAt).toBe(original.createdAt);
   await page.goto(runUrl);
-  await expect(page.locator('.result-title')).toContainText('Editable login');
-  await expect(page.locator('.result-score')).toContainText('100');
-  await expect(page.locator('.check .badge.passed')).toHaveCount(3);
+  await expect(page.locator('.detail-eval-row')).toContainText('Editable login');
+  await expect(page.locator('.result-score')).toContainText('1.00');
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-verdict[aria-label="Pass"]')).toHaveCount(3);
 });
 
 test('Duplicate and Save as new create independent cases', async ({ page }) => {
@@ -104,7 +105,7 @@ test('evaluation deletion requires confirmation and keeps run history', async ({
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Delete definition', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
   const runUrl = page.url();
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await page.getByRole('button', { name: 'Delete Delete definition', exact: true }).click();
@@ -117,8 +118,8 @@ test('evaluation deletion requires confirmation and keeps run history', async ({
   await expect(dialog).not.toBeVisible();
   await expect(page.locator('#eval-count')).toHaveText('0');
   await page.goto(runUrl);
-  await expect(page.locator('.result-title')).toContainText('Delete definition');
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.detail-eval-row')).toContainText('Delete definition');
+  await expect(page.locator('.result-score')).toContainText('1.00');
 });
 
 test('hybrid rules with custom weights calculate Pass/Fail without a grader call', async ({ page }) => {
@@ -139,10 +140,12 @@ test('hybrid rules with custom weights calculate Pass/Fail without a grader call
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Weighted hybrid', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('50');
-  await expect(page.locator('.check .badge.passed')).toHaveCount(3);
-  await expect(page.locator('.check .badge.failed')).toHaveCount(1);
-  await expect(page.locator('.score-explanation')).toContainText('Passed weight 3 / 6');
+  await expect(page.locator('.result-score')).toContainText('0.50');
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-verdict[aria-label="Pass"]')).toHaveCount(3);
+  await expect(page.locator('.criterion-verdict[aria-label="Fail"]')).toHaveCount(1);
+  await expect(page.locator('.criteria-met')).toHaveText('3/4');
+  await expect(page.locator('#run-detail')).not.toContainText('weight');
   const session = await (await page.request.get('/api/session')).json();
   expect(session.budget.used).toBe(1); // Generation, with no judge call.
 });

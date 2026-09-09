@@ -231,7 +231,7 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     }
     release(); const finished = await waitForRun(person, started.id);
     assert.equal(calls, 3);
-    assert.deepEqual(finished.items.map(item => item.evaluation), saved.map(e => ({ ...e, model: 'gpt-4o-mini' })));
+    assert.deepEqual(finished.items.map(item => item.evaluation), saved.map(e => ({ ...e, model: 'gpt-4o-mini', suiteName: group.name })));
     assert.ok((await person.get('/api/evaluations')).evaluations.every(e => e.latest === null));
     const finishedBudget = (await person.get('/api/session')).budget;
     for (const evaluation of saved) assert.deepEqual(await result(person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' }), 200), { deletedId: evaluation.id });

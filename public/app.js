@@ -1,9 +1,10 @@
+import { createRunDetail, scoreText, scoreMarkup, scoreClass } from './run-detail.js';
 const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Generate code', model_grade: 'LLM as a judge', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Does not contain', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
 const languages = { playwright: ['typescript','javascript','python','java','csharp'], cypress: ['typescript','javascript'], selenium: ['javascript','python','java','csharp'] };
 const activeStatuses = ['queued','running','generating','grading'];
-let config, evaluations = [], runs = [], currentRun, currentItemId, polling, lastRunJson, pollFailures = 0, toastTimer;
+let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], suiteEditing = null, savingSuite = false, libraryDeleteTarget = null, deletingLibrary = false;
 let session = null, sessionTimer, sessionSetup;
@@ -18,7 +19,7 @@ const criterionObjects = evaluation => {
   return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
 };
 const formNeedsGrader = () => $('method').value === 'model_grade' || ($('method').value === 'hybrid' && criteria.some(c => c.method === 'model_grade'));
-const scoreText = value => Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '—';
+const runDetail = createRunDetail({ root: $('run-detail'), getSuites: () => suites, getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, canDelete: canDeleteRun });
 function lockBody() { document.body.classList.toggle('modal-open', !!document.querySelector('dialog[open]')); }
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const badge = status => '<span class="badge ' + escape(status) + '">' + escape(names[status] || status) + '</span>';
@@ -37,8 +38,9 @@ async function api(path, options) {
   return body;
 }
 function showConnecting() {
+  runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
-  evaluations = []; runs = []; suites = []; editing = null; currentRun = null; currentItemId = null; criteria = [];
+  evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
   methodDrafts.clear(); currentMethod = null; familyChoices = {};
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   closeRunDraft(); $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
@@ -98,13 +100,14 @@ function renderLibrary() {
   $('stat-passed').textContent = evaluations.filter(e => e.latest?.status === 'passed').length;
   $('stat-failed').textContent = evaluations.filter(e => ['failed','error'].includes(e.latest?.status)).length;
   const scored = evaluations.filter(e => Number.isFinite(e.latest?.score));
-  $('stat-score').textContent = scored.length ? Math.round(scored.reduce((sum,e) => sum + e.latest.score, 0) / scored.length) + '%' : '—';
+  const average = scored.length ? scored.reduce((sum,e) => sum + e.latest.score, 0) / scored.length : null;
+  $('stat-score').textContent = scoreText(average); $('stat-score').className = scoreClass(average);
   const visible = visibleEvaluations();
   $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
     + '<td><button class="eval-name" data-inspect="' + e.id + '" title="Edit evaluation">' + escape(e.name) + '</button><div class="eval-id">' + escape(suites.find(s => s.id === e.suiteId)?.name || 'Unfiled') + ' · v' + (e.revision || 1) + '</div></td>'
     + '<td>' + badge(e.type) + '</td><td>' + (e.type === 'ideas' ? '<span class="muted">Not applicable</span>' : escape(names[e.framework]) + '<span class="row-meta">' + escape(names[e.language]) + '</span>') + '</td>'
     + '<td>' + escape(names[e.method]) + '<span class="row-meta">' + escape(familyLabel(e.method)) + '</span></td><td>' + escape(names[e.source]) + '</td><td>' + badge(e.latest?.status || 'not_run') + '</td>'
-    + '<td class="score">' + (Number.isFinite(e.latest?.score) ? scoreText(e.latest.score) + '%' : '—') + '</td><td>' + escape(date(e.createdAt)) + '</td>'
+    + '<td class="score">' + scoreMarkup(e.latest?.score) + '</td><td>' + escape(date(e.createdAt)) + '</td>'
     + '<td><div class="row-actions">' + (e.latest ? '<button class="text-button" data-run-link="' + e.latest.runId + '">View run ↗</button>' : '') + '<button class="text-button" data-inspect="' + e.id + '" aria-label="Edit ' + escape(e.name) + '">Edit</button><button class="text-button" data-duplicate-evaluation="' + e.id + '" aria-label="Duplicate ' + escape(e.name) + '">Duplicate</button><button class="text-button danger" data-delete-evaluation="' + e.id + '" aria-label="Delete ' + escape(e.name) + '">Delete</button></div></td></tr>').join('');
   $('empty-library').hidden = visible.length > 0;
   $('empty-library').querySelector('h3').textContent = evaluations.length ? 'No evaluations match these filters.' : 'Your first evaluation starts here.';
@@ -187,7 +190,7 @@ function renderCriteria() {
     + (hybrid ? '<label class="criterion-kind"><span class="sr-only">Method for criterion ' + (index + 1) + '</span><select data-criterion-method="' + index + '">' + ['model_grade', 'contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (value.method === method ? ' selected' : '') + '>' + escape(names[method]) + '</option>').join('') + '</select></label>' : '')
     + (weighted ? '<label class="criterion-weight"><span class="sr-only">Weight for criterion ' + (index + 1) + '</span><input type="number" aria-label="Weight for criterion ' + (index + 1) + '" data-criterion-weight="' + index + '" min="0.01" max="100" step="0.01" required value="' + escape(value.weight) + '"></label>' : '')
     + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></li>').join('');
-  $('score-formula').textContent = weighted ? 'Score = passed weight / total weight × 100. A larger weight gives that criterion more influence.' : 'Score = passed criteria / total criteria × 100. Every criterion returns Pass or Fail.';
+  $('score-formula').textContent = weighted ? 'Score = passed weight / total weight. A larger weight gives that criterion more influence.' : 'Score = passed criteria / total criteria. Every criterion returns Pass or Fail.';
   updateCriteriaState(); resizeTextareas();
 }
 function addCriterion() {
@@ -429,7 +432,7 @@ async function submitRun(event) {
   try {
     const run = await api('/api/runs', { method: 'POST', body: JSON.stringify(body) });
     if (workspace !== session || draft !== runDraftRevision) return;
-    setCreatingRun(false); $('create-run-dialog').close(); currentItemId = null; location.hash = 'runs/' + run.id;
+    setCreatingRun(false); $('create-run-dialog').close(); location.hash = 'runs/' + run.id;
     toast('Run created. Generation and grading continue in the backend.');
     await refreshSession().catch(() => {});
   } catch (e) {
@@ -464,7 +467,7 @@ function renderRunList() {
     + '<td><time datetime="' + escape(run.createdAt) + '">' + escape(new Date(run.createdAt).toLocaleString()) + '</time></td>'
     + '<td>' + (run.models.length ? run.models.map(escape).join('<br>') : '—') + '</td><td>' + run.total + '</td>'
     + '<td><span class="badge ' + escape(run.status) + '">' + escape(runStatus(run)) + '</span>' + (run.errors ? '<span class="row-meta">' + run.errors + ' error' + (run.errors === 1 ? '' : 's') + '</span>' : '') + '</td>'
-    + '<td class="score">' + (Number.isFinite(run.score) ? scoreText(run.score) + ' / 100' : '—') + (run.scoredCount < run.total ? '<span class="row-meta">' + run.scoredCount + ' of ' + run.total + ' scored</span>' : '') + '</td>'
+    + '<td class="score">' + scoreMarkup(run.score) + (run.scoredCount < run.total ? '<span class="row-meta">' + run.scoredCount + ' of ' + run.total + ' scored</span>' : '') + '</td>'
     + '<td><button class="text-button danger run-delete" data-delete-run="' + escape(run.id) + '" aria-label="Delete ' + escape(runName(run)) + '"' + (run.canDelete ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></td></tr>').join('');
   const changed = rows !== lastRunRows;
   if (changed) { $('run-list').innerHTML = rows; lastRunRows = rows; }
@@ -479,25 +482,7 @@ function renderRunList() {
   $('filtered-runs-count').textContent = visible.length + ' of ' + runs.length + ' runs';
 }
 function renderRunDetail() {
-  const run = currentRun;
-  if (!run) {
-    $('run-detail').innerHTML = '<div class="empty-state"><div class="empty-icon" aria-hidden="true">▷</div><h3>No run selected</h3><p>Select a run from the history, or run your saved evaluations again.</p></div>';
-    return;
-  }
-  if (!run.items.some(item => item.id === currentItemId)) currentItemId = run.items[0]?.id;
-  const item = run.items.find(item => item.id === currentItemId), e = item?.evaluation;
-  if (!item) return;
-  const active = activeStatuses.includes(item.status);
-  $('run-detail').innerHTML = '<div class="run-top"><div><h3>' + escape(runName(run)) + ' ' + badge(run.status) + '</h3><p>' + escape(date(run.createdAt)) + ' · ' + run.items.length + ' saved evaluation snapshots</p>' + (run.description ? '<p>' + escape(run.description) + '</p>' : '') + (run.settings ? '<p>' + escape({ prod: 'Prod', dev: 'Dev', local: 'Local' }[run.settings.environment]) + ' · Generation: ' + escape(run.settings.generationModel) + (run.settings.graderModel ? ' · Grader: ' + escape(run.settings.graderModel) : '') + '</p>' : '') + '</div><div class="run-actions"><a href="#runs/' + run.id + '" target="_blank" rel="noopener">Open in new tab ↗</a><button class="button small danger" data-delete-run="' + run.id + '"' + (canDeleteRun(run) ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '>Delete run</button></div></div>'
-    + '<div class="run-items">' + run.items.map(x => '<button class="run-item ' + (x.id === item.id ? 'active' : '') + '" data-item="' + x.id + '">' + escape(x.evaluation.name) + ' · ' + escape(names[x.status] || x.status) + '</button>').join('') + '</div>'
-    + '<div class="result-body"><div class="result-title"><div><h3>' + escape(e.name) + '</h3><p>' + escape(names[e.type]) + ' · ' + escape(familyLabel(e.method)) + ' / ' + escape(names[e.method]) + ' · v' + (e.revision || 1) + '</p></div><div class="result-score">' + (Number.isFinite(item.score) ? scoreText(item.score) + '<small> / 100</small>' : '—') + '</div></div>'
-    + (active ? '<p class="muted"><span class="spinner" aria-hidden="true"></span>' + escape(names[item.status]) + '… Results update automatically.</p>' : '<p>' + badge(item.status) + ' <span class="muted">' + (item.durationMs ?? 0) + ' ms</span></p>')
-    + (item.error ? '<div class="error-banner" role="alert">' + escape(item.error) + '</div>' : '')
-    + '<div class="comparison"><section class="output-card"><h4>EVALUATION CRITERIA</h4><pre>' + escape(criterionObjects(e).map((c, index) => (index + 1) + '. ' + c.text + '\n   ' + (names[c.method] || c.method) + ' · weight ' + c.weight).join('\n\n')) + '</pre></section><section class="output-card"><h4>ACTUAL OUTPUT</h4><pre>' + escape(item.output ?? 'Waiting for output…') + '</pre></section></div>'
-    + '<p class="muted">Source: ' + escape(item.outputSource || names[e.source]) + (item.generationModel ? ' · Generation model: ' + escape(item.generationModel) : '') + (item.judgeModel ? ' · Model grader: ' + escape(item.judgeModel) : '') + '</p>'
-    + '<div class="checks"><h4>Criteria and evidence</h4>' + (item.checks.length ? (item.checks.every(c => typeof c.passed === 'boolean') ? '<p class="score-explanation">' + item.checks.filter(c => c.passed).length + ' / ' + item.checks.length + ' passed · Passed weight ' + scoreText(item.checks.reduce((sum, c) => sum + (c.passed ? c.weight : 0), 0)) + ' / ' + scoreText(item.checks.reduce((sum, c) => sum + c.weight, 0)) + ' × 100</p>' : '<p class="score-explanation">Historical numeric grading. Rerun this evaluation to use Pass/Fail criteria.</p>') + item.checks.map(check => '<article class="check"><div class="check-title"><b>' + escape(check.criterion) + '</b>' + (typeof check.passed === 'boolean' ? '<span class="badge ' + (check.passed ? 'passed' : 'failed') + '">' + (check.passed ? 'Pass' : 'Fail') + '</span>' : '<span>' + scoreText(check.score) + '/100</span>') + '</div><p class="check-meta">' + escape(names[check.method || e.method] || check.method || e.method) + (check.weight ? ' · Weight ' + escape(check.weight) : '') + '</p><p>' + escape(check.reason) + '</p><blockquote>' + escape(check.evidence) + '</blockquote></article>').join('') : '<p class="muted">' + (item.error ? 'Grading did not complete. No score has been fabricated.' : 'Checks will appear when grading finishes.') + '</p>') + '</div>'
-    + '<div class="event-log"><h4>Run activity</h4>' + item.events.map(event => '<p><time>' + escape(new Date(event.at).toLocaleTimeString()) + '</time>' + escape(event.message) + '</p>').join('') + '</div>'
-    + '<details><summary>Inspect saved input, HTML, and criteria</summary><pre class="context-pre">' + escape(JSON.stringify({ description: e.input, html: e.html, framework: e.framework, language: e.language, pageUrl: e.pageUrl, criteria: e.criteria, pom: e.pom, fromIdeas: e.fromIdeas, ideas: e.ideas }, null, 2)) + '</pre></details></div>';
+  runDetail.render(currentRun);
 }
 function askDeleteRun(id) {
   const run = currentRun?.id === id ? currentRun : runs.find(run => run.id === id);
@@ -533,7 +518,8 @@ async function deleteRun(event) {
     history.replaceState(null, '', '#runs'); runViewRevision++; clearTimeout(polling);
     $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
   }
-  if (currentRun?.id === target.id) { currentRun = null; currentItemId = null; lastRunJson = null; renderRunDetail(); }
+  runDetail.forget(target.id);
+  if (currentRun?.id === target.id) { currentRun = null; lastRunJson = null; renderRunDetail(); }
   // Invalidate older reads before refreshing so a stale response cannot restore the row.
   runsRequest++; libraryRequest++;
   runs = runs.filter(run => run.id !== target.id); $('runs-count').textContent = runs.length; renderRunList();
@@ -561,7 +547,7 @@ async function pollRun(id, revision = runViewRevision) {
   } catch (e) {
     if (!session || revision !== runViewRevision || location.hash !== '#runs/' + id) return;
     if (e.status === 404) {
-      currentRun = null; currentItemId = null; renderRunDetail();
+      currentRun = null; renderRunDetail();
       history.replaceState(null, '', '#runs'); toast('This run is no longer available.');
       $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
       try { await loadLibrary(); if (revision === runViewRevision) await route(); }
@@ -597,10 +583,10 @@ async function route() {
   if (isRuns) {
     const id = location.hash.split('/')[1];
     $('runs-list-page').hidden = !!id; $('run-detail-page').hidden = !id;
-    if (currentRun?.id !== id || !id) { currentRun = null; currentItemId = null; renderRunDetail(); }
+    if (currentRun?.id !== id || !id) { currentRun = null; renderRunDetail(); }
     await loadRuns();
     if (revision !== runViewRevision) return;
-    if (id) { currentItemId = null; await pollRun(id, revision); }
+    if (id) { await pollRun(id, revision); }
     else if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
   } else await loadLibrary();
 }
@@ -669,7 +655,6 @@ document.addEventListener('click', event => {
   if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));
   if (el.dataset.runLink) location.hash = 'runs/' + el.dataset.runLink;
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
-  if (el.dataset.item) { currentItemId = el.dataset.item; renderRunDetail(); }
 });
 $('evaluations-tab').addEventListener('click', () => { location.hash = 'evaluations'; });
 $('create-run').addEventListener('click', openCreateRun);

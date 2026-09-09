@@ -30,14 +30,19 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await page.getByRole('checkbox', { name: 'Select UI login coverage', exact: true }).check();
   await createSelectedRun(page);
   await expect(page.getByRole('tab', { name: /^Runs/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('.result-score')).toContainText('100');
-  await expect(page.locator('.result-body .badge').first()).toHaveText('Passed');
-  await expect(page.locator('.check')).toHaveCount(3);
-  const popupPromise = page.waitForEvent('popup');
-  await page.getByRole('link', { name: 'Open in new tab' }).click();
-  const popup = await popupPromise;
-  await expect(popup.locator('.result-score')).toContainText('100');
-  await popup.close();
+  await expect(page.locator('.result-score')).toContainText('1.00');
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText('Graded');
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-result')).toHaveCount(3);
+  await expect(page.getByRole('link', { name: 'Open in new tab' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('.result-score')).toContainText('1.00');
+  await page.getByRole('tab', { name: /^Evaluations/ }).click();
+  await expect(page.locator('#stat-score')).toHaveText('1.00');
+  await expect(page.locator('#stat-score')).toHaveClass('score-high');
+  await expect(page.locator('#evaluation-rows .score')).toHaveText('1.00');
+  await page.getByRole('tab', { name: /^Runs/ }).click();
+  await expect(page.locator('#run-list .score')).toHaveText('1.00');
 });
 
 test('finished runs can be deleted with confirmation while evaluations stay runnable', async ({ page }) => {
@@ -48,7 +53,7 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
   const savedRunUrl = page.url();
   const deleteButton = page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true });
   const confirmation = page.getByRole('alertdialog', { name: 'Delete this run?' });
@@ -76,7 +81,7 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
 });
 
 test('failed deletion keeps the run and lets the user retry or cancel', async ({ page }) => {
@@ -86,7 +91,7 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
   await page.route('**/api/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
   await page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true }).click();
   const confirmation = page.getByRole('alertdialog');
@@ -95,7 +100,7 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
   await expect(confirmation.getByRole('button', { name: 'Delete run', exact: true })).toBeEnabled();
   await expect(page.locator('#runs-count')).toHaveText('1');
   await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
   await expect(page.locator('body')).not.toHaveClass('modal-open');
 });
 
@@ -111,11 +116,12 @@ test('batch selection grades each case independently and preserves HTML as inert
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.run-top .badge')).toHaveText('Completed');
-  await expect(page.locator('.run-item')).toHaveCount(2);
-  await page.getByRole('button', { name: /Batch weak · Failed/ }).click();
-  await expect(page.locator('.result-score')).toContainText('50');
-  await expect(page.getByText('Missing: getByRole', { exact: true })).toBeVisible();
+  await expect(page.locator('.run-top .badge')).toHaveText('Complete');
+  await expect(page.locator('.detail-eval-row')).toHaveCount(2);
+  const weak = page.locator('.detail-eval-row').filter({ hasText: 'Batch weak' });
+  await weak.locator('.detail-expand').click();
+  await expect(weak.locator('.result-score')).toHaveText('0.50');
+  await expect(page.getByText('Contains: “getByRole” — Not met', { exact: true })).toBeVisible();
 });
 
 test('LLM as a judge has quality criteria and reports missing configuration honestly', async ({ page }) => {
@@ -136,9 +142,10 @@ test('LLM as a judge has quality criteria and reports missing configuration hone
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Judge configuration', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-body .error-banner')).toContainText('OPENAI_API_KEY');
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-panel .error-banner')).toContainText('OPENAI_API_KEY');
   await expect(page.locator('.result-score')).toHaveText('—');
-  await expect(page.locator('.result-body .badge').first()).toHaveText('Error');
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText('Error');
 });
 
 test('wizard validates each step, preserves edits on Back, and saves typed criteria without a reference', async ({ page }) => {
@@ -272,9 +279,10 @@ test('Does not contain saves a rule-based case and runs without a model grader',
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select No placeholder code', exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
-  await expect(page.locator('.result-title')).toContainText('Rule-based / Does not contain');
-  await expect(page.getByText('Not found: TODO', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-score')).toContainText('1.00');
+  await expect(page.locator('.detail-eval-row')).toContainText('Does not contain');
+  await page.locator('.detail-expand').click();
+  await expect(page.getByText('Does not contain: “TODO” — Met', { exact: true })).toBeVisible();
 });
 
 for (const viewport of [{ width: 1280, height: 650 }, { width: 390, height: 700 }]) {

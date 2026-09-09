@@ -201,7 +201,7 @@ for (const [index, fixture] of workshopSuite.evaluations.entries()) {
     assert.equal(item.outputSource, 'TestCraft v1 · ' + expected.path);
     assert.equal(item.generationModel, 'API default');
     assert.deepEqual(store.evaluation(saved.id, scope), before);
-    assert.deepEqual(item.evaluation, before, 'The run snapshot also preserves the input-only definition');
+    assert.deepEqual(item.evaluation, { ...before, suiteName: 'Unfiled' }, 'The run snapshot preserves the input-only definition and records its suite name');
     assertInputDefinition(item.evaluation);
 
     if (needsModelGrader(saved)) {

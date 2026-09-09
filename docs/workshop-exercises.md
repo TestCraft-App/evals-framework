@@ -17,7 +17,7 @@ The supplied HTML is **synthetic, simplified SauceDemo-inspired input**, not cap
 | 0–5 | Identify controls and fictional states in the HTML; agree what a useful login test should demonstrate. |
 | 5–15 | Load the suite, run 01 and 02, and compare literal checks with human review of the actual generated ideas. |
 | 15–25 | Run 03 and 05. Look for checks satisfied by comments or incidental words, and behaviors that literal checks cannot establish. |
-| 25–40 | Run 04, 06, and 07. Read each model verdict, evidence, and reason; discuss disagreements and optional weights. |
+| 25–40 | Run 04, 06, and 07. Expand each evaluation to read model verdicts and concise reasons; inspect generated output and discuss disagreements. |
 | 40–55 | Capture relevant HTML from SauceDemo using the approved extension workflow. Create a manual case with that HTML, URL, parameters, and criteria. Run twice and compare outputs and evidence. |
 | 55–60 | Share one improved criterion, one misleading score or limitation, and one remaining uncertainty. |
 
@@ -40,11 +40,13 @@ Descriptions are **grader context**, not extra instructions sent to TestCraft. T
 
 ## Interpret results carefully
 
-Every criterion returns Pass or Fail with evidence and a reason. The backend calculates `100 × sum(passed weights) / sum(all weights)`. Weights default to 1; **Custom weights** allows 0.01–100. Overall Pass uses the fixed 80 threshold without rounding the decision. Inspect individual checks even when the overall result passes.
+Every criterion returns Pass or Fail with evidence and a reason. The backend calculates `100 × sum(passed weights) / sum(all weights)`. Weights default to 1; **Custom weights** allows 0.01–100. Dashboard scores divide that stored value by 100 and display two decimals; overall Pass uses the fixed 0.80 displayed threshold without rounding the decision. Red is below 0.50, yellow is 0.50 to below 0.80, and green is 0.80 or above. Inspect individual checks even when the overall result passes.
 
 For a weight exercise, take an observed run with mixed verdicts and calculate how different weights would change its aggregate using those same verdicts. Then save a variant and run it. That new run generates a new response, so any score difference cannot be attributed to weights alone. The app does not currently offer isolated regrading of a frozen output in the UI.
 
-For model Pass verdicts, `L12: …` evidence comes from original output lines selected by the judge and extracted by the backend. Verify that those lines actually support the criterion; valid citations do not guarantee correct judgments. For Fail, the evidence explains missing or contradicted behavior. Invalid provider responses produce **Error**, not fabricated Fail scores.
+In Run Detail, use Suite, Model, Eval method, and score filters, sort any column, and expand multiple evaluations to compare concise criterion results. **Criteria met** counts passing criteria, independently of the weighted score. Rule descriptions currently display a placeholder; their actual rule result appears underneath. Open **Inspect generated output** below the criteria to see the saved response.
+
+For model Pass verdicts, saved API evidence such as `L12: …` comes from original output lines selected by the judge and extracted by the backend. The compact page shows the criterion reason instead of evidence excerpts. Verify that those lines actually support the criterion; valid citations do not guarantee correct judgments. For Fail, the evidence explains missing or contradicted behavior. Invalid provider responses produce **Error**, not fabricated Fail scores.
 
 Repeated runs probe the whole generation-and-grading pipeline: both output and judge decisions can vary. Compare the actual responses before attributing a difference to the grader. Rule-based grading is deterministic for identical output and criteria, but TestCraft generation is not. Two matching results do not prove future determinism.
 

@@ -45,13 +45,13 @@ test('Load example and manual creation submit the same input-only contract and g
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + inputs.name, exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score')).toContainText('1.00');
   expect(generationCalls).toHaveLength(1);
   expect(generationCalls[0].url).toBe('https://api.testcraft.app/api/generate-ideas');
   expect(generationCalls[0].body.sourceCode).toBe(inputs.html);
   expect(generationCalls[0].body).not.toHaveProperty('criteria');
   expect(generationCalls[0].body).not.toHaveProperty('actualOutput');
-  await expect(page.locator('.result-body')).toContainText('TestCraft v1 · /api/generate-ideas');
+  await expect(page.locator('.detail-eval-row')).toContainText('Graded');
 });
 
 test('workshop templates have no supplied output and use the same editor and generation path', async ({ page, generationCalls }) => {
@@ -68,10 +68,12 @@ test('workshop templates have no supplied output and use the same editor and gen
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + example.name, exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-body .badge').first()).toHaveText(/^(Passed|Failed)$/);
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText(/^Graded$/);
   expect(generationCalls).toHaveLength(1);
   expect(generationCalls[0].body.sourceCode).toBe(example.html);
-  await expect(page.locator('.output-card').last()).toContainText('Generated ideas:');
+  await page.locator('.detail-expand').click();
+  await page.getByText('Inspect generated output', { exact: true }).click();
+  await expect(page.locator('.saved-output')).toContainText('Generated ideas:');
 });
 
 test('editing an older pasted case warns before switching to generation and preserves its saved snapshot', async ({ page, generationCalls, browserApp }) => {

@@ -80,7 +80,8 @@ test('run modal selects across filters, requires a conditional grader and create
   await expect(page.locator('#create-generation-model')).toBeEnabled();
   await page.locator('#create-generation-model').selectOption('gpt-4o');
   await createSelectedRun(page);
-  await expect(page.locator('.result-score')).toContainText('100'); await expect(page.locator('.run-top')).toContainText('Dev check <script>inert</script>');
+  await expect(page.locator('.result-score')).toContainText('1.00'); await expect(page.locator('.run-top')).toContainText('Env: Dev');
+  await expect(page.locator('.run-top')).not.toContainText('Dev check <script>inert</script>');
   await expect(page.locator('.run-top script')).toHaveCount(0);
   const run = await (await page.request.get('/api/runs/' + new URL(page.url()).hash.split('/')[1])).json();
   expect(run.items.map(item => item.evaluationId)).toEqual([saved[0].id]); expect(run.settings.environment).toBe('dev'); expect(run.settings.generationModel).toBe('gpt-4o');

@@ -40,19 +40,24 @@ async function runExample(page, caseNumber = '04') {
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + example.name, exact: true }).check();
   await createSelectedRun(page);
-  await expect(page.locator('.result-body .badge').first()).toHaveText(/^(Passed|Failed|Error)$/);
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText(/^(Graded|Error)$/);
 }
 
-test('a justified model Fail displays its evidence and remains distinct from a grading error', async ({ page }) => {
+test('a justified model Fail displays its concise reason and remains distinct from a grading error', async ({ page }) => {
   await runExample(page);
-  await expect(page.locator('.result-body .badge').first()).toHaveText('Failed');
-  await expect(page.locator('.result-score')).toContainText('0 / 100');
-  await expect(page.locator('.check .badge')).toHaveText('Fail');
-  await expect(page.locator('.check blockquote')).toHaveText(evidence);
-  await expect(page.locator('.check')).toContainText(reason);
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText('Graded');
+  await expect(page.locator('.result-score')).toContainText('0.00');
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-verdict')).toHaveAttribute('aria-label', 'Fail');
+  await expect(page.locator('.criterion-reason')).toHaveText(reason);
+  await expect(page.locator('blockquote')).toHaveCount(0);
   await expect(page.locator('#run-detail [role="alert"]')).toHaveCount(0);
   await page.reload();
-  await expect(page.locator('.check blockquote')).toHaveText(evidence);
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-reason')).toHaveText(reason);
+  const runId = new URL(page.url()).hash.split('/')[1];
+  const run = await (await page.request.get('/api/runs/' + runId)).json();
+  expect(run.items[0].checks[0].evidence).toBe(evidence);
   const session = await (await page.request.get('/api/session')).json();
   expect(session.budget.used).toBe(2);
 });
@@ -61,12 +66,14 @@ test.describe('provider violates the nonempty-evidence contract', () => {
   test.use({ graderReply: { id: 'c1', passed: false, evidence: '', reason: 'PRIVATE_REJECTED_PROVIDER_TEXT' } });
   test('shows a persisted field-specific error, no numeric grade, and no automatic extra call', async ({ page }) => {
     await runExample(page);
-    await expect(page.locator('.result-body .badge').first()).toHaveText('Error');
+    await expect(page.locator('.detail-eval-row .badge').first()).toHaveText('Error');
+    await page.locator('.detail-expand').click();
     await expect(page.locator('#run-detail [role="alert"]')).toContainText('empty evidence for criterion c1');
     await expect(page.locator('.result-score')).toHaveText('—');
-    await expect(page.locator('.check')).toHaveCount(0);
+    await expect(page.locator('.criterion-result')).toHaveCount(0);
     await expect(page.locator('#run-detail')).not.toContainText('PRIVATE_REJECTED_PROVIDER_TEXT');
     await page.reload();
+    await page.locator('.detail-expand').click();
     await expect(page.locator('#run-detail [role="alert"]')).toContainText('empty evidence for criterion c1');
     const session = await (await page.request.get('/api/session')).json();
     expect(session.budget.used).toBe(2);
@@ -79,16 +86,20 @@ test.describe('passing source-line citations', () => {
   const outputLines = strong.actualOutput.split('\n');
   const line = outputLines.findIndex(text => text.includes('toHaveURL')) + 1;
   test.use({ generationOutput: strong.actualOutput, graderReply: { id: 'c3', passed: true, evidence: [line], reason: 'Mocked positive verdict for source-extraction UI coverage.' } });
-  test('displays the original source text and persists its line references', async ({ page }) => {
+  test('displays saved output on demand and preserves source-line evidence in the run', async ({ page }) => {
     expect(line).toBeGreaterThan(0);
     await runExample(page, '06');
-    await expect(page.locator('.result-score')).toContainText('100');
-    await expect(page.locator('.check').last().locator('blockquote')).toHaveText(`L${line}: ${outputLines[line - 1]}`);
+    await expect(page.locator('.result-score')).toContainText('1.00');
+    await page.locator('.detail-expand').click();
+    await page.getByText('Inspect generated output', { exact: true }).click();
+    await expect(page.locator('.saved-output')).toHaveText(strong.actualOutput);
     await page.reload();
-    await expect(page.locator('.check').last().locator('blockquote')).toHaveText(`L${line}: ${outputLines[line - 1]}`);
+    await page.locator('.detail-expand').click();
+    await expect(page.locator('.criterion-reason').last()).toHaveText('Mocked positive verdict for source-extraction UI coverage.');
     const runId = new URL(page.url()).hash.split('/')[1];
     const run = await (await page.request.get('/api/runs/' + runId)).json();
     expect(run.items[0].checks[2].evidenceLines).toEqual([line]);
     expect(run.items[0].checks[2].evidenceSource).toBe('output_lines');
+    expect(run.items[0].checks[2].evidence).toBe(`L${line}: ${outputLines[line - 1]}`);
   });
 });

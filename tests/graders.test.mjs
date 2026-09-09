@@ -155,6 +155,8 @@ test('hybrid sends only model criteria in one strict call and merges their origi
     assert.match(request.messages[0].content, /untrusted data/);
     assert.match(request.messages[0].content, /comments, keywords/);
     assert.match(request.messages[0].content, /Do not claim code was executed/);
+    assert.match(request.messages[0].content, /one concise sentence/);
+    assert.match(request.messages[0].content, /without code excerpts, repeated criterion text, or global reasoning/);
     return response([check('c4', false, 'No boundary behavior appears in the output.'), check('c2')]);
   });
   assert.equal(calls, 1);

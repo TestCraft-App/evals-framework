@@ -27,7 +27,7 @@ test('run table metadata, combined filters, name/ID search and all header sorts'
   await expect(page.locator('#run-detail-page')).toBeHidden();
   const alpha = page.locator('[data-run-row="run-alpha"]');
   await expect(alpha).toContainText('Run · 2026-09-06');
-  await expect(alpha).toContainText('100 / 100'); await expect(alpha).toContainText('1 of 2 scored');
+  await expect(alpha).toContainText('1.00'); await expect(alpha).toContainText('1 of 2 scored');
   await expect(alpha).toContainText('Complete'); await expect(alpha).toContainText('1 error');
   await expect(page.locator('[data-run-row="run-beta"]')).not.toContainText('error');
   await expect(page.locator('[data-run-row="run-active"] button')).toBeDisabled();
@@ -39,7 +39,7 @@ test('run table metadata, combined filters, name/ID search and all header sorts'
   await expect(page.locator('#filtered-runs-count')).toHaveText('2 of 4 runs');
   await page.locator('#run-search').fill('RUN-ALPHA'); await expect(page.locator('#run-list tr')).toHaveCount(1);
   await page.locator('#run-search').fill('2026-09-07'); await expect(page.locator('#run-list tr')).toHaveCount(1);
-  await expect(page.locator('#run-list')).toContainText('0 / 100');
+  await expect(page.locator('#run-list')).toContainText('0.00');
   await page.locator('#run-search').fill('absent'); await expect(page.locator('#empty-runs')).toContainText('No runs match');
   await page.locator('#run-search').clear(); await page.locator('#run-model').selectOption(''); await page.locator('#run-status').selectOption('');
   const ids = () => page.locator('#run-list tr').evaluateAll(rows => rows.map(row => row.dataset.runRow));
@@ -60,13 +60,13 @@ test('row and keyboard navigation preserve filters, direct detail links and brow
   await page.locator('#run-search').fill('run-alpha');
   await page.locator('[data-run-row="run-alpha"] td').nth(1).click();
   await expect(page).toHaveURL(/#runs\/run-alpha$/);
-  await expect(page.locator('#runs-list-page')).toBeHidden(); await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('#runs-list-page')).toBeHidden(); await expect(page.locator('.result-score').first()).toContainText('1.00');
   await page.getByRole('link', { name: 'Back to runs' }).click();
   await expect(page.locator('#runs-list-page')).toBeVisible();
   await expect(page.locator('#run-search')).toHaveValue('run-alpha');
   await page.locator('[data-run-row="run-alpha"] a').focus(); await page.keyboard.press('Enter');
   await expect(page.locator('#run-detail-page')).toBeVisible();
-  await page.reload(); await expect(page.locator('.result-score')).toContainText('100');
+  await page.reload(); await expect(page.locator('.result-score').first()).toContainText('1.00');
   await page.getByRole('tab', { name: /^Runs/ }).click(); await expect(page).toHaveURL(/#runs$/);
   await page.goBack(); await expect(page.locator('#run-detail-page')).toBeVisible();
   await page.goForward(); await expect(page.locator('#runs-list-page')).toBeVisible();
@@ -90,7 +90,7 @@ test('visible active runs update automatically and stop polling after completion
   const active = runs.find(run => run.id === 'run-active');
   active.status = 'completed'; active.items[0].status = 'passed'; active.items[0].score = 75;
   browserApp.store.saveRun(active, scope);
-  await expect(page.locator('[data-run-row="run-active"]')).toContainText('75 / 100');
+  await expect(page.locator('[data-run-row="run-active"]')).toContainText('0.75');
   await expect(page.locator('[data-run-row="run-active"] button')).toBeEnabled();
   await page.clock.install();
   let reads = 0; page.on('request', request => { if (request.url().endsWith('/api/runs')) reads++; });
@@ -100,7 +100,7 @@ test('visible active runs update automatically and stop polling after completion
 test('successful detail deletion returns to the table even if the following read fails', async ({ page, browserApp }) => {
   await seed(page, browserApp);
   await page.locator('[data-run-row="run-alpha"] a').click();
-  await expect(page.locator('.result-score')).toContainText('100');
+  await expect(page.locator('.result-score').first()).toContainText('1.00');
   await page.route('**/api/runs', route => route.fulfill({ status: 503, json: { error: 'Temporary read failure' } }));
   await page.locator('#run-detail [data-delete-run]').click(); await page.locator('#confirm-delete-run').click();
   await expect(page.locator('#app-error')).toContainText('The run was removed');

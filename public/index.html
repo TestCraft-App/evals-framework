@@ -141,7 +141,7 @@
             <p id="criteria-empty" class="criteria-empty">What makes a good response? Add your first criterion below.</p>
             <label id="criterion-method-field" class="criterion-method-field" hidden>New criterion method<select id="criterion-method"><option value="model_grade">LLM as a judge</option><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></select></label>
             <div class="criteria-composer"><label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="2" maxlength="8000" placeholder="e.g. Includes negative login scenarios with clear expected behavior."></textarea><button id="add-criterion" type="button" class="button">＋ Add criteria</button></div>
-            <p class="field-hint" id="score-formula">Score = passed criteria / total criteria × 100. Every criterion returns Pass or Fail.</p>
+            <p class="field-hint" id="score-formula">Score = passed criteria / total criteria. Every criterion returns Pass or Fail.</p>
           </div>
         </section>
       </div>

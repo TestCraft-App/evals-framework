@@ -11,6 +11,27 @@ const catalog = () => Response.json({ models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-t
 const post = (person, body) => person.request('/api/runs', { method: 'POST', body: JSON.stringify(body) });
 const save = async (person, data = {}) => (await person.post('/api/evaluations', { ...definition, ...data })).json();
 
+test('run suite names are private snapshots unaffected by later renames or deletion', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', env: {}, fetchImpl: async url => url.endsWith('/api/models') ? catalog() : syntheticStream('login') }));
+  try {
+    const person = await client(app), other = await client(app);
+    const suite = app.store.createSuite({ name: 'Original suite' }, person.scope);
+    const evaluation = await save(person, { suiteId: suite.id });
+    const response = await post(person, { ...settings, evaluationIds: [evaluation.id] });
+    assert.equal(response.status, 202);
+    const run = await waitForRun(person, (await response.json()).id);
+    assert.equal(run.items[0].evaluation.suiteName, 'Original suite');
+    assert.equal(app.store.evaluation(evaluation.id, person.scope).suiteName, undefined);
+    assert.equal((await other.request('/api/runs/' + run.id)).status, 404);
+    assert.equal((await post(other, { ...settings, evaluationIds: [evaluation.id] })).status, 404);
+    app.store.updateSuite(suite.id, { name: 'Renamed suite', revision: suite.revision }, person.scope);
+    app.store.deleteSuite(suite.id, person.scope);
+    assert.deepEqual(await person.get('/api/runs/' + run.id), run);
+    const unfiled = await post(person, { ...settings, evaluationIds: [evaluation.id] });
+    assert.equal((await waitForRun(person, (await unfiled.json()).id)).items[0].evaluation.suiteName, 'Unfiled');
+  } finally { await app.shutdown(); }
+});
+
 test('all three current TestCraft models can generate and grade with validated evidence', async () => {
   const models = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'], graded = [];
   const app = await listen(createApp({ dbPath: ':memory:', env: { OPENAI_API_KEY: 'test-only' }, fetchImpl: async (url, init) => {
