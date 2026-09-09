@@ -72,6 +72,8 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         resolveEnvironment(environment, allowLocal);
         return json(res, 200, { ...await catalogs[environment](), environment });
       }
+      if (req.method === 'GET' && url.pathname === '/api/workspace') return json(res, 200, store.workspaceSummary(scope));
+      if (req.method === 'DELETE' && url.pathname === '/api/workspace') return json(res, 200, store.clearWorkspace(await readBody(req, 2048), scope));
       if (req.method === 'POST' && url.pathname === '/api/workshop-suite') {
         const body = await readBody(req, 2048);
         if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('Workshop import expects an empty JSON object.');

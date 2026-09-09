@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AppError, validateEvaluation } from './validation.mjs';
 import { canDeleteRun } from './runs.mjs';
 
@@ -203,6 +203,28 @@ export class Store {
   saveRun(run, scope) {
     const result = this.db.prepare(`INSERT INTO runs (id,data,owner_id,workshop_id) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE runs.owner_id=excluded.owner_id AND runs.workshop_id=excluded.workshop_id`).run(run.id, JSON.stringify(run), ...requireScope(scope));
     if (!result.changes) throw new Error('Run workspace mismatch.');
+  }
+  workspaceSummary(scope) {
+    const suites = this.suites(scope), evaluations = this.evaluations(scope), runs = this.runs(scope);
+    const records = [suites, evaluations, runs].map(records => [...records].sort((a, b) => a.id.localeCompare(b.id)));
+    return {
+      revision: createHash('sha256').update(JSON.stringify(records)).digest('hex'),
+      suites: suites.map(suite => ({ id: suite.id, name: suite.name, evaluationCount: evaluations.filter(e => e.suiteId === suite.id).length })),
+      evaluationCount: evaluations.length, unfiledCount: evaluations.filter(e => !e.suiteId).length,
+      runCount: runs.length, activeRunCount: runs.filter(run => !canDeleteRun(run)).length,
+    };
+  }
+  clearWorkspace(body, scope) {
+    requireObject(body, ['revision']);
+    if (typeof body.revision !== 'string' || !/^[a-f0-9]{64}$/.test(body.revision)) throw new AppError('A workspace review revision is required.');
+    return this.transaction(() => {
+      const summary = this.workspaceSummary(scope);
+      if (summary.activeRunCount) throw new AppError('Wait for active runs to finish before clearing this workspace.', 409);
+      if (summary.revision !== body.revision) throw new AppError('The workspace changed. Close this dialog and review it again before clearing.', 409);
+      const params = requireScope(scope);
+      for (const table of ['runs', 'evaluations', 'suites']) this.db.prepare(`DELETE FROM ${table} WHERE owner_id = ? AND workshop_id = ?`).run(...params);
+      return { cleared: true };
+    });
   }
   deleteRun(id, scope) {
     return this.transaction(() => {

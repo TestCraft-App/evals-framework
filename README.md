@@ -6,6 +6,10 @@ Target repository: [TestCraft-App/evals-framework](https://github.com/TestCraft-
 
 ## Start locally
 
+The evaluation library's **Actions → Clear workspace** reviews every suite by name, evaluation counts (including unfiled items), and run history before permanently deleting them from the current private workspace. Filters do not limit the reset. Cancel keeps everything; active runs block clearing, and changes since the review require reopening the confirmation. The session remains unchanged. **Load workshop suite** can then restore the templates.
+
+`GET /api/workspace` returns the scoped summary and its revision. `DELETE /api/workspace` accepts `{ "revision": "<reviewed revision>" }` with the usual session, origin, and CSRF requirements. It atomically removes suites, evaluations, and runs; stale reviews and active runs return 409.
+
 Requires **Node.js 22.13 or newer**, including its built-in SQLite support. Production uses Node.js 24 and the official AWS Secrets Manager SDK; no separate database server is needed.
 
 ```powershell

@@ -4,6 +4,8 @@ The collection in `src/evals/workshop.mjs` contains **156 evaluations in six sui
 
 ## Suite inventory
 
+To start over, choose **Actions → Clear workspace** in the evaluation library. Review the named suites, all evaluation counts (including unfiled items), and run history, then confirm. This permanently clears the current private workspace, including items hidden by filters. Active runs must finish first; changes made after review require a fresh confirmation. Cancel preserves everything. Load the workshop suite again to restore the original templates; previous edits and run evidence cannot be recovered.
+
 | Suite | Evaluations | Focus | Attempts if every case is explicitly run |
 | --- | ---: | --- | ---: |
 | 01 Ideas generation | 14 | `/api/generate-ideas`: user-oriented positive, negative and creative ideas, concrete outcomes, grounded coverage | 14 generation + 14 judge |
