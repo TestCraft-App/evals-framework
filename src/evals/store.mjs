@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AppError, validateEvaluation } from './validation.mjs';
 import { canDeleteRun } from './runs.mjs';
 
@@ -166,16 +166,36 @@ export class Store {
   }
   importWorkshop(bundle, scope) {
     return this.transaction(() => {
-      // A new input-only seed must never silently change older pasted cases into
-      // paid generation or overwrite participant edits and run snapshots.
-      const existing = this.suites(scope).find(suite => suite.seedKey === 'workshop-v2-live');
-      if (existing) return { created: false, suite: existing, evaluations: this.evaluations(scope).filter(evaluation => evaluation.suiteId === existing.id) };
-      requireObject(bundle, ['name', 'evaluations']);
-      if (!Array.isArray(bundle.evaluations) || !bundle.evaluations.length) throw new AppError('Workshop import requires evaluations.');
-      const suite = { ...this.createSuite({ name: bundle.name }, scope), seedKey: 'workshop-v2-live' };
-      this.db.prepare('UPDATE suites SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(suite), suite.id, ...requireScope(scope));
-      const evaluations = bundle.evaluations.map(data => this.#insertEvaluation(validateEvaluation({ ...data, suiteId: suite.id }), scope));
-      return { created: true, suite, evaluations };
+      // Stable per-suite seeds preserve previous imports, edits and snapshots.
+      // Validate the whole collection before writing; a later failure rolls back
+      // every new suite. The legacy single-bundle shape remains supported.
+      const bundles = Array.isArray(bundle) ? bundle : [bundle];
+      if (!bundles.length) throw new AppError('Workshop import requires suites.');
+      const keys = new Set();
+      for (const entry of bundles) {
+        requireObject(entry, ['name', 'evaluations', 'seedKey']);
+        requireName(entry.name);
+        const key = entry.seedKey ?? 'workshop-v2-live';
+        if (typeof key !== 'string' || !/^workshop-[a-z0-9-]{1,80}$/.test(key) || keys.has(key)) throw new AppError('Workshop suites require distinct valid seed keys.');
+        keys.add(key);
+        if (!Array.isArray(entry.evaluations) || !entry.evaluations.length) throw new AppError('Workshop import requires evaluations.');
+        entry.evaluations.forEach(data => validateEvaluation(data));
+      }
+      let created = false;
+      const suites = [], evaluations = [];
+      for (const entry of bundles) {
+        const seedKey = entry.seedKey ?? 'workshop-v2-live';
+        let suite = this.suites(scope).find(item => item.seedKey === seedKey);
+        if (suite) evaluations.push(...this.evaluations(scope).filter(item => item.suiteId === suite.id));
+        else {
+          created = true;
+          suite = { ...this.createSuite({ name: entry.name }, scope), seedKey };
+          this.db.prepare('UPDATE suites SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(suite), suite.id, ...requireScope(scope));
+          evaluations.push(...entry.evaluations.map(data => this.#insertEvaluation(validateEvaluation({ ...data, suiteId: suite.id }), scope)));
+        }
+        suites.push(suite);
+      }
+      return { created, suite: suites[0], ...(Array.isArray(bundle) ? { suites } : {}), evaluations };
     });
   }
   runs(scope) { return this.db.prepare('SELECT data FROM runs WHERE owner_id=? AND workshop_id=?').all(...requireScope(scope)).map(row => JSON.parse(row.data)).sort((a,b) => b.createdAt.localeCompare(a.createdAt)); }
@@ -183,6 +203,28 @@ export class Store {
   saveRun(run, scope) {
     const result = this.db.prepare(`INSERT INTO runs (id,data,owner_id,workshop_id) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE runs.owner_id=excluded.owner_id AND runs.workshop_id=excluded.workshop_id`).run(run.id, JSON.stringify(run), ...requireScope(scope));
     if (!result.changes) throw new Error('Run workspace mismatch.');
+  }
+  workspaceSummary(scope) {
+    const suites = this.suites(scope), evaluations = this.evaluations(scope), runs = this.runs(scope);
+    const records = [suites, evaluations, runs].map(records => [...records].sort((a, b) => a.id.localeCompare(b.id)));
+    return {
+      revision: createHash('sha256').update(JSON.stringify(records)).digest('hex'),
+      suites: suites.map(suite => ({ id: suite.id, name: suite.name, evaluationCount: evaluations.filter(e => e.suiteId === suite.id).length })),
+      evaluationCount: evaluations.length, unfiledCount: evaluations.filter(e => !e.suiteId).length,
+      runCount: runs.length, activeRunCount: runs.filter(run => !canDeleteRun(run)).length,
+    };
+  }
+  clearWorkspace(body, scope) {
+    requireObject(body, ['revision']);
+    if (typeof body.revision !== 'string' || !/^[a-f0-9]{64}$/.test(body.revision)) throw new AppError('A workspace review revision is required.');
+    return this.transaction(() => {
+      const summary = this.workspaceSummary(scope);
+      if (summary.activeRunCount) throw new AppError('Wait for active runs to finish before clearing this workspace.', 409);
+      if (summary.revision !== body.revision) throw new AppError('The workspace changed. Close this dialog and review it again before clearing.', 409);
+      const params = requireScope(scope);
+      for (const table of ['runs', 'evaluations', 'suites']) this.db.prepare(`DELETE FROM ${table} WHERE owner_id = ? AND workshop_id = ?`).run(...params);
+      return { cleared: true };
+    });
   }
   deleteRun(id, scope) {
     return this.transaction(() => {

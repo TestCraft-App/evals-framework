@@ -28,7 +28,7 @@
 
     <section id="evaluations-panel" role="tabpanel" aria-labelledby="evaluations-tab">
       <section class="table-card" aria-label="Evaluation library">
-        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><div class="library-actions"><button id="library-actions-toggle" class="button" aria-expanded="false" aria-controls="library-actions-menu">Actions <svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div id="library-actions-menu" class="library-actions-menu" hidden><button id="example-button" type="button">Load example</button><button id="workshop-button" type="button">Load workshop suite</button></div></div><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
+        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><div class="library-actions"><button id="library-actions-toggle" class="button" aria-expanded="false" aria-controls="library-actions-menu">Actions <svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div id="library-actions-menu" class="library-actions-menu" hidden><button id="example-button" type="button">Load example</button><button id="workshop-button" type="button">Load workshop suite</button><button id="clear-workspace-button" type="button">Clear workspace</button></div></div><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
           <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">None</option></select></label>
@@ -161,6 +161,18 @@
         <p id="create-eval-empty" class="empty-state" hidden>No evaluations match these filters.</p>
       </div>
       <div class="dialog-footer"><div class="run-submit-status"><span id="create-selected-count">0 selected · maximum 50</span><p id="create-run-error" role="alert"></p></div><button type="button" id="cancel-create-run" class="button">Cancel</button><button id="submit-create-run" type="submit" class="button primary" disabled>Create Run</button></div>
+    </form>
+  </dialog>
+  <dialog id="clear-workspace-dialog" class="compact-dialog" role="alertdialog" aria-labelledby="clear-workspace-title" aria-describedby="clear-workspace-description">
+    <form id="clear-workspace-form">
+      <div class="dialog-heading"><h2 id="clear-workspace-title">Clear workspace?</h2></div>
+      <div class="compact-body">
+        <p id="clear-workspace-summary"></p>
+        <ul id="clear-workspace-suites"></ul>
+        <p id="clear-workspace-description">Permanently remove all suites, evaluations, and run history from this private workspace. This cannot be undone. You can load the workshop templates again. Used model calls are not restored.</p>
+        <p id="clear-workspace-error" class="session-error" role="alert"></p>
+      </div>
+      <div class="dialog-footer"><button id="cancel-clear-workspace" type="button" class="button" autofocus>Cancel</button><button id="confirm-clear-workspace" type="submit" class="button danger-solid">Clear workspace</button></div>
     </form>
   </dialog>
   <dialog id="delete-library-dialog" class="compact-dialog" role="alertdialog" aria-labelledby="delete-library-title" aria-describedby="delete-library-description">

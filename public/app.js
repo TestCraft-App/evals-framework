@@ -8,6 +8,7 @@ const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
+let workspaceReview = null, clearingWorkspace = false;
 let session = null, sessionTimer, sessionSetup;
 let suiteDraft = null, savingSuite = false;
 let inlineName = null, duplicatingEvaluation = false, renderingLibrary = false;
@@ -41,6 +42,7 @@ async function api(path, options) {
   return body;
 }
 function showConnecting() {
+  workspaceReview = null; clearingWorkspace = false; $('clear-workspace-dialog').close();
   closeLibraryActions();
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
@@ -156,12 +158,28 @@ function updateCriteriaState() {
   $('criteria-empty').hidden = criteria.length > 0;
   $('add-criterion').disabled = criteria.length >= 20 || (draftMethod() === 'exact_match' && criteria.some(c => c.method === 'exact_match'));
 }
+function updateCriterionTooltip(preview) {
+  const field = preview.parentElement.querySelector('textarea');
+  if (preview.clientWidth && preview.scrollWidth > preview.clientWidth) field.title = field.value;
+  else field.removeAttribute('title');
+}
+const criterionPreviewObserver = new ResizeObserver(entries => entries.forEach(entry => updateCriterionTooltip(entry.target)));
+function syncCriterionPreview(field) {
+  const preview = field.parentElement.querySelector('.criterion-text-preview');
+  preview.textContent = field.value.replace(/\r?\n/g, ' ↵ ');
+  updateCriterionTooltip(preview);
+}
 function renderCriteria() {
+  criterionPreviewObserver.disconnect();
   $('criteria-list').innerHTML = criteria.map((value, index) => '<li><div class="criterion-card-header"><span class="criterion-number" aria-hidden="true">' + (index + 1) + '.</span>' + badge(value.method === 'model_grade' ? 'model_grade' : 'rule_based')
     + (value.method !== 'model_grade' ? '<label class="criterion-description-editor"><span class="sr-only">Description for criterion ' + (index + 1) + '</span><input data-criterion-description="' + index + '" maxlength="2000" placeholder="Description (optional)" value="' + escape(value.description || '') + '"></label>' : '')
     + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></div><div class="criterion-card-body">'
     + (value.method !== 'model_grade' ? '<select class="criterion-rule-pill" data-criterion-method="' + index + '" aria-label="Rule for criterion ' + (index + 1) + '">' + ['contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (method === value.method ? ' selected' : '') + '>' + names[method] + '</option>').join('') + '</select>' : '')
-    + '<label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea></div></li>').join('');
+    + '<div class="criterion-text-editor"><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea><span class="criterion-text-preview" aria-hidden="true"></span></div></div></li>').join('');
+  $('criteria-list').querySelectorAll('[data-criterion]').forEach(field => {
+    syncCriterionPreview(field);
+    criterionPreviewObserver.observe(field.parentElement.querySelector('.criterion-text-preview'));
+  });
   updateCriteriaState();
 }
 function addCriterion() {
@@ -410,12 +428,46 @@ async function deleteLibrary(event) {
   } catch (e) { if (target.session === session) { if (deleted) error('Deleted. Reload to refresh the library.'); else $('delete-library-error').textContent = e.message; } }
   finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; } }
 }
+async function reviewWorkspace() {
+  closeLibraryActions(true);
+  const requestSession = session;
+  $('clear-workspace-button').disabled = true;
+  try {
+    const summary = await api('/api/workspace');
+    workspaceReview = { ...summary, session };
+    $('clear-workspace-summary').textContent = `${summary.suites.length} suites, ${summary.evaluationCount} evaluations (${summary.unfiledCount} unfiled), and ${summary.runCount} runs will be removed, including items hidden by filters.`;
+    $('clear-workspace-suites').replaceChildren(...summary.suites.map(suite => {
+      const item = document.createElement('li'); item.textContent = `${suite.name} — ${suite.evaluationCount} evaluations`; return item;
+    }));
+    $('clear-workspace-error').textContent = summary.activeRunCount ? 'Wait for active runs to finish, then reopen this dialog.' : '';
+    $('confirm-clear-workspace').disabled = !!summary.activeRunCount || !(summary.suites.length || summary.evaluationCount || summary.runCount);
+    $('cancel-clear-workspace').disabled = false;
+    $('clear-workspace-dialog').showModal(); lockBody(); $('cancel-clear-workspace').focus();
+  } catch (e) { if (requestSession === session) error(e.message); }
+  finally { $('clear-workspace-button').disabled = false; }
+}
+async function clearWorkspace(event) {
+  event.preventDefault(); const review = workspaceReview;
+  if (!review || review.session !== session || clearingWorkspace || $('confirm-clear-workspace').disabled) return;
+  clearingWorkspace = true; $('confirm-clear-workspace').disabled = true; $('cancel-clear-workspace').disabled = true;
+  $('clear-workspace-error').textContent = '';
+  try {
+    await api('/api/workspace', { method: 'DELETE', body: JSON.stringify({ revision: review.revision }) });
+    clearTimeout(polling); runViewRevision++; libraryRequest++; runsRequest++;
+    currentRun = null; lastRunJson = null; evaluations = []; suites = []; runs = []; lastRunRows = null; inlineName = null; editing = null;
+    closeRunDraft(); runDetail.reset(); $('run-detail').replaceChildren();
+    for (const id of ['search', 'filter-suite', 'filter-type', 'filter-method', 'filter-status', 'run-search', 'run-status', 'run-model']) $(id).value = '';
+    renderSuites(); renderLibrary(); renderRunList(); $('runs-count').textContent = '0';
+    $('clear-workspace-dialog').close(); toast('Workspace cleared. You can load the workshop templates again.');
+  } catch (e) { if (review.session === session) $('clear-workspace-error').textContent = e.message; }
+  finally { if (review.session === session) { clearingWorkspace = false; $('cancel-clear-workspace').disabled = false; $('confirm-clear-workspace').disabled = false; } }
+}
 async function loadWorkshop() {
   if ($('workshop-button').disabled) return;
   const requestSession = session; $('workshop-button').disabled = true; error('');
   try {
     const imported = await api('/api/workshop-suite', { method: 'POST', body: '{}' });
-    await loadLibrary(); $('filter-suite').value = imported.suite.id; renderSuites(); renderLibrary();
+    await loadLibrary(); $('filter-suite').value = imported.suites?.length > 1 ? '' : imported.suite.id; renderSuites(); renderLibrary();
     toast('Workshop templates ready. Open Runs and choose Create Run to generate and evaluate with TestCraft.');
   } catch (e) { if (requestSession === session) error(e.message); }
   finally { $('workshop-button').disabled = false; }
@@ -691,6 +743,11 @@ document.querySelector('.library-actions').addEventListener('focusout', event =>
 });
 $('example-button').addEventListener('click', () => { closeLibraryActions(); openForm(true); });
 $('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(); });
+$('clear-workspace-button').addEventListener('click', reviewWorkspace);
+$('clear-workspace-form').addEventListener('submit', clearWorkspace);
+$('cancel-clear-workspace').addEventListener('click', () => { if (!clearingWorkspace) $('clear-workspace-dialog').close(); });
+$('clear-workspace-dialog').addEventListener('cancel', event => { if (clearingWorkspace) event.preventDefault(); });
+$('clear-workspace-dialog').addEventListener('close', () => { workspaceReview = null; lockBody(); $('library-actions-toggle').focus(); });
 $('delete-library-form').addEventListener('submit', deleteLibrary);
 $('cancel-delete-library').addEventListener('click', () => { if (!deletingLibrary) $('delete-library-dialog').close(); });
 $('delete-library-dialog').addEventListener('cancel', event => { if (deletingLibrary) event.preventDefault(); });
@@ -732,8 +789,19 @@ $('criterion-draft').addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && draftMethod() !== 'exact_match') { event.preventDefault(); addCriterion(); }
 });
 $('criteria-list').addEventListener('input', event => {
-  if (event.target.dataset.criterion !== undefined) criteria[Number(event.target.dataset.criterion)].text = event.target.value;
+  if (event.target.dataset.criterion !== undefined) {
+    criteria[Number(event.target.dataset.criterion)].text = event.target.value;
+    syncCriterionPreview(event.target);
+  }
   if (event.target.dataset.criterionDescription !== undefined) criteria[Number(event.target.dataset.criterionDescription)].description = event.target.value;
+});
+$('criteria-list').addEventListener('focusout', event => {
+  const field = event.target;
+  if (field.dataset.criterion === undefined) return;
+  // Focus can enter and leave between observer deliveries without a net resize.
+  requestAnimationFrame(() => {
+    if (field.isConnected) updateCriterionTooltip(field.parentElement.querySelector('.criterion-text-preview'));
+  });
 });
 $('criteria-list').addEventListener('change', event => {
   const index = event.target.dataset.criterionMethod;

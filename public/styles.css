@@ -177,6 +177,8 @@ html { scrollbar-gutter: stable; }
 .library-actions-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:10;min-width:200px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #1b362a20}
 .library-actions-menu button{display:block;width:100%;border:0;border-radius:4px;background:none;color:#36534b;text-align:left;padding:10px 12px;font-size:.875rem;white-space:nowrap}
 .library-actions-menu button:hover:not(:disabled),.library-actions-menu button:focus-visible{background:#f0f7f4}
+#library-actions-menu #clear-workspace-button{color:var(--danger, #b42318);border-top:1px solid var(--line);border-radius:0;margin-top:4px}
+#clear-workspace-suites{max-height:200px;overflow-y:auto;padding-left:20px}
 
 .evaluations-table .eval-name,.evaluations-table .eval-suite{display:block;width:100%;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
@@ -240,6 +242,11 @@ html { scrollbar-gutter: stable; }
 #criteria-list .criterion-description-editor input:focus { border-color: var(--teal); }
 #criteria-list .criterion-rule-pill { flex: 0 0 112px; width: 112px; margin: 0; padding: 3px 6px; height: 28px; border-radius: 14px; background-color: #fff; font-size: .6875rem; }
 #criteria-list .criterion-card-body textarea { flex: 1; min-width: 0; }
+.criterion-text-editor { position: relative; flex: 1; min-width: 0; }
+#evaluation-dialog #criteria-list .criterion-text-editor textarea { margin: 0; color: transparent; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; }
+.criterion-text-preview { position: absolute; top: 7px; left: 9px; right: 9px; color: #294239; font-size: 12px; font-weight: 400; line-height: 24px; white-space: pre; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+#evaluation-dialog #criteria-list .criterion-text-editor textarea:focus { height: 62px; min-height: 62px; max-height: 62px; color: #294239; overflow-y: auto; }
+.criterion-text-editor:focus-within .criterion-text-preview { display: none; }
 @media (max-width: 520px) {
   .criterion-create-panel { padding: 10px; }
   #method, #criterion-rule { padding-inline: 6px; font-size: .75rem; }
