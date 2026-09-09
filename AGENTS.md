@@ -63,6 +63,9 @@ There is no configured lint, format, type-check, or compile command. Do not clai
 
 ## Testing expectations
 
+- Treat every request to review a failing test, including a CI/pipeline failure, as a request to investigate and fix the failure. Assess whether it exposes a product bug or a test that needs updating, then fix the product or update the test according to the intended behavior and available evidence.
+- If the cause or intended behavior is uncertain, never modify, weaken, skip, or delete a test merely to make it pass. Continue investigating and ask for clarification when needed.
+- Before completing a failing-test review, run the focused test that covers the reported failure and confirm it passes. If it cannot be run or still fails, report the blocker or remaining failure and do not claim the review is complete.
 - Add or update a Node test for backend, persistence, validation, provider, grader, session, or deployment behavior.
 - Add or update a Playwright spec for observable dashboard behavior. Reuse `tests/browser-fixtures.mjs`; each test should retain isolated in-memory state and mocked network responses.
 - Cover failure paths and invariants, especially ownership, origin/CSRF controls, model-call accounting, restart recovery, schema compatibility, and safe error messages.

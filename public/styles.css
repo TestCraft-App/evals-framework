@@ -200,6 +200,8 @@ html { scrollbar-gutter: stable; }
 .criteria-toolbar { display: flex; align-items: end; gap: 12px; margin-top: 18px; }
 .criteria-toolbar > label:first-child { flex: 0 0 160px; min-width: 0; }
 #criterion-description-field { flex: 1; min-width: 0; }
+/* Native select heights differ across platforms; align the composer controls explicitly. */
+#method, #criterion-rule, #criterion-description { height: 41px; }
 .criteria-composer .button { flex: none; min-height: 38px; height: 38px; padding-block: 0; }
 .criteria-composer { display: flex; align-items: end; flex-direction: row; gap: 12px; margin-top: 0; }
 #criterion-composer-label { margin-top: 16px; }
@@ -240,6 +242,6 @@ html { scrollbar-gutter: stable; }
 #criteria-list .criterion-card-body textarea { flex: 1; min-width: 0; }
 @media (max-width: 520px) {
   .criterion-create-panel { padding: 10px; }
-  #method, #criterion-rule { padding-inline: 6px; font-size: .75rem; height: 41px; }
+  #method, #criterion-rule { padding-inline: 6px; font-size: .75rem; }
   .criterion-card-header, .criterion-card-body { gap: 5px; }
 }

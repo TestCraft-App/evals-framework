@@ -65,6 +65,8 @@ for (const width of [1280, 390]) test(`rule description sits beside the narrower
   const rule = await page.locator('#criterion-rule').boundingBox();
   expect(method.width).toBe(rule.width); expect(method.x).toBe(rule.x); expect(description.x).toBeGreaterThan(method.x + method.width);
   expect(description.y).toBeCloseTo(method.y, 0);
+  expect(description.height).toBeCloseTo(method.height, 0);
+  expect(rule.height).toBeCloseTo(method.height, 0);
   const layout = await page.locator('#evaluation-dialog').evaluate(dialog => ({ overflow: dialog.scrollWidth - dialog.clientWidth, footer: dialog.querySelector('.wizard-actions').getBoundingClientRect().bottom <= innerHeight }));
   expect(layout.overflow).toBeLessThanOrEqual(2); expect(layout.footer).toBe(true);
   const savedDescription = page.locator('[data-criterion-description]');
