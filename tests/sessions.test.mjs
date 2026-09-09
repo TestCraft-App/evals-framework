@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { createApp, listen, close, client, waitForRun, testScope } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 
@@ -35,6 +36,43 @@ test('anonymous bootstrap needs no code, but private APIs still require the brow
     assert.deepEqual((await participant.get('/api/evaluations')).evaluations, []);
     assert.equal(JSON.stringify(await participant.get('/api/config')).includes('never-public'), false);
     assert.equal(calls, 0); assert.equal((await fetch(url + '/')).status, 200);
+  } finally { await close(app); }
+});
+
+test('external dashboard navigation is allowed without weakening cross-site API protection', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:' }));
+  const url = `http://127.0.0.1:${app.server.address().port}`;
+  const navigation = { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+  // Node fetch overwrites Sec-Fetch-Mode; use HTTP to preserve browser metadata.
+  const navigate = (path, headers) => new Promise((resolve, reject) => {
+    httpRequest(url + path, { headers }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve(new Response(Buffer.concat(chunks), { status: response.statusCode, headers: response.headers })));
+    }).on('error', reject).end();
+  });
+  try {
+    const response = await navigate('/', navigation);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html/);
+    assert.equal(response.headers.get('set-cookie'), null);
+    assert.equal(app.store.db.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0);
+    for (const headers of [
+      { ...navigation, 'sec-fetch-mode': 'cors' },
+      { ...navigation, 'sec-fetch-dest': 'iframe' },
+      { 'sec-fetch-site': 'cross-site' },
+      { ...navigation, origin: 'https://attacker.example' },
+    ]) assert.equal((await navigate('/', headers)).status, 403);
+    const participant = await client(app);
+    for (const path of ['/api/session', '/api/evaluations', '/app.js', '/healthz']) {
+      const blocked = await navigate(path, { ...navigation, cookie: participant.cookie });
+      assert.equal(blocked.status, 403);
+      assert.deepEqual(await blocked.json(), { error: 'Cross-site requests are not allowed.' });
+    }
+    for (const path of ['/', '/api/session', '/api/evaluations']) {
+      const blocked = await participant.request(path, { method: 'POST', headers: navigation, body: '{}' });
+      assert.equal(blocked.status, 403);
+    }
   } finally { await close(app); }
 });
 
@@ -72,7 +110,7 @@ test('ownership is enforced for lists, details, runs, batches, snapshots and for
     const invalidBatch = await b.post('/api/runs', { evaluationIds: [ownB.id, item.id], ownerId: a.info.workspaceId });
     assert.equal(invalidBatch.status, 404);
     assert.deepEqual((await b.get('/api/runs')).runs, []);
-    assert.equal(app.store.budget('workshop', 200).reserved, 0);
+
     const run = await start(a, [item.id]); await waitForRun(a, run.id);
     assert.equal((await b.request('/api/runs/' + run.id)).status, 404);
     assert.deepEqual((await b.get('/api/runs')).runs, []);
@@ -118,7 +156,7 @@ test('deleting finished runs removes only their snapshots and recomputes the lat
     assert.deepEqual((await a.get('/api/runs')).runs, []);
     const remaining = (await a.get('/api/evaluations')).evaluations;
     assert.equal(remaining.length, 1); assert.equal(remaining[0].id, saved.id); assert.equal(remaining[0].latest, null);
-    assert.equal((await a.get('/api/session')).budget.used, 0);
+
     const rerun = await waitForRun(a, (await start(a, [saved.id])).id);
     assert.equal(rerun.items[0].score, 100, 'saved evaluations can still be run after clearing history');
   } finally { await close(app); }
@@ -145,7 +183,7 @@ test('run deletion enforces session, ownership, workshop, Origin and CSRF before
   } finally { await close(app); }
 });
 
-test('queued and running runs cannot be deleted or lose reserved calls, but become deletable after completion', async () => {
+test('queued and running runs cannot be deleted, but become deletable after completion', async () => {
   let release, calls = 0;
   const gate = new Promise(resolve => { release = resolve; });
   const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => { calls++; await gate; return stream(); } }));
@@ -159,39 +197,38 @@ test('queued and running runs cannot be deleted or lose reserved calls, but beco
     assert.equal((await a.get('/api/runs/' + running.id)).status, 'running');
     assert.equal((await a.get('/api/runs/' + queued.id)).status, 'queued');
     assert.equal(calls, 2);
-    const budget = (await a.get('/api/session')).budget;
     for (const id of accepted) {
       const denied = await a.request('/api/runs/' + id, { method: 'DELETE' });
       assert.equal(denied.status, 409); assert.match((await denied.json()).error, /still active/);
     }
-    assert.deepEqual((await a.get('/api/session')).budget, budget);
+
     assert.equal((await a.get('/api/runs')).runs.length, 2);
     release(); for (const id of accepted) await waitForRun(a, id);
     for (const id of accepted) assert.equal((await a.request('/api/runs/' + id, { method: 'DELETE' })).status, 200);
     accepted.length = 0;
     assert.deepEqual((await a.get('/api/runs')).runs, []);
-    assert.equal(calls, 3); assert.equal((await a.get('/api/session')).budget.used, 3);
+    assert.equal(calls, 3);
   } finally { release(); for (const id of accepted) await waitForRun(a, id); await close(app); }
 });
 
-test('run deletion survives restart and does not refund consumed model calls or affect other participants', async () => {
+test('run deletion survives restart and allows reruns without affecting other participants', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-run-delete-')), dbPath = join(dir, 'evals.sqlite');
-  let calls = 0, app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '1' }, fetchImpl: async () => { calls++; return stream(); } }));
+  let calls = 0, app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '2' }, fetchImpl: async () => { calls++; return stream(); } }));
   try {
     const a = await client(app), b = await client(app), saved = await save(a, generated), other = await save(b);
     const ownRun = await waitForRun(a, (await start(a, [saved.id])).id);
     const otherRun = await waitForRun(b, (await start(b, [other.id])).id);
     assert.equal((await a.request('/api/runs/' + ownRun.id, { method: 'DELETE' })).status, 200);
     assert.deepEqual(await b.get('/api/runs/' + otherRun.id), otherRun);
-    await close(app); app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '1' } }));
+    await close(app); app = await listen(createApp({ dbPath, env: { WORKSHOP_MAX_MODEL_CALLS: '2' } }));
     const restored = await client(app, { cookie: a.cookie });
     assert.deepEqual((await restored.get('/api/runs')).runs, []);
     assert.equal((await restored.request('/api/runs/' + ownRun.id)).status, 404);
     assert.equal((await restored.get('/api/evaluations')).evaluations[0].id, saved.id);
-    assert.deepEqual(restored.info.budget, { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
-    assert.equal((await restored.post('/api/runs', { evaluationIds: [saved.id] })).status, 429);
+
+    await waitForRun(restored, (await start(restored, [saved.id])).id);
     const restoredB = await client(app, { cookie: b.cookie });
-    assert.equal((await restoredB.get('/api/runs')).runs[0].id, otherRun.id); assert.equal(calls, 1);
+    assert.equal((await restoredB.get('/api/runs')).runs[0].id, otherRun.id); assert.equal(calls, 2);
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -212,7 +249,7 @@ test('forged, duplicated and expired cookies cannot read another workspace; toke
 });
 
 test('public deployment needs an explicit origin and uses Secure host-only cookies without trusting forwarded headers', async () => {
-  for (const env of [{ HOST: '0.0.0.0' }, { NODE_ENV: 'production' }, { APP_ORIGIN: 'http://workshop.example' }, { APP_ORIGIN: 'https://workshop.example/path' }, { WORKSHOP_MAX_MODEL_CALLS: '-1' }, { WORKSHOP_SESSION_HOURS: '0' }]) assert.throws(() => createApp({ dbPath: ':memory:', env }));
+  for (const env of [{ HOST: '0.0.0.0' }, { NODE_ENV: 'production' }, { APP_ORIGIN: 'http://workshop.example' }, { APP_ORIGIN: 'https://workshop.example/path' }, { WORKSHOP_SESSION_HOURS: '0' }]) assert.throws(() => createApp({ dbPath: ':memory:', env }));
   const app = await listen(createApp({ dbPath: ':memory:', env: { HOST: '0.0.0.0', NODE_ENV: 'production', APP_ORIGIN: 'https://workshop.example' } }));
   try {
     const a = await client(app, { origin: 'https://workshop.example' });
@@ -243,61 +280,29 @@ test('new sessions are rate limited across restarts and spoofed addresses; exist
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('a shared allowance is reserved atomically across participants before any batch is dispatched', async () => {
+test('obsolete call limits do not restrict concurrent participants or reruns', async () => {
   let release, calls = 0;
   const gate = new Promise(resolve => { release = resolve; });
-  const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '1' }, fetchImpl: async () => { calls++; await gate; return stream(); } }));
+  const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '0' }, fetchImpl: async () => { calls++; await gate; return stream(); } }));
   const accepted = [];
   try {
     const a = await client(app), b = await client(app);
     const ea = await save(a, generated), eb = await save(b, generated);
     const responses = await Promise.all([a.post('/api/runs', { evaluationIds: [ea.id] }), b.post('/api/runs', { evaluationIds: [eb.id] })]);
-    assert.deepEqual(responses.map(r => r.status).sort(), [202, 429]);
+    assert.deepEqual(responses.map(r => r.status).sort(), [202, 202]);
     for (const [index, response] of responses.entries()) if (response.status === 202) accepted.push({ participant: [a, b][index], id: (await response.json()).id });
     release(); for (const run of accepted) await waitForRun(run.participant, run.id);
-    assert.equal(calls, 1);
-    assert.deepEqual((await a.get('/api/session')).budget, { limit: 1, used: 1, reserved: 0, remaining: 0, unit: 'model_calls' });
-    assert.equal((await b.get('/api/session')).budget.remaining, 0);
-    const newBrowser = await client(app); assert.equal(newBrowser.info.budget.remaining, 0);
+    assert.equal(calls, 2);
+
+    const newBrowser = await client(app);
+    assert.equal('budget' in newBrowser.info, false);
     const offline = await save(newBrowser);
-    const run = await start(newBrowser, [offline.id]); assert.equal((await waitForRun(newBrowser, run.id)).items[0].score, 100);
-    assert.equal(calls, 1);
+    await waitForRun(newBrowser, (await start(newBrowser, [offline.id])).id);
+    assert.equal(calls, 3);
   } finally { release(); for (const run of accepted) await waitForRun(run.participant, run.id); await close(app); }
 });
 
-test('a generation plus model grade reserves two calls and never starts a partially affordable batch', async () => {
-  let calls = 0;
-  const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '1', OPENAI_API_KEY: 'test-only' }, fetchImpl: async () => { calls++; return stream(); } }));
-  try {
-    const a = await client(app);
-    const two = await save(a, { ...generated, method: 'model_grade', judgeModel: 'gpt-4o-mini' });
-    assert.equal((await a.post('/api/runs', { evaluationIds: [two.id] })).status, 429);
-    const one = await save(a, generated), another = await save(a, generated);
-    assert.equal((await a.post('/api/runs', { evaluationIds: [one.id, another.id] })).status, 429);
-    assert.equal(calls, 0); assert.deepEqual((await a.get('/api/runs')).runs, []);
-    assert.equal((await a.get('/api/session')).budget.remaining, 1);
-  } finally { await close(app); }
-});
-
-test('all Rule-based methods run in private sessions with a zero model-call allowance', async () => {
-  let calls = 0;
-  const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '0' }, fetchImpl: async () => { calls++; throw new Error('No model calls expected'); } }));
-  try {
-    const a = await client(app);
-    for (const [method, criteria] of [['contains', ['valid user']], ['not_contains', ['TODO']], ['exact_match', [evaluation.actualOutput]]]) {
-      const saved = await save(a, { ...evaluation, method, criteria });
-      assert.equal(saved.evaluationFamily, 'rule_based');
-      const result = await waitForRun(a, (await start(a, [saved.id])).id);
-      assert.equal(result.items[0].score, 100);
-      assert.equal(result.items[0].evaluation.method, method);
-      assert.equal(result.items[0].evaluation.evaluationFamily, 'rule_based');
-    }
-    assert.equal(calls, 0); assert.equal((await a.get('/api/session')).budget.used, 0);
-    const b = await client(app); assert.deepEqual((await b.get('/api/runs')).runs, []);
-  } finally { await close(app); }
-});
-
-test('failed or timed-out model attempts are charged, but unattempted grading reservations are released', async () => {
+test('failed or timed-out generation does not retry or invoke the judge', async () => {
   for (const throws of [true, false]) {
     let calls = 0;
     const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '2', OPENAI_API_KEY: 'test-only' }, fetchImpl: async () => { calls++; if (throws) throw new Error('Simulated timeout'); return new Response('private-provider-error', { status: 500 }); } }));
@@ -305,12 +310,12 @@ test('failed or timed-out model attempts are charged, but unattempted grading re
       const a = await client(app), saved = await save(a, { ...generated, method: 'model_grade', judgeModel: 'gpt-4o-mini' });
       const run = await waitForRun(a, (await start(a, [saved.id])).id);
       assert.equal(run.items[0].status, 'error'); assert.equal(run.items[0].score, null); assert.equal(calls, 1);
-      assert.deepEqual((await a.get('/api/session')).budget, { limit: 2, used: 1, reserved: 0, remaining: 1, unit: 'model_calls' });
+
     } finally { await close(app); }
   }
 });
 
-test('missing model credentials consume no calls and catalog lookups do not use the model allowance', async () => {
+test('missing model credentials prevent dispatch', async () => {
   let calls = 0;
   const app = await listen(createApp({ dbPath: ':memory:', env: { WORKSHOP_MAX_MODEL_CALLS: '2' }, fetchImpl: async () => { calls++; return Response.json({ models: [{ id: 'gpt-4o-mini', label: 'Test model' }] }); } }));
   try {
@@ -319,14 +324,14 @@ test('missing model credentials consume no calls and catalog lookups do not use 
       const saved = await save(a, { ...generated, source, model: 'gpt-4o-mini', method: 'model_grade', judgeModel: 'gpt-4o-mini' });
       const result = await waitForRun(a, (await start(a, [saved.id])).id);
       assert.equal(result.items[0].status, 'error'); assert.equal(calls, 0);
-      assert.equal((await a.get('/api/session')).budget.remaining, 2);
+
     }
-    await a.get('/api/models'); assert.equal(calls, 1);
-    assert.equal((await a.get('/api/session')).budget.used, 0);
+    assert.ok((await a.get('/api/models')).models.length); assert.equal(calls, 0);
+
   } finally { await close(app); }
 });
 
-test('sessions, data, CSRF and allowance survive restart; obsolete access-code settings have no effect', async () => {
+test('sessions, data and CSRF survive restart; obsolete access-code settings have no effect', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-persist-')), dbPath = join(dir, 'evals.sqlite');
   let app = await listen(createApp({ dbPath, fetchImpl: async () => stream() }));
   try {
@@ -336,7 +341,7 @@ test('sessions, data, CSRF and allowance survive restart; obsolete access-code s
     const restored = await client(app, { cookie: a.cookie });
     assert.equal(restored.info.workspaceId, a.info.workspaceId);
     assert.equal((await restored.get('/api/evaluations')).evaluations[0].id, saved.id);
-    assert.equal(restored.info.budget.used, 1);
+
     assert.equal(restored.info.csrfToken, a.info.csrfToken);
     await close(app); app = await listen(createApp({ dbPath, env: { WORKSHOP_ACCESS_CODE: 'different-test-code-2026' } }));
     const url = `http://127.0.0.1:${app.server.address().port}`;
@@ -344,7 +349,7 @@ test('sessions, data, CSRF and allowance survive restart; obsolete access-code s
     const stillOwned = await client(app, { cookie: a.cookie });
     assert.equal(stillOwned.info.csrfToken, a.info.csrfToken);
     const fresh = await client(app);
-    assert.equal(fresh.info.budget.used, 1); assert.deepEqual((await fresh.get('/api/evaluations')).evaluations, []);
+     assert.deepEqual((await fresh.get('/api/evaluations')).evaluations, []);
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -362,19 +367,18 @@ test('session creation rejects caller-chosen identifiers and cross-origin reques
   } finally { await close(app); }
 });
 
-test('interrupted recovery releases only unused reservations, without replaying or refunding an attempt', async () => {
+test('interrupted recovery preserves evidence without replaying requests', async () => {
   const store = new Store(':memory:');
   try {
     const run = { id: 'interrupted', status: 'running', createdAt: new Date().toISOString(), items: [{ id: 'item', evaluation: { ...generated, method: 'model_grade' }, status: 'grading', events: [], output: 'already received' }] };
-    store.reserveRun(run, testScope, 2); store.consumeCall('item', 'workshop');
-    assert.equal(store.budget('workshop', 2).reserved, 1);
+    store.saveRun(run, testScope);
+
     store.recoverInterruptedRuns();
     assert.equal(store.run(run.id, testScope).status, 'interrupted');
-    assert.deepEqual(store.budget('workshop', 2), { limit: 2, used: 1, reserved: 0, remaining: 1, unit: 'model_calls' });
-    assert.throws(() => store.consumeCall('item', 'workshop'), /No model-call allowance/);
+
     assert.deepEqual(store.deleteRun(run.id, testScope), { deletedId: run.id });
     assert.equal(store.run(run.id, testScope), undefined);
-    assert.deepEqual(store.budget('workshop', 2), { limit: 2, used: 1, reserved: 0, remaining: 1, unit: 'model_calls' });
+
   } finally { store.close(); }
 });
 

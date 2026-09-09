@@ -7,19 +7,31 @@ import { createApp } from '../server.mjs';
 export const test = base.extend({
   generationOutput: ['Generated ideas: valid credentials; invalid email; empty password.', { option: true }],
   generationCalls: async ({}, use) => { await use([]); },
-  baseURL: async ({ generationOutput, generationCalls }, use) => {
+  browserApp: async ({ generationOutput, generationCalls }, use) => {
     const app = createApp({
       dbPath: ':memory:',
-      env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', WORKSHOP_MAX_MODEL_CALLS: '200', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
+      env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
       fetchImpl: async (url, options) => {
-        if (!['/api/generate-ideas', '/api/automate-tests', '/api/automate-tests-ideas'].some(path => url === 'https://api.testcraft.app' + path)) throw new Error('Browser tests must not contact real providers.');
+        if (url.endsWith('/api/models')) return Response.json({ models: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].map(id => ({ id, label: id })) });
+        if (!['https://api.testcraft.app', 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app', 'http://127.0.0.1:8080'].some(base => ['/api/generate-ideas', '/api/automate-tests', '/api/automate-tests-ideas'].some(path => url === base + path))) throw new Error('Browser tests must not contact real providers.');
         generationCalls.push({ url, body: JSON.parse(options.body) });
         return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: generationOutput }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
       },
     });
     app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
-    try { await use(`http://127.0.0.1:${app.server.address().port}`); }
+    try { await use(app); }
     finally { await app.shutdown(); }
   },
+  baseURL: async ({ browserApp }, use) => { await use(`http://127.0.0.1:${browserApp.server.address().port}`); },
 });
 export { expect };
+
+export async function openRunCreator(page) {
+  await page.getByRole('tab', { name: /^Runs/ }).click();
+  await page.locator('#create-run').click();
+  await page.locator('#create-generation-model').selectOption('gpt-4o-mini');
+}
+export async function createSelectedRun(page) {
+  await page.locator('#submit-create-run').click();
+  await expect(page.locator('#create-run-dialog')).toBeHidden();
+}

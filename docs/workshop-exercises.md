@@ -4,9 +4,9 @@ One hour, seven people. Goal: distinguish literal checks from quality judgments,
 
 ## One creation and execution flow
 
-**Load example**, **Load workshop suite**, and **New evaluation** use the same input-only flow: HTML and parameters → save definition → Run generates through TestCraft → grade the response → inspect the saved run. There is no output-paste field or preloaded answer. Loading or saving makes no model calls or completed runs. Opening the form may fetch the read-only model catalog.
+**Load example**, **Load workshop suite**, and **New evaluation** use the same input-only flow: Eval name, Suite, endpoint, and applicable parameters → Evaluation criteria → save definition → Create Run generates through TestCraft → grade the response → inspect the saved run. There is no output-paste field or preloaded answer. Loading or saving makes no model calls or completed runs. Model catalogs preload for enabled environments when the app opens and are reused in Create Run. Reload the page to refresh the lists, or use Retry after a catalog failure. The grader can be selected immediately and is required only for model-based criteria.
 
-Load the suite **SauceDemo · TestCraft workshop**, select cases, and choose **Run selected**. Use **Duplicate** or **Save as new** to make variants. Every rerun generates a fresh response; it does not regrade the previous output.
+Load the suite **SauceDemo · TestCraft workshop**, then open **Runs → Create Run**. Choose an environment and models, select cases, and create the run. Use **Duplicate** in the Evaluations table to create a variant. Rename the new row inline, saving with Enter, its check icon, or a click outside. Then open the copy to modify it. Every rerun generates a fresh response; it does not regrade the previous output.
 
 The supplied HTML is **synthetic, simplified SauceDemo-inspired input**, not captured live HTML or a working login implementation. Credentials, messages, and alternate states are fictional workshop assumptions. The page URL is context; the evaluator does not visit it. Generated code is inspected as text, never executed. No score proves that a test passes on the live site.
 
@@ -17,7 +17,7 @@ The supplied HTML is **synthetic, simplified SauceDemo-inspired input**, not cap
 | 0–5 | Identify controls and fictional states in the HTML; agree what a useful login test should demonstrate. |
 | 5–15 | Load the suite, run 01 and 02, and compare literal checks with human review of the actual generated ideas. |
 | 15–25 | Run 03 and 05. Look for checks satisfied by comments or incidental words, and behaviors that literal checks cannot establish. |
-| 25–40 | Run 04, 06, and 07. Read each model verdict, evidence, and reason; discuss disagreements and optional weights. |
+| 25–40 | Run 04, 06, and 07. Expand each evaluation to read model verdicts and concise reasons; inspect generated output and discuss disagreements. |
 | 40–55 | Capture relevant HTML from SauceDemo using the approved extension workflow. Create a manual case with that HTML, URL, parameters, and criteria. Run twice and compare outputs and evidence. |
 | 55–60 | Share one improved criterion, one misleading score or limitation, and one remaining uncertainty. |
 
@@ -32,30 +32,34 @@ No template has a promised Pass, Fail, or score. Contains and Does not contain a
 | 03 · Code · Playwright structure | Imports, navigation, and assertion tokens are structural hints, not proof of implemented login behavior. | 1 generation |
 | 04 · Code · behavior review | Review executable actions, HTML-grounded selectors, and meaningful awaited assertions against the judge's evidence. | 1 generation + 1 judge |
 | 05 · Code · waiting and placeholders | Check absence of `waitForTimeout` and `TODO`. Comments count, alternate spellings escape the rules, and absence is not correctness. | 1 generation |
-| 06 · Code · selected login scenarios | Send three explicit login ideas to code generation; combine structural rules with a higher-weight semantic criterion. | 1 generation + 1 judge |
+| 06 · Code · selected login scenarios | Send three explicit login ideas to code generation; combine structural rules with an equally weighted semantic criterion. | 1 generation + 1 judge |
 | 07 · Ideas · grounded coverage | Combine a forbidden-fragment rule with semantic review of scenario coverage and unsupported invented features. | 1 generation + 1 judge |
 | 08 · Code · page object structure | Enable Page Object Model and selected ideas; inspect class/test/assertion fragments and whether the design is genuinely useful. | 1 generation |
 
-Descriptions are **grader context**, not extra instructions sent to TestCraft. The ideas and direct-code routes receive HTML and applicable generation settings. **Generate code from selected ideas** additionally sends the selected ideas. Changing a description or criterion does not direct generation; changing HTML or selected ideas does. Criteria and expected judgments never go to the generator.
+Legacy descriptions remain **grader context** and are no longer editable in the modal. The ideas and direct-code routes receive HTML and applicable generation settings. **Automate test ideas** additionally sends the selected ideas. Changing a criterion does not direct generation; changing HTML or selected ideas does. Criteria and expected judgments never go to the generator.
 
 ## Interpret results carefully
 
-Every criterion returns Pass or Fail with evidence and a reason. The backend calculates `100 × sum(passed weights) / sum(all weights)`. Weights default to 1; **Custom weights** allows 0.01–100. Overall Pass uses the fixed 80 threshold without rounding the decision. Inspect individual checks even when the overall result passes.
+Every criterion returns Pass or Fail with evidence and a reason. Workshop templates and the evaluation modal use equal weights of 1, so the score is passed criteria divided by total criteria. Dashboard scores display two decimals; overall Pass uses the fixed 0.80 threshold without rounding the decision. Red is below 0.50, yellow is 0.50 to below 0.80, and green is 0.80 or above. Inspect individual checks even when the overall result passes.
 
-For a weight exercise, take an observed run with mixed verdicts and calculate how different weights would change its aggregate using those same verdicts. Then save a variant and run it. That new run generates a new response, so any score difference cannot be attributed to weights alone. The app does not currently offer isolated regrading of a frozen output in the UI.
+To make a variant, duplicate the evaluation from its table row, rename it, and open the copy and use **Evaluation criteria** to add or remove a rule or model-graded requirement, then **Save** and run the copy. The Method selector applies only to the new criterion. Mixed rules remain Rule-based; combining rules and model criteria displays Hybrid. A new run generates a new response, so compare both the output and the criterion results.
 
-For model Pass verdicts, `L12: …` evidence comes from original output lines selected by the judge and extracted by the backend. Verify that those lines actually support the criterion; valid citations do not guarantee correct judgments. For Fail, the evidence explains missing or contradicted behavior. Invalid provider responses produce **Error**, not fabricated Fail scores.
+In Run Detail, use Suite, Model, Eval method, and score filters, sort any column, and expand multiple evaluations to compare concise criterion results. **Criteria met** counts passing criteria, independently of the weighted score. For a rule, enter an optional Description beside Method when adding it, or edit its description in the criteria list. Run Detail displays the saved description with the actual rule result underneath; rules without descriptions keep the placeholder. Descriptions explain the rule without changing matching or being sent to the generator or judge. Open **Inspect generated output** below the criteria to see the saved response.
+
+For model Pass verdicts, saved API evidence such as `L12: …` comes from original output lines selected by the judge and extracted by the backend. The compact page shows the criterion reason instead of evidence excerpts. Verify that those lines actually support the criterion; valid citations do not guarantee correct judgments. For Fail, the evidence explains missing or contradicted behavior. Invalid provider responses produce **Error**, not fabricated Fail scores.
 
 Repeated runs probe the whole generation-and-grading pipeline: both output and judge decisions can vary. Compare the actual responses before attributing a difference to the grader. Rule-based grading is deterministic for identical output and criteria, but TestCraft generation is not. Two matching results do not prove future determinism.
 
 ## Configuration and usage
 
-All eight cases need working TestCraft API generation. Blank Generation model uses that API's default. Cases 04, 06, and 07 also need backend `OPENAI_API_KEY` and access to their configured `gpt-4o-mini` grader. All model criteria within one case share one judge call. The grader key is never implicitly forwarded to TestCraft.
+All eight cases need working TestCraft API generation. In **Runs → Create Run**, choose an explicit generation model from the selected environment’s catalog. Cases 04, 06, and 07 also need backend `OPENAI_API_KEY` and access to the grader chosen from the same TestCraft model catalog for the run. All model criteria within one case share one judge call. The grader key is never implicitly forwarded to TestCraft.
 
-One full suite uses **8 generation + 3 judge = 11 app model-call attempts**; seven participants running it once use **77**. Reruns add calls. This is a request allowance, not a dollar estimate. Missing configuration prevents dispatch; dispatched requests can consume allowance even on provider errors. If generation is unavailable, review the inputs and criteria without inventing responses or results.
+One full suite uses **8 generation + 3 judge = 11 app model-call attempts**; seven participants running it once use **77**. Reruns add calls. These request counts are not dollar estimates. Manage budgets through API keys. Missing configuration prevents dispatch; provider errors may still incur charges. If generation is unavailable, review the inputs and criteria without inventing responses or results.
 
 ## Existing workshop data
 
-The input-only suite uses seed `workshop-v2-live`. Loading it imports a new suite alongside an older `workshop-v1` import, preserving old cases, participant edits, and run snapshots. Subsequent loads reuse the new suite. The editor no longer offers pasted output; opening an old pasted case shows a warning that saving switches to generation and adds one model call per run. Cancel leaves it untouched; historical runs always retain their original snapshots.
+The input-only suite uses seed `workshop-v2-live`. Loading it imports a new suite alongside an older `workshop-v1` import, preserving old cases, participant edits, and run snapshots. Subsequent loads reuse the new suite. The editor no longer offers pasted output; new runs always generate fresh TestCraft output, including for old pasted cases. Both model selections now belong to the run, not to the evaluation editor. Cancel leaves it untouched; historical runs always retain their original snapshots.
 
 Developer reference: `src/evals/workshop.mjs` exports only input definitions; `POST /api/workshop-suite {}` imports them into the current private workspace. Network-free tests validate all three TestCraft request routes, streamed output, rule/model/hybrid grading, budget accounting, reruns, errors, and import preservation. Canned answers used for historical grader regression live only in `tests/fixtures`, never in the runtime workshop module.
+
+In the evaluation editor, use **Add criterion** to draft a check. Review the numbered cards under **Added criteria**: each has a method badge above its text. Rule cards also have an editable description and a compact rule dropdown; changing a rule preserves its text and description.

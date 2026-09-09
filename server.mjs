@@ -4,6 +4,8 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Store } from './src/evals/store.mjs';
 import { Engine } from './src/evals/engine.mjs';
+import { summarizeRun } from './src/evals/runs.mjs';
+import { environments, localAvailable, resolveEnvironment, validateRunRequest, validateRunModels } from './src/evals/run-config.mjs';
 import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
@@ -17,10 +19,10 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
   const store = new Store(dbPath);
   let sessions;
   try { sessions = createSessions(store, env); } catch (error) { store.close(); throw error; }
-  const engine = new Engine(store, env, fetchImpl, sessions.limit);
-  const getModels = createModelCatalog(env, fetchImpl);
+  const engine = new Engine(store, env, fetchImpl);
+  const catalogs = Object.fromEntries(Object.entries(environments).map(([id, base]) => [id, createModelCatalog({ ...env, TESTCRAFT_BASE_URL: base }, fetchImpl)]));
   let stopping = false, shutdownPromise;
-  const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+  const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/run-detail.js': ['run-detail.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));
@@ -41,7 +43,8 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
     res.setHeader('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     try {
       const url = new URL(req.url, 'http://localhost');
-      sessions.checkOrigin(req, req.method === 'POST');
+      // External links may open the public dashboard; API requests remain protected.
+      sessions.checkOrigin(req, req.method === 'POST', url.pathname === '/');
       if (env.APP_ORIGIN?.startsWith('https://')) res.setHeader('strict-transport-security', 'max-age=31536000');
       if (req.method === 'GET' && url.pathname === '/healthz') {
         store.db.prepare('SELECT 1').get();
@@ -62,8 +65,13 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         if (req.method === 'POST') return json(res, 200, sessions.ensure(req, res, await readBody(req, 2048)));
       }
       const scope = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
-      if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, publicConfig(env));
-      if (req.method === 'GET' && url.pathname === '/api/models') return json(res, 200, await getModels());
+      const allowLocal = localAvailable(env, server.address());
+      if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { ...publicConfig(env), environments: Object.keys(environments).map(id => ({ id, label: { prod: 'Prod', dev: 'Dev', local: 'Local' }[id], enabled: id !== 'local' || allowLocal })) });
+      if (req.method === 'GET' && url.pathname === '/api/models') {
+        const environment = url.searchParams.get('environment') || 'prod';
+        resolveEnvironment(environment, allowLocal);
+        return json(res, 200, { ...await catalogs[environment](), environment });
+      }
       if (req.method === 'POST' && url.pathname === '/api/workshop-suite') {
         const body = await readBody(req, 2048);
         if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('Workshop import expects an empty JSON object.');
@@ -100,6 +108,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         const evaluation = store.evaluation(evaluationMatch[1], scope);
         if (!evaluation) throw new AppError('Evaluation not found.', 404);
         if (req.method === 'GET') return json(res, 200, evaluation);
+        if (req.method === 'PATCH') return json(res, 200, store.renameEvaluation(evaluation.id, await readBody(req, 2048), scope));
         if (req.method === 'PUT') {
           const body = await readBody(req);
           return json(res, 200, store.updateEvaluation(evaluation.id, validateEvaluationBody(body), body.revision, scope));
@@ -112,12 +121,15 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
         return json(res, 201, store.duplicateEvaluation(duplicateMatch[1], await readBody(req, 2048), scope));
       }
       if (url.pathname === '/api/runs') {
-        if (req.method === 'POST') return json(res, 202, engine.start((await readBody(req))?.evaluationIds, scope));
-        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).slice(0, 100).map(run => ({
-          id: run.id, createdAt: run.createdAt, status: run.status, finishedAt: run.finishedAt,
-          total: run.items.length, passed: run.items.filter(item => item.status === 'passed').length,
-          failed: run.items.filter(item => item.status === 'failed').length, errors: run.items.filter(item => item.status === 'error').length,
-        })) });
+        if (req.method === 'POST') {
+          const body = await readBody(req), settings = validateRunRequest(body, allowLocal);
+          engine.evaluationsForRun(body.evaluationIds, scope);
+          const catalog = await catalogs[settings.environment]();
+          // Re-read after the asynchronous catalog lookup: edits/deletions may have completed meanwhile.
+          const normalized = validateRunModels(settings, engine.evaluationsForRun(body.evaluationIds, scope), catalog);
+          return json(res, 202, engine.start(body.evaluationIds, scope, normalized));
+        }
+        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).map(summarizeRun) });
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([a-z0-9-]+)$/i);
       if (runMatch && req.method === 'DELETE') return json(res, 200, store.deleteRun(runMatch[1], scope));

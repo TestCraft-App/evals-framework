@@ -1,3 +1,4 @@
+import { openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 import { test as base, expect } from '@playwright/test';
 import { once } from 'node:events';
 import { createApp } from '../server.mjs';
@@ -6,12 +7,15 @@ import { workshopSuite } from './fixtures/pasted-grader-cases.mjs';
 const evidence = 'The code has no field entry or submission for any of the requested login scenarios.';
 const reason = 'Navigation and an assertion on true do not verify a login outcome.';
 const test = base.extend({
+  generationOutput: [workshopSuite.evaluations.find(item => item.name.startsWith('04')).actualOutput, { option: true }],
   graderReply: [{ id: 'c1', passed: false, evidence, reason }, { option: true }],
-  baseURL: async ({ graderReply }, use) => {
+  baseURL: async ({ graderReply, generationOutput }, use) => {
     const app = createApp({
       dbPath: ':memory:',
-      env: { NODE_ENV: 'test', WORKSHOP_ID: 'grader-browser-tests', WORKSHOP_MAX_MODEL_CALLS: '1', OPENAI_API_KEY: 'browser-test-only' },
+      env: { NODE_ENV: 'test', WORKSHOP_ID: 'grader-browser-tests', WORKSHOP_MAX_MODEL_CALLS: '2', OPENAI_API_KEY: 'browser-test-only' },
       fetchImpl: async (url, options) => {
+        if (url.endsWith('/api/models')) return Response.json({ models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] });
+        if (url.startsWith('https://api.testcraft.app/api/')) return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: generationOutput }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
         if (url !== 'https://api.openai.com/v1/chat/completions') throw new Error('Unexpected provider request');
         const request = JSON.parse(options.body);
         if (!request.response_format?.json_schema.strict) throw new Error('Expected strict grading');
@@ -33,39 +37,46 @@ async function runExample(page, caseNumber = '04') {
   const created = await page.request.post('/api/evaluations', { headers, data: example });
   expect(created.status()).toBe(201);
   await page.reload();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + example.name, exact: true }).check();
-  await page.getByRole('button', { name: 'Run selected', exact: false }).click();
-  await expect(page.locator('.result-body .badge').first()).toHaveText(/^(Passed|Failed|Error)$/);
+  await createSelectedRun(page);
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText(/^(Graded|Error)$/);
 }
 
-test('a justified model Fail displays its evidence and remains distinct from a grading error', async ({ page }) => {
+test('a justified model Fail displays its concise reason and remains distinct from a grading error', async ({ page }) => {
   await runExample(page);
-  await expect(page.locator('.result-body .badge').first()).toHaveText('Failed');
-  await expect(page.locator('.result-score')).toContainText('0 / 100');
-  await expect(page.locator('.check .badge')).toHaveText('Fail');
-  await expect(page.locator('.check blockquote')).toHaveText(evidence);
-  await expect(page.locator('.check')).toContainText(reason);
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText('Graded');
+  await expect(page.locator('.result-score')).toContainText('0.00');
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-verdict')).toHaveAttribute('aria-label', 'Fail');
+  await expect(page.locator('.criterion-reason')).toHaveText(reason);
+  await expect(page.locator('blockquote')).toHaveCount(0);
   await expect(page.locator('#run-detail [role="alert"]')).toHaveCount(0);
   await page.reload();
-  await expect(page.locator('.check blockquote')).toHaveText(evidence);
+  await page.locator('.detail-expand').click();
+  await expect(page.locator('.criterion-reason')).toHaveText(reason);
+  const runId = new URL(page.url()).hash.split('/')[1];
+  const run = await (await page.request.get('/api/runs/' + runId)).json();
+  expect(run.items[0].checks[0].evidence).toBe(evidence);
   const session = await (await page.request.get('/api/session')).json();
-  expect(session.budget.used).toBe(1);
+  expect(session).not.toHaveProperty('budget');
 });
 
 test.describe('provider violates the nonempty-evidence contract', () => {
   test.use({ graderReply: { id: 'c1', passed: false, evidence: '', reason: 'PRIVATE_REJECTED_PROVIDER_TEXT' } });
   test('shows a persisted field-specific error, no numeric grade, and no automatic extra call', async ({ page }) => {
     await runExample(page);
-    await expect(page.locator('.result-body .badge').first()).toHaveText('Error');
+    await expect(page.locator('.detail-eval-row .badge').first()).toHaveText('Error');
+    await page.locator('.detail-expand').click();
     await expect(page.locator('#run-detail [role="alert"]')).toContainText('empty evidence for criterion c1');
     await expect(page.locator('.result-score')).toHaveText('—');
-    await expect(page.locator('.check')).toHaveCount(0);
+    await expect(page.locator('.criterion-result')).toHaveCount(0);
     await expect(page.locator('#run-detail')).not.toContainText('PRIVATE_REJECTED_PROVIDER_TEXT');
     await page.reload();
+    await page.locator('.detail-expand').click();
     await expect(page.locator('#run-detail [role="alert"]')).toContainText('empty evidence for criterion c1');
     const session = await (await page.request.get('/api/session')).json();
-    expect(session.budget.used).toBe(1);
-    expect(session.budget.reserved).toBe(0);
+    expect(session).not.toHaveProperty('budget');
   });
 });
 
@@ -73,17 +84,21 @@ test.describe('passing source-line citations', () => {
   const strong = workshopSuite.evaluations.find(item => item.name.startsWith('06'));
   const outputLines = strong.actualOutput.split('\n');
   const line = outputLines.findIndex(text => text.includes('toHaveURL')) + 1;
-  test.use({ graderReply: { id: 'c3', passed: true, evidence: [line], reason: 'Mocked positive verdict for source-extraction UI coverage.' } });
-  test('displays the original source text and persists its line references', async ({ page }) => {
+  test.use({ generationOutput: strong.actualOutput, graderReply: { id: 'c3', passed: true, evidence: [line], reason: 'Mocked positive verdict for source-extraction UI coverage.' } });
+  test('displays saved output on demand and preserves source-line evidence in the run', async ({ page }) => {
     expect(line).toBeGreaterThan(0);
     await runExample(page, '06');
-    await expect(page.locator('.result-score')).toContainText('100');
-    await expect(page.locator('.check').last().locator('blockquote')).toHaveText(`L${line}: ${outputLines[line - 1]}`);
+    await expect(page.locator('.result-score')).toContainText('1.00');
+    await page.locator('.detail-expand').click();
+    await page.getByText('Inspect generated output', { exact: true }).click();
+    await expect(page.locator('.saved-output')).toHaveText(strong.actualOutput);
     await page.reload();
-    await expect(page.locator('.check').last().locator('blockquote')).toHaveText(`L${line}: ${outputLines[line - 1]}`);
+    await page.locator('.detail-expand').click();
+    await expect(page.locator('.criterion-reason').last()).toHaveText('Mocked positive verdict for source-extraction UI coverage.');
     const runId = new URL(page.url()).hash.split('/')[1];
     const run = await (await page.request.get('/api/runs/' + runId)).json();
     expect(run.items[0].checks[2].evidenceLines).toEqual([line]);
     expect(run.items[0].checks[2].evidenceSource).toBe('output_lines');
+    expect(run.items[0].checks[2].evidence).toBe(`L${line}: ${outputLines[line - 1]}`);
   });
 });

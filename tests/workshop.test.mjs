@@ -50,7 +50,7 @@ function sse(output, complete = true) {
   }), { headers: { 'content-type': 'text/event-stream' } });
 }
 
-function harness(t, { limit = 200, output, verdict, complete = true, env = {} } = {}) {
+function harness(t, { output, verdict, complete = true, env = {} } = {}) {
   const unintendedFetch = t.mock.method(globalThis, 'fetch', () => assert.fail('No real network is allowed in workshop tests.'));
   const store = new Store(':memory:');
   const requests = [];
@@ -74,7 +74,7 @@ function harness(t, { limit = 200, output, verdict, complete = true, env = {} } 
         : { id: criterion.id, passed: false, evidence: 'The output omits the required heading or negative-scenario assertions.', reason: 'The complete criterion is not demonstrated by this output.' };
     });
     return Response.json({ model: 'gpt-4o-mini', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks: request.verdicts }) } }] });
-  }, limit);
+  });
   t.after(async () => {
     await engine.drain();
     store.close();
@@ -113,6 +113,7 @@ test('runtime workshop exports eight input-only templates with no completed outp
     assert.equal(Object.getPrototypeOf(evaluation), Object.prototype);
     assert.equal(evaluation.source, 'testcraft_api');
     assert.equal(evaluation.model, '');
+    assert.ok(evaluation.criteria.every(criterion => criterion.weight === 1));
     assert.equal(evaluation.pageUrl, 'https://www.saucedemo.com');
     assert.match(evaluation.input, /synthetic, simplified/i);
     assert.match(evaluation.input, /description is not sent to TestCraft/i);
@@ -144,7 +145,7 @@ test('runtime workshop exports eight input-only templates with no completed outp
   assert.ok(workshopSuite.evaluations.some(evaluation => evaluation.pom));
 });
 
-test('templates validate without mutation and reserve eight generations plus three judges', () => {
+test('templates validate without mutation and require eight generations plus three judges', () => {
   const before = JSON.stringify(workshopSuite);
   assert.equal(PASS_THRESHOLD, 80);
   for (const evaluation of workshopSuite.evaluations) {
@@ -173,7 +174,7 @@ test('loading, importing, creating, and saving definitions make no provider call
   assert.deepEqual(store.runs(scope), []);
   assert.deepEqual(requests, []);
   assert.equal(engine.idle, true);
-  assert.deepEqual(store.budget(scope.workshopId, 200), { limit: 200, used: 0, reserved: 0, remaining: 200, unit: 'model_calls' });
+
 });
 
 for (const [index, fixture] of workshopSuite.evaluations.entries()) {
@@ -182,7 +183,7 @@ for (const [index, fixture] of workshopSuite.evaluations.entries()) {
     const saved = store.create(validateEvaluation(fixture), scope);
     const before = structuredClone(saved);
     const run = engine.start([saved.id], scope);
-    assert.equal(store.budget(scope.workshopId, 200).reserved, callsPerCase[index]);
+
     assert.equal(requests.length, 0);
     assert.equal(store.run(run.id, scope).items[0].output, null);
     await engine.drain();
@@ -201,7 +202,7 @@ for (const [index, fixture] of workshopSuite.evaluations.entries()) {
     assert.equal(item.outputSource, 'TestCraft v1 · ' + expected.path);
     assert.equal(item.generationModel, 'API default');
     assert.deepEqual(store.evaluation(saved.id, scope), before);
-    assert.deepEqual(item.evaluation, before, 'The run snapshot also preserves the input-only definition');
+    assert.deepEqual(item.evaluation, { ...before, suiteName: 'None' }, 'The run snapshot preserves the input-only definition and records its suite name');
     assertInputDefinition(item.evaluation);
 
     if (needsModelGrader(saved)) {
@@ -243,9 +244,7 @@ for (const [index, fixture] of workshopSuite.evaluations.entries()) {
     const total = saved.criteria.reduce((sum, criterion) => sum + criterion.weight, 0);
     assert.equal(item.score, Number((100 * earned / total).toFixed(12)));
     assert.equal(item.status, item.score >= PASS_THRESHOLD ? 'passed' : 'failed');
-    assert.deepEqual(store.budget(scope.workshopId, 200), {
-      limit: 200, used: callsPerCase[index], reserved: 0, remaining: 200 - callsPerCase[index], unit: 'model_calls',
-    });
+
   });
 }
 
@@ -323,26 +322,23 @@ test('version 2 imports separately from v1 and repeated loads preserve participa
   assert.deepEqual(requests, []);
 });
 
-test('a full suite is reserved atomically for 11 calls, including one judge call for multiple criteria', async t => {
-  const { store, engine, requests } = harness(t, { limit: 10 });
+test('a full suite makes 11 requests, including one judge call for multiple criteria', async t => {
+  const { store, engine, requests } = harness(t, { });
   const { evaluations } = store.importWorkshop(workshopSuite, scope);
-  assert.throws(() => engine.start(evaluations.map(evaluation => evaluation.id), scope), { status: 429 });
-  assert.equal(store.budget(scope.workshopId, 10).reserved, 0);
+
   assert.deepEqual(store.runs(scope), []);
   assert.deepEqual(requests, []);
-  engine.limit = 11;
   const run = engine.start(evaluations.map(evaluation => evaluation.id), scope);
-  assert.equal(store.budget(scope.workshopId, 11).reserved, 11);
-  assert.deepEqual(run.items.map(item => store.db.prepare('SELECT remaining FROM model_reservations WHERE item_id=?').get(item.id).remaining), callsPerCase);
+
   await engine.drain();
   assert.ok(store.run(run.id, scope).items.every(item => ['passed', 'failed'].includes(item.status)));
   assert.equal(requests.filter(request => request.url.startsWith(testcraftBaseUrl)).length, 8);
   assert.equal(requests.filter(request => request.url.startsWith(judgeBaseUrl)).length, 3);
-  assert.deepEqual(store.budget(scope.workshopId, 11), { limit: 11, used: 11, reserved: 0, remaining: 0, unit: 'model_calls' });
+
 });
 
 test('seven private full-suite runs consume 77 shared app call attempts', async t => {
-  const { store, engine, requests } = harness(t, { limit: 77 });
+  const { store, engine, requests } = harness(t, { });
   const runs = [];
   for (let index = 0; index < 7; index++) {
     const participantScope = { ...scope, ownerId: 'participant-' + index };
@@ -350,19 +346,19 @@ test('seven private full-suite runs consume 77 shared app call attempts', async 
     runs.push({ scope: participantScope, run: engine.start(evaluations.map(evaluation => evaluation.id), participantScope) });
   }
   assert.equal(requests.length, 0);
-  assert.equal(store.budget(scope.workshopId, 77).reserved, 77);
+
   await engine.drain();
   for (const participant of runs) assert.ok(store.run(participant.run.id, participant.scope).items.every(item => ['passed', 'failed'].includes(item.status)));
   assert.equal(requests.filter(request => request.url.startsWith(testcraftBaseUrl)).length, 56);
   assert.equal(requests.filter(request => request.url.startsWith(judgeBaseUrl)).length, 21);
-  assert.deepEqual(store.budget(scope.workshopId, 77), { limit: 77, used: 77, reserved: 0, remaining: 0, unit: 'model_calls' });
+
 });
 
-test('incomplete generation is an error without a fallback answer or judge call; unused reservations release', async t => {
+test('incomplete generation is an error without a fallback answer or judge call', async t => {
   const { store, engine, requests } = harness(t, { complete: false });
   const saved = store.create(validateEvaluation(workshopSuite.evaluations[5]), scope);
   const run = engine.start([saved.id], scope);
-  assert.equal(store.budget(scope.workshopId, 200).reserved, 2);
+
   await engine.drain();
   const item = store.run(run.id, scope).items[0];
   assert.equal(item.status, 'error');
@@ -371,8 +367,7 @@ test('incomplete generation is an error without a fallback answer or judge call;
   assert.equal(item.score, null);
   assert.deepEqual(item.checks, []);
   assert.equal(requests.length, 1);
-  assert.equal(store.budget(scope.workshopId, 200).used, 1);
-  assert.equal(store.budget(scope.workshopId, 200).reserved, 0);
+
   assert.deepEqual(store.evaluation(saved.id, scope), saved);
 });
 
@@ -390,16 +385,15 @@ test('invalid judge Pass evidence keeps generated run output but produces no fab
   assert.equal(item.score, null);
   assert.deepEqual(item.checks, []);
   assert.equal(requests.length, 2);
-  assert.equal(store.budget(scope.workshopId, 200).used, 2);
-  assert.equal(store.budget(scope.workshopId, 200).reserved, 0);
+
   assertInputDefinition(store.evaluation(saved.id, scope));
 });
 
-test('missing judge configuration consumes no generation call and releases both reservations', async t => {
+test('missing judge configuration prevents generation', async t => {
   const { store, engine, requests } = harness(t, { env: { OPENAI_API_KEY: '' } });
   const saved = store.create(validateEvaluation(workshopSuite.evaluations[3]), scope);
   const run = engine.start([saved.id], scope);
-  assert.equal(store.budget(scope.workshopId, 200).reserved, 2);
+
   await engine.drain();
   const item = store.run(run.id, scope).items[0];
   assert.equal(item.status, 'error');
@@ -407,6 +401,5 @@ test('missing judge configuration consumes no generation call and releases both 
   assert.equal(item.output, null);
   assert.equal(item.score, null);
   assert.deepEqual(requests, []);
-  assert.equal(store.budget(scope.workshopId, 200).used, 0);
-  assert.equal(store.budget(scope.workshopId, 200).reserved, 0);
+
 });

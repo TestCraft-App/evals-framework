@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApp, listen, close, client, waitForRun, testScope } from './helpers.mjs';
+import { createApp, listen, close, client, waitForRun, testScope, syntheticStream } from './helpers.mjs';
 import { Store } from '../src/evals/store.mjs';
 import { validateEvaluation } from '../src/evals/validation.mjs';
 import { workshopSuite } from '../src/evals/workshop.mjs';
@@ -22,6 +22,7 @@ async function result(response, status) {
 }
 const save = (person, data = base) => result(person.post('/api/evaluations', data), 201);
 const suite = (person, name = 'Login suite') => result(person.post('/api/suites', { name }), 201);
+const rename = (person, id, body) => person.request('/api/evaluations/' + id, { method: 'PATCH', body: JSON.stringify(body) });
 const run = async (person, id) => waitForRun(person, (await result(person.post('/api/runs', { evaluationIds: [id] }), 202)).id);
 function snapshot(evaluation, id = 'saved-run', status = 'completed', itemStatus = 'passed') {
   return { id, createdAt: '2026-01-01T00:00:00.000Z', status, items: [{
@@ -29,6 +30,53 @@ function snapshot(evaluation, id = 'saved-run', status = 'completed', itemStatus
     status: itemStatus, score: itemStatus === 'passed' ? 100 : null, events: [],
   }] };
 }
+
+test('suite deletion rechecks membership added by another store after an empty read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'testcraft-suite-delete-')), dbPath = join(dir, 'evals.sqlite');
+  const first = new Store(dbPath), second = new Store(dbPath);
+  try {
+    const group = first.createSuite({ name: 'Initially empty' }, testScope);
+    assert.deepEqual(first.evaluations(testScope), []);
+    const member = second.create({ ...validateEvaluation(base), suiteId: group.id }, testScope);
+    assert.throws(() => first.deleteSuite(group.id, testScope), { status: 409, message: 'Only empty suites can be deleted.' });
+    assert.deepEqual(first.suite(group.id, testScope), group);
+    assert.deepEqual(first.evaluation(member.id, testScope), member);
+    second.updateEvaluation(member.id, { ...member, suiteId: '' }, member.revision, testScope);
+    assert.deepEqual(first.deleteSuite(group.id, testScope), { deletedId: group.id });
+    assert.equal(second.suite(group.id, testScope), undefined);
+    assert.equal(second.evaluation(member.id, testScope).suiteId, '');
+  } finally { second.close(); first.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('name-only updates preserve copied legacy definitions and historical snapshots', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  try {
+    const person = await client(app);
+    const legacy = app.store.create({ ...base, schemaVersion: 1, criteria: 'Legacy scalar rubric', expectedOutput: 'Original target', customLegacyField: 'Retain me' }, person.scope);
+    const originalRun = snapshot(legacy); app.store.saveRun(originalRun, person.scope);
+    const copy = await result(person.post('/api/evaluations/' + legacy.id + '/duplicate', { name: 'Legacy (copy)' }), 201);
+    const renamed = await result(rename(person, copy.id, { name: '  Renamed copy  ', revision: copy.revision }), 200);
+    assert.deepEqual(renamed, { ...copy, name: 'Renamed copy', revision: 2 });
+    assert.deepEqual(await person.get('/api/evaluations/' + legacy.id), legacy);
+    assert.deepEqual(await person.get('/api/runs/' + originalRun.id), originalRun);
+    assert.equal((await rename(person, copy.id, { name: 'Stale name', revision: 1 })).status, 409);
+    assert.deepEqual(await person.get('/api/evaluations/' + copy.id), renamed);
+  } finally { await close(app); }
+});
+
+test('name-only updates validate names, exact fields, revisions, ownership and body limits', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  try {
+    const person = await client(app), other = await client(app), saved = await save(person);
+    for (const body of [null, [], {}, { name: 'Name' }, { name: '', revision: 1 }, { name: '   ', revision: 1 }, { name: 5, revision: 1 }, { name: 'x'.repeat(141), revision: 1 }, { name: 'Name', revision: '1' }, { name: 'Name', revision: 1, criteria: [] }]) {
+      assert.equal((await rename(person, saved.id, body)).status, 400);
+    }
+    assert.equal((await rename(person, saved.id, { name: 'x'.repeat(3000), revision: 1 })).status, 413);
+    assert.equal((await rename(other, saved.id, { name: 'Foreign name', revision: 1 })).status, 404);
+    assert.equal((await rename(person, 'missing', { name: 'Missing', revision: 1 })).status, 404);
+    assert.deepEqual(await person.get('/api/evaluations/' + saved.id), saved);
+  } finally { await close(app); }
+});
 
 test('private suites and evaluation revisions persist across restart and two store connections', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'testcraft-library-')), dbPath = join(dir, 'evals.sqlite');
@@ -138,14 +186,14 @@ test('competing evaluation and suite updates accept one revision and reject the 
 });
 
 test('edits invalidate latest results while duplication preserves the current definition with fresh identity', async () => {
-  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => syntheticStream() }));
   try {
     const person = await client(app), group = await suite(person);
     const saved = await save(person, { ...base, suiteId: group.id });
     const first = await run(person, saved.id);
     assert.equal(first.items[0].evaluation.revision, 1);
     assert.equal((await person.get('/api/evaluations')).evaluations[0].latest.runId, first.id);
-    const edited = await result(put(person, '/api/evaluations/' + saved.id, { ...base, actualOutput: 'no matches', revision: 1, suiteId: group.id }), 200);
+    const edited = await result(put(person, '/api/evaluations/' + saved.id, { ...base, actualOutput: 'no matches', criteria: ['missing new requirement'], revision: 1, suiteId: group.id }), 200);
     assert.equal((await person.get('/api/evaluations')).evaluations[0].latest, null);
     assert.deepEqual(await person.get('/api/runs/' + first.id), first);
     const duplicate = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', { name: '  Copy  ' }), 201);
@@ -187,7 +235,7 @@ test('legacy evaluations and run snapshots without revision behave as revision o
 });
 
 test('create, edit and duplicate retain normalized weighted hybrid criteria and allow moving to another suite', async () => {
-  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => syntheticStream() }));
   try {
     const person = await client(app), first = await suite(person, 'First'), second = await suite(person, 'Second');
     const criteria = [{ text: 'valid user', method: 'contains', weight: 2 }, { text: 'TODO', method: 'not_contains', weight: 1 }];
@@ -200,7 +248,7 @@ test('create, edit and duplicate retain normalized weighted hybrid criteria and 
     const copy = await result(person.post('/api/evaluations/' + saved.id + '/duplicate', {}), 201);
     assert.equal(copy.suiteId, second.id); assert.deepEqual(copy.criteria, updatedCriteria); assert.equal(copy.revision, 1);
     assert.deepEqual((await person.get('/api/runs/' + finished.id)).items[0].evaluation.criteria, criteria);
-    assert.equal((await person.get('/api/session')).budget.used, 0);
+
   } finally { await close(app); }
 });
 
@@ -218,12 +266,15 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     const active = await person.get('/api/runs/' + started.id);
     assert.equal(active.status, 'running'); assert.equal(active.items[2].status, 'queued');
     for (const evaluation of saved) assert.equal((await person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' })).status, 409);
-    const budget = (await person.get('/api/session')).budget;
-    assert.equal(budget.used, 2); assert.equal(budget.reserved, 1);
+
     await result(put(person, '/api/evaluations/' + saved[0].id, { ...base, suiteId: group.id, revision: 1 }), 200);
+    const beforeDelete = await person.get('/api/evaluations');
+    assert.deepEqual(await result(person.request('/api/suites/' + group.id, { method: 'DELETE' }), 409), { error: 'Only empty suites can be deleted.' });
+    assert.deepEqual(await person.get('/api/evaluations'), beforeDelete);
+    for (const current of beforeDelete.evaluations) await result(put(person, '/api/evaluations/' + current.id, { ...current, suiteId: '' }), 200);
     await result(person.request('/api/suites/' + group.id, { method: 'DELETE' }), 200);
     assert.deepEqual(await person.get('/api/runs/' + started.id), active);
-    assert.deepEqual((await person.get('/api/session')).budget, budget);
+
     for (const [index, original] of saved.entries()) {
       const current = await person.get('/api/evaluations/' + original.id);
       assert.equal(current.suiteId, ''); assert.equal(current.revision, index === 0 ? 3 : 2);
@@ -231,14 +282,12 @@ test('queued and running evaluations cannot be deleted; edits and suite unlinkin
     }
     release(); const finished = await waitForRun(person, started.id);
     assert.equal(calls, 3);
-    assert.deepEqual(finished.items.map(item => item.evaluation), saved);
+    assert.deepEqual(finished.items.map(item => item.evaluation), saved.map(e => ({ ...e, model: 'gpt-4o-mini', suiteName: group.name })));
     assert.ok((await person.get('/api/evaluations')).evaluations.every(e => e.latest === null));
-    const finishedBudget = (await person.get('/api/session')).budget;
     for (const evaluation of saved) assert.deepEqual(await result(person.request('/api/evaluations/' + evaluation.id, { method: 'DELETE' }), 200), { deletedId: evaluation.id });
     assert.deepEqual(await person.get('/api/evaluations'), { evaluations: [] });
     assert.deepEqual(await person.get('/api/runs/' + started.id), finished);
-    assert.deepEqual((await person.get('/api/session')).budget, finishedBudget);
-    assert.equal(finishedBudget.used, 3); assert.equal(finishedBudget.reserved, 0);
+
     assert.equal((await person.post('/api/runs', { evaluationIds: [saved[0].id] })).status, 404);
     assert.equal((await person.request('/api/evaluations/' + saved[0].id, { method: 'DELETE' })).status, 404);
   } finally { release(); await app.engine.drain(); await close(app); }
@@ -253,15 +302,15 @@ test('stored queued runs block deletion and suite deletion preserves unrelated m
     const unfiled = store.create(validateEvaluation(base), testScope);
     const queued = snapshot(member, 'queued-run', 'queued', 'queued'); store.saveRun(queued, testScope);
     assert.throws(() => store.deleteEvaluation(member.id, testScope), { status: 409 });
-    store.deleteSuite(group.id, testScope);
-    assert.equal(store.evaluation(member.id, testScope).suiteId, '');
-    assert.equal(store.evaluation(member.id, testScope).revision, 2);
+    assert.throws(() => store.deleteSuite(group.id, testScope), { status: 409, message: 'Only empty suites can be deleted.' });
+    assert.deepEqual(store.evaluation(member.id, testScope), member);
     assert.deepEqual(store.evaluation(unrelated.id, testScope), unrelated);
     assert.deepEqual(store.evaluation(unfiled.id, testScope), unfiled);
     assert.deepEqual(store.run(queued.id, testScope), queued);
     store.recoverInterruptedRuns();
     const recovered = store.run(queued.id, testScope);
     store.deleteEvaluation(member.id, testScope);
+    store.deleteSuite(group.id, testScope);
     assert.deepEqual(store.run(queued.id, testScope), recovered);
     assert.throws(() => store.deleteSuite(group.id, testScope), { status: 404 });
   } finally { store.close(); }
@@ -272,6 +321,7 @@ test('PUT, DELETE, duplication and workshop import enforce JSON, Origin and sess
   try {
     const person = await client(app), other = await client(app), saved = await save(person), group = await suite(person);
     const routes = [
+      ['PATCH', '/api/evaluations/' + saved.id, { name: 'Renamed', revision: 1 }],
       ['PUT', '/api/evaluations/' + saved.id, { ...base, revision: 1 }],
       ['PUT', '/api/suites/' + group.id, { name: 'Updated', revision: 1 }],
       ['DELETE', '/api/evaluations/' + saved.id, {}], ['DELETE', '/api/suites/' + group.id, {}],
@@ -292,28 +342,6 @@ test('PUT, DELETE, duplication and workshop import enforce JSON, Origin and sess
     assert.equal((await fetch(person.url + '/api/evaluations/' + saved.id, { method: 'DELETE', headers })).status, 200);
     assert.equal((await fetch(person.url + '/api/suites/' + group.id, { method: 'DELETE', headers })).status, 200);
   } finally { await close(app); }
-});
-
-test('mixed criteria reserve the grader call as well as generation and reject unaffordable batches atomically', () => {
-  const store = new Store(':memory:');
-  try {
-    const mixed = {
-      ...base, id: 'mixed-evaluation', source: 'testcraft_api', method: 'hybrid', judgeModel: 'gpt-4o-mini',
-      criteria: [{ id: 'c1', text: 'valid user', method: 'contains' }, { id: 'c2', text: 'Explains the expected behavior', method: 'model_grade' }],
-    };
-    const queued = snapshot(mixed, 'mixed-run', 'queued', 'queued');
-    assert.throws(() => store.reserveRun(queued, testScope, 1), { status: 429 });
-    assert.deepEqual(store.runs(testScope), []); assert.equal(store.budget('workshop', 2).reserved, 0);
-    store.reserveRun(queued, testScope, 2);
-    assert.equal(store.budget('workshop', 2).reserved, 2);
-    store.consumeCall(queued.items[0].id, 'workshop'); store.consumeCall(queued.items[0].id, 'workshop');
-    store.releaseCalls(queued.items[0].id);
-    assert.deepEqual(store.budget('workshop', 2), { limit: 2, used: 2, reserved: 0, remaining: 0, unit: 'model_calls' });
-    const pasted = snapshot({ ...mixed, source: 'pasted' }, 'pasted-mixed', 'queued', 'queued');
-    store.reserveRun(pasted, testScope, 3); assert.equal(store.budget('workshop', 3).reserved, 1);
-    const rules = snapshot({ ...mixed, source: 'pasted', criteria: [{ id: 'c1', text: 'valid', method: 'contains' }, { id: 'c2', text: 'TODO', method: 'not_contains' }] }, 'mixed-rules', 'queued', 'queued');
-    store.reserveRun(rules, testScope, 3); assert.equal(store.budget('workshop', 3).reserved, 1);
-  } finally { store.close(); }
 });
 
 test('workshop import is private, idempotent across restart, preserves edits and can be reimported after deletion', async () => {
@@ -346,7 +374,9 @@ test('workshop import is private, idempotent across restart, preserves edits and
     assert.deepEqual(restoredImport.suite, renamed); assert.deepEqual(restoredImport.evaluations, currentMembers);
     assert.deepEqual(await restored.get('/api/evaluations/' + first.id), edited);
     assert.deepEqual(await restored.get('/api/evaluations/' + existing.id), existing);
-    assert.equal((await restored.get('/api/session')).budget.used, 0);
+
+    await result(restored.request('/api/suites/' + imported.suite.id, { method: 'DELETE' }), 409);
+    for (const member of currentMembers) await result(put(restored, '/api/evaluations/' + member.id, { ...member, suiteId: '' }), 200);
     await result(restored.request('/api/suites/' + imported.suite.id, { method: 'DELETE' }), 200);
     const unlinked = await restored.get('/api/evaluations/' + first.id);
     assert.equal(unlinked.name, edited.name); assert.equal(unlinked.suiteId, ''); assert.equal(unlinked.revision, 3);
@@ -358,7 +388,7 @@ test('workshop import is private, idempotent across restart, preserves edits and
 });
 
 test('the live workshop import leaves earlier pasted suites, edits and run snapshots untouched', async () => {
-  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: noProvider }));
+  const app = await listen(createApp({ dbPath: ':memory:', fetchImpl: async () => syntheticStream() }));
   try {
     const person = await client(app);
     const originalSuite = await suite(person, 'Participant renamed the old workshop');
@@ -376,7 +406,7 @@ test('the live workshop import leaves earlier pasted suites, edits and run snaps
     const repeated = await result(person.post('/api/workshop-suite', {}), 200);
     assert.equal(repeated.suite.id, imported.suite.id);
     assert.equal(app.store.suites(person.scope).length, 2);
-    assert.equal((await person.get('/api/session')).budget.used, 0);
+
   } finally { await close(app); }
 });
 
@@ -396,7 +426,7 @@ test('workshop import rejects custom bodies and rolls back the suite and all fix
     assert.deepEqual(app.store.suites(person.scope), []);
     assert.deepEqual(app.store.evaluations(person.scope), [saved]);
     assert.deepEqual(app.store.runs(person.scope), []);
-    assert.equal(app.store.budget('workshop', 200).used, 0);
+
     app.store.db.exec('DROP TRIGGER fail_workshop_insert');
     await result(person.post('/api/workshop-suite', {}), 201);
   } finally { await close(app); }

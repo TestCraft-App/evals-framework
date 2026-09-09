@@ -1,4 +1,4 @@
-import { test, expect } from './browser-fixtures.mjs';
+import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/models', route => route.fulfill({ json: { source: 'testcraft', warning: null, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true }] } }));
@@ -19,11 +19,12 @@ async function auth(page) {
 }
 
 test('Load example and manual creation submit the same input-only contract and generate only on Run', async ({ page, generationCalls }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example', exact: true }).click();
-  await expect(page.locator('#source')).toHaveValue('testcraft_api');
+  await expect(page.locator('#source, #model, #judge-model')).toHaveCount(0);
   await expect(page.locator('#actual-output, #actual-field, #source option[value="pasted"]')).toHaveCount(0);
   const inputs = {};
-  for (const id of ['name', 'input', 'html', 'page-url']) inputs[id] = await page.locator('#' + id).inputValue();
+  for (const id of ['name', 'html']) inputs[id] = await page.locator('#' + id).inputValue();
   await page.getByRole('button', { name: 'Next', exact: false }).click();
   const loaded = await save(page);
   expect(loaded.payload).not.toHaveProperty('actualOutput');
@@ -34,26 +35,28 @@ test('Load example and manual creation submit the same input-only contract and g
   await page.getByRole('button', { name: 'New evaluation', exact: false }).click();
   for (const [id, value] of Object.entries(inputs)) await page.locator('#' + id).fill(id === 'name' ? value + ' manual' : value);
   await page.getByRole('button', { name: 'Next', exact: false }).click();
-  await page.locator('#method-family').selectOption('rule_based');
+  await page.locator('#method').selectOption('rule_based');
   for (const criterion of loaded.payload.criteria) {
     await page.getByLabel('New criterion', { exact: true }).fill(criterion.text);
-    await page.getByRole('button', { name: 'Add criteria', exact: false }).click();
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
   }
   const manual = await save(page);
   expect({ ...manual.payload, name: loaded.payload.name }).toEqual(loaded.payload);
   expect(generationCalls).toHaveLength(0);
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + inputs.name, exact: true }).check();
-  await page.getByRole('button', { name: /Run selected/ }).click();
-  await expect(page.locator('.result-score')).toContainText('100');
+  await createSelectedRun(page);
+  await expect(page.locator('.result-score')).toContainText('1.00');
   expect(generationCalls).toHaveLength(1);
   expect(generationCalls[0].url).toBe('https://api.testcraft.app/api/generate-ideas');
   expect(generationCalls[0].body.sourceCode).toBe(inputs.html);
   expect(generationCalls[0].body).not.toHaveProperty('criteria');
   expect(generationCalls[0].body).not.toHaveProperty('actualOutput');
-  await expect(page.locator('.result-body')).toContainText('TestCraft v1 · /api/generate-ideas');
+  await expect(page.locator('.detail-eval-row')).toContainText('Graded');
 });
 
 test('workshop templates have no supplied output and use the same editor and generation path', async ({ page, generationCalls }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
   const entries = (await (await page.request.get('/api/evaluations')).json()).evaluations;
@@ -61,27 +64,32 @@ test('workshop templates have no supplied output and use the same editor and gen
   expect(generationCalls).toHaveLength(0);
   const example = entries.find(e => e.name.startsWith('01'));
   await page.getByRole('button', { name: example.name, exact: true }).click();
-  await expect(page.locator('#source')).toHaveValue('testcraft_api');
+  await expect(page.locator('#source, #model, #judge-model')).toHaveCount(0);
   await expect(page.locator('#actual-output, #actual-field')).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + example.name, exact: true }).check();
-  await page.getByRole('button', { name: /Run selected/ }).click();
-  await expect(page.locator('.result-body .badge').first()).toHaveText(/^(Passed|Failed)$/);
+  await createSelectedRun(page);
+  await expect(page.locator('.detail-eval-row .badge').first()).toHaveText(/^Graded$/);
   expect(generationCalls).toHaveLength(1);
   expect(generationCalls[0].body.sourceCode).toBe(example.html);
-  await expect(page.locator('.output-card').last()).toContainText('Generated ideas:');
+  await page.locator('.detail-expand').click();
+  await page.getByText('Inspect generated output', { exact: true }).click();
+  await expect(page.locator('.saved-output')).toContainText('Generated ideas:');
 });
 
-test('editing an older pasted case warns before switching to generation and preserves its saved snapshot', async ({ page, generationCalls }) => {
+test('editing an older pasted case switches to generation on save and preserves its saved snapshot', async ({ page, generationCalls, browserApp }) => {
   const headers = await auth(page);
   const legacy = { name: 'Older pasted example', type: 'ideas', source: 'pasted', method: 'contains', html: '<button>Login</button>', actualOutput: 'OLD SUPPLIED RESPONSE', criteria: ['OLD'], judgeModel: '' };
   const saved = await (await page.request.post('/api/evaluations', { headers, data: legacy })).json();
-  const run = await (await page.request.post('/api/runs', { headers, data: { evaluationIds: [saved.id] } })).json();
+  const session = await (await page.request.get('/api/session')).json();
+  const run = { id: 'historical-pasted', status: 'completed', createdAt: '2025-01-01T00:00:00Z', items: [{ id: 'old-item', evaluationId: saved.id, evaluation: saved, status: 'passed', score: 100, output: legacy.actualOutput, checks: [], events: [] }] };
+  browserApp.store.saveRun(run, { ownerId: session.workspaceId, workshopId: 'browser-tests' });
   await page.reload();
   await page.getByRole('button', { name: legacy.name, exact: true }).click();
   await expect(page.locator('#actual-output, #actual-field')).toHaveCount(0);
   await expect(page.locator('#evaluation-dialog')).not.toContainText(legacy.actualOutput);
-  await expect(page.locator('#source-hint')).toContainText('1 additional model call');
+  await expect(page.locator('#source-hint, #input')).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect((await (await page.request.get('/api/evaluations/' + saved.id)).json()).source).toBe('pasted');
   await page.getByRole('button', { name: legacy.name, exact: true }).click();

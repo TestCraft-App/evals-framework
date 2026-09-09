@@ -19,7 +19,6 @@
     <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
   </section>
   <main class="shell" id="workspace" hidden>
-    <div class="page-heading"><h1>Workspace</h1><span class="usage-badge" id="model-allowance" role="status" aria-label="Shared model-call allowance"></span></div>
     <div class="notice" id="setup-notice" hidden></div>
     <div class="error-banner" id="app-error" role="alert" hidden></div>
     <nav class="tabs" role="tablist" aria-label="Workspaces">
@@ -28,28 +27,17 @@
     </nav>
 
     <section id="evaluations-panel" role="tabpanel" aria-labelledby="evaluations-tab">
-      <div class="stats">
-        <article><span>Total evaluations</span><strong id="stat-total">0</strong><small>Your saved evaluation dataset</small></article>
-        <article><span>Passed</span><strong id="stat-passed" class="teal">0</strong><small>Latest run meets the evaluation criteria</small></article>
-        <article><span>Needs attention</span><strong id="stat-failed">0</strong><small>Failed checks or execution errors</small></article>
-        <article><span>Average score</span><strong id="stat-score">—</strong><small>Graded results from latest runs</small></article>
-      </div>
       <section class="table-card" aria-label="Evaluation library">
-        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><button id="example-button" class="button">Load example</button><button id="workshop-button" class="button">Load workshop suite</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
-        <div class="suite-toolbar" aria-label="Suites">
-          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">Unfiled</option></select></label>
-          <button id="new-suite" class="button small">＋ New suite</button><button id="rename-suite" class="text-button" disabled>Rename suite</button><button id="delete-suite" class="text-button danger" disabled>Delete suite</button>
-        </div>
+        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><div class="library-actions"><button id="library-actions-toggle" class="button" aria-expanded="false" aria-controls="library-actions-menu">Actions <svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div id="library-actions-menu" class="library-actions-menu" hidden><button id="example-button" type="button">Load example</button><button id="workshop-button" type="button">Load workshop suite</button></div></div><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
-          <label>Type<select id="filter-type"><option value="">All types</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">All Rule-based</option><option value="model_based">All Model-based</option><option value="hybrid">Hybrid</option><optgroup label="Rule-based"><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></optgroup><optgroup label="Model-based"><option value="model_grade">LLM as a judge</option></optgroup></select></label>
+          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">None</option></select></label>
+          <label>Endpoint<select id="filter-type"><option value="">All endpoints</option><option value="ideas">Generate ideas</option><option value="code">Automate tests</option><option value="code_ideas">Automate test ideas</option></select></label>
+          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">rule-based</option><option value="model_based">model-graded</option><option value="hybrid">hybrid</option></select></label>
           <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
-          <label>Sort<select id="sort"><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="score">Highest score</option></select></label>
         </div>
-        <div class="selection-bar"><span id="selection-count">0 selected</span><button id="clear-selection" class="text-button" disabled>Clear selection</button><button id="run-selected" class="button primary small" disabled>▶ Run selected</button></div>
         <div class="table-scroll">
-          <table><thead><tr><th class="checkbox-cell"><input id="select-all" type="checkbox" aria-label="Select all visible evaluations"></th><th>Evaluation</th><th>Type</th><th>Framework / language</th><th>Method</th><th>Source</th><th>Status</th><th>Score</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
+          <table class="evaluations-table" aria-label="Evaluations"><colgroup><col><col class="eval-suite-column"><col class="eval-metadata-column"><col class="eval-metadata-column"><col class="eval-metadata-column"><col class="eval-actions-column"></colgroup><thead><tr><th aria-sort="none"><button data-eval-sort="name">Eval name</button></th><th aria-sort="none"><button data-eval-sort="suite">Suite</button></th><th aria-sort="none"><button data-eval-sort="type">Endpoint</button></th><th aria-sort="none"><button data-eval-sort="method">Method</button></th><th aria-sort="descending"><button data-eval-sort="createdAt">Created</button></th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
         </div>
         <div class="empty-state" id="empty-library"><div class="empty-icon" aria-hidden="true">☷</div><h3>Your first evaluation starts here.</h3><p>Add the HTML, define what a good output looks like, and choose how to measure it.</p><button class="button" id="empty-create">Create an evaluation</button></div>
         <div class="table-footer"><span id="filtered-count">0 evaluations</span></div>
@@ -57,18 +45,30 @@
     </section>
 
     <section id="runs-panel" role="tabpanel" aria-labelledby="runs-tab" hidden>
-      <div class="section-heading runs-heading"><h2>Evaluation runs</h2><button id="refresh-runs" class="button">↻ Refresh runs</button></div>
-      <div class="runs-layout"><aside class="run-history" aria-label="Run history"><h3>RECENT RUNS</h3><div id="run-list"></div></aside><div id="run-detail" class="run-detail"><div class="empty-state"><div class="empty-icon" aria-hidden="true">▷</div><h3>No run selected</h3><p>Select evaluations in the library and choose Run selected.</p></div></div></div>
+      <section id="runs-list-page">
+        <div class="section-heading runs-heading"><h2 tabindex="-1" id="runs-title">Runs</h2><button id="create-run" class="button primary">＋ Create Run</button></div>
+        <div class="filters">
+          <label class="search-field">Search runs<input id="run-search" type="search" placeholder="Search by name or ID…"></label>
+          <label>Status<select id="run-status"><option value="">All statuses</option><option value="active">In progress</option><option value="completed">Complete</option><option value="interrupted">Interrupted</option></select></label>
+          <label>Model<select id="run-model"><option value="">All models</option></select></label>
+        </div>
+        <div class="table-scroll"><table class="runs-table" aria-label="Runs"><thead><tr>
+          <th aria-sort="none"><button data-run-sort="name">Run name</button></th>
+          <th aria-sort="descending"><button data-run-sort="createdAt">Date</button></th>
+          <th aria-sort="none"><button data-run-sort="models">Models</button></th>
+          <th aria-sort="none"><button data-run-sort="total">Evals</button></th>
+          <th aria-sort="none"><button data-run-sort="status">Status</button></th>
+          <th aria-sort="none"><button data-run-sort="score">Score</button></th>
+          <th><span class="sr-only">Delete</span></th>
+        </tr></thead><tbody id="run-list"></tbody></table></div>
+        <div id="empty-runs" class="empty-state"><h3>Your runs will appear here.</h3><p>Create a run to generate outputs and evaluate your saved evaluations.</p></div>
+        <div class="table-footer"><span id="filtered-runs-count">0 of 0 runs</span></div>
+      </section>
+      <section id="run-detail-page" hidden><a class="back-to-runs" href="#runs">← Back to runs</a><div id="run-detail" class="run-detail"></div></section>
     </section>
     <footer class="app-footer">
       <div class="footer-meta">
         <span class="connection-status" id="connection">Connecting…</span>
-        <details class="workspace-details"><summary>Session details</summary>
-          <p>Private to this browser until <span id="session-expiry"></span>. Clearing cookies, changing browsers or session expiry starts a new workspace.</p>
-          <p>The model-call allowance is shared. Anyone with the app link can use it; it is not a dollar limit.</p>
-          <p>Pass is evidence, not a guarantee. Model graders can be wrong. Generated code is not executed.</p>
-          <p>Workspace ID: <code id="workspace-id"></code></p>
-        </details>
       </div>
       <a href="https://github.com/TestCraft-App/evals-framework" target="_blank" rel="noreferrer">GitHub ↗</a>
     </footer>
@@ -76,67 +76,92 @@
 
   <dialog id="evaluation-dialog" aria-labelledby="dialog-title">
     <form id="evaluation-form" novalidate>
-      <div class="dialog-heading"><div><h2 id="dialog-title">New evaluation</h2><p id="edit-version" hidden></p></div><div class="actions"><button type="button" id="duplicate-evaluation" class="button small" hidden>Duplicate</button><button type="button" id="close-dialog" class="icon-button" aria-label="Close evaluation">×</button></div></div>
+      <div class="dialog-heading"><div><h2 id="dialog-title">New evaluation</h2><p id="edit-version" hidden></p></div><div class="actions"><button type="button" id="delete-evaluation" class="icon-button danger" aria-label="Delete evaluation" title="Delete evaluation" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" id="close-dialog" class="icon-button" aria-label="Close evaluation">×</button></div></div>
       <ol class="wizard-steps" aria-label="Evaluation setup">
         <li id="step-indicator-1" aria-current="step"><span class="step-number">1</span><span>Parameters &amp; input</span></li>
-        <li id="step-indicator-2"><span class="step-number">2</span><span>Evaluation method</span></li>
+        <li id="step-indicator-2"><span class="step-number">2</span><span>Evaluation criteria</span></li>
       </ol>
       <div id="wizard-body">
         <section id="step-1" aria-label="Parameters and input">
+          <div class="evaluation-inputs evaluation-identity">
+            <label>Eval name<input name="name" id="name" maxlength="140" required placeholder="e.g. SauceDemo · login coverage"></label>
+            <div class="identity-row">
+              <div id="suite-control">
+                <label for="evaluation-suite">Suite</label>
+                <div class="suite-picker"><select name="suiteId" id="evaluation-suite"><option value="">None</option></select><button type="button" id="suite-actions" class="button" aria-label="Suite actions" aria-expanded="false" aria-controls="suite-menu">⋯</button></div>
+                <div id="suite-menu" class="suite-menu" hidden>
+                  <button type="button" id="create-suite" class="button">Create suite</button>
+                  <button type="button" id="rename-suite" class="button">Rename suite</button>
+                  <button type="button" id="delete-suite" class="button danger" aria-describedby="suite-delete-hint">Delete suite</button>
+                  <small id="suite-delete-hint" hidden>Only empty suites can be deleted.</small>
+                </div>
+                <div id="suite-editor" hidden>
+                  <label id="suite-name-field" for="suite-name"><span id="suite-editor-title">Create suite</span><input id="suite-name" maxlength="140" disabled></label>
+                  <p id="suite-delete-confirmation" hidden></p>
+                  <div class="actions"><button type="button" id="save-suite" class="button">Save suite</button><button type="button" id="cancel-suite" class="button">Cancel</button></div>
+                  <p id="suite-error" role="alert"></p>
+                </div>
+              </div>
+              <label>TestCraft endpoint<select id="type"><option value="ideas">Generate ideas</option><option value="code">Automate tests</option><option value="code_ideas">Automate test ideas</option></select></label>
+            </div>
+          </div>
           <div class="parameter-panel">
             <h3>Parameters</h3>
-            <div class="parameter-row">
-              <label>TestCraft endpoint<select id="type" name="type"><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-              <label>Output source<select id="source" name="source"><option value="testcraft_api">TestCraft v1 API</option><option value="llm">Backend LLM adapter</option></select></label>
-              <label>Framework<select id="framework" name="framework" aria-describedby="code-params-hint"><option value="playwright">Playwright</option><option value="cypress">Cypress</option><option value="selenium">Selenium</option></select></label>
-              <label>Language<select id="language" name="language" aria-describedby="code-params-hint"></select></label>
+            <div id="code-parameters" hidden>
+              <div class="automation-row">
+                <label>Framework<select id="framework" name="framework"><option value="playwright">Playwright</option><option value="cypress">Cypress</option><option value="selenium">Selenium</option></select></label>
+                <label>Language<select id="language" name="language"></select></label>
+              </div>
+              <label class="check-label"><input id="pom" type="checkbox">Page Object Model</label>
+              <label>Page URL<input name="pageUrl" id="page-url" type="url" maxlength="2000" placeholder="https://www.saucedemo.com/"></label>
             </div>
-            <p id="code-params-hint" class="field-hint">Framework and language apply only to Generate code.</p>
-            <div class="generation-options">
-              <label id="model-field">Generation model<input name="model" id="model" maxlength="120" placeholder="API default"></label>
-              <div class="code-options"><label class="check-label"><input id="pom" name="pom" type="checkbox">Page Object Model</label><label class="check-label"><input id="from-ideas" name="fromIdeas" type="checkbox">Generate code from selected ideas</label></div>
-            </div>
-            <p class="field-hint" id="source-hint"></p>
-          </div>
-          <div class="evaluation-inputs">
-            <label>Eval name<input name="name" id="name" maxlength="140" required placeholder="e.g. SauceDemo · login coverage"></label>
-            <label>Suite<select name="suiteId" id="evaluation-suite"><option value="">Unfiled</option></select></label>
-            <label>Test description <span class="optional">(optional)</span><textarea name="input" id="input" rows="2" maxlength="16000" placeholder="Add context for the evaluation, if needed."></textarea></label>
-            <label>HTML input<textarea name="html" id="html" class="code-input" rows="5" maxlength="100000" required spellcheck="false" placeholder="Paste the selected element or page HTML from TestCraft…"></textarea><small>Context only. HTML and scripts are never rendered or executed.</small></label>
-            <label>Page URL<input name="pageUrl" id="page-url" type="url" maxlength="2000" placeholder="https://www.saucedemo.com/"><small>Required for TestCraft code generation; optional for ideas.</small></label>
+            <label>HTML input<textarea name="html" id="html" class="code-input" rows="5" maxlength="100000" required spellcheck="false" placeholder="Paste the selected element or page HTML from TestCraft…"></textarea></label>
             <label id="ideas-field" hidden>Selected test ideas<textarea name="ideas" id="ideas" rows="3" maxlength="16000" placeholder="One test idea per line"></textarea></label>
           </div>
         </section>
-        <section id="step-2" aria-label="Evaluation method and criteria" hidden>
-          <div class="parameter-panel">
-            <h3>Evaluation method</h3>
-            <div class="method-row">
-              <label for="method-family">Evaluation family<select id="method-family"><option value="model_based">Model-based</option><option value="rule_based">Rule-based</option><option value="hybrid">Hybrid</option></select></label>
-              <label for="method">Method<select name="method" id="method"><option value="model_grade">LLM as a judge</option></select></label>
-              <label id="judge-field">Model grader<select id="judge-model" name="judgeModel" aria-describedby="models-status"></select></label>
-            </div>
-            <div id="models-feedback"><p class="field-hint" id="models-status" role="status"></p><button type="button" id="retry-models" class="text-button" hidden>Retry loading models</button></div>
-            <p id="method-hint" class="field-hint"></p>
-            <p id="grading-cost" class="method-meta"></p>
-            <p id="method-limitation" class="method-limitation"></p>
-          </div>
+        <section id="step-2" aria-label="Evaluation criteria" hidden>
           <div class="criteria-section" aria-labelledby="criteria-title">
-            <div class="criteria-heading"><h3 id="criteria-title">Evaluation criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
-            <p id="criteria-hint" class="field-hint"></p>
-            <label class="check-label weights-toggle"><input id="use-weights" type="checkbox">Custom weights <span class="optional">(optional)</span></label>
+            <section class="criterion-create-panel" aria-labelledby="criteria-title">
+            <h3 id="criteria-title">Add criterion</h3>
+            <div class="criteria-toolbar"><label for="method">Method<select id="method"><option value="rule_based">Rule-based</option><option value="model_based" selected>Model-graded</option></select></label><label id="criterion-description-field" for="criterion-description" hidden>Description<input id="criterion-description" maxlength="2000" placeholder="What this rule checks" disabled></label></div>
+            <label id="criterion-composer-label" for="criterion-draft">Criteria</label>
+            <div class="criteria-composer">
+              <label id="criterion-rule-field" for="criterion-rule" hidden><span class="sr-only">Criteria rule</span><select id="criterion-rule"><option value="contains">Contains</option><option value="not_contains">Not Contains</option><option value="exact_match">Exact match</option></select></label>
+              <label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="1" maxlength="8000"></textarea><button id="add-criterion" type="button" class="button">Add</button>
+            </div>
+            </section>
+            <section class="criteria-added-section" aria-labelledby="added-criteria-title">
+            <div class="criteria-heading"><h3 id="added-criteria-title">Added criteria</h3><span id="criteria-count" class="muted">0 criteria</span></div>
             <ol id="criteria-list" aria-label="Evaluation criteria"></ol>
-            <p id="criteria-empty" class="criteria-empty">What makes a good response? Add your first criterion below.</p>
-            <label id="criterion-method-field" class="criterion-method-field" hidden>New criterion method<select id="criterion-method"><option value="model_grade">LLM as a judge</option><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></select></label>
-            <div class="criteria-composer"><label for="criterion-draft" class="sr-only">New criterion</label><textarea id="criterion-draft" rows="2" maxlength="8000" placeholder="e.g. Includes negative login scenarios with clear expected behavior."></textarea><button id="add-criterion" type="button" class="button">＋ Add criteria</button></div>
-            <p class="field-hint" id="score-formula">Score = passed criteria / total criteria × 100. Every criterion returns Pass or Fail.</p>
+            <p id="criteria-empty" class="criteria-empty">No criteria added yet.</p>
+            </section>
           </div>
         </section>
       </div>
-      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="delete-evaluation" class="button danger" hidden>Delete evaluation</button><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-as-new" class="button" hidden>Save as new</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
+      <div class="dialog-footer"><span id="form-error" role="alert"></span><div class="wizard-actions"><button type="button" id="cancel-dialog" class="button">Cancel</button><button type="button" id="back-step" class="button" hidden>← Back</button><button type="submit" id="save-evaluation" class="button primary">Next →</button></div></div>
     </form>
   </dialog>
-  <dialog id="suite-dialog" class="compact-dialog" aria-labelledby="suite-title">
-    <form id="suite-form"><div class="dialog-heading"><h2 id="suite-title">New suite</h2></div><div class="compact-body"><label>Suite name<input id="suite-name" required maxlength="140"></label><p id="suite-error" class="session-error" role="alert"></p></div><div class="dialog-footer"><button id="cancel-suite" type="button" class="button">Cancel</button><button id="save-suite" type="submit" class="button primary">Save suite</button></div></form>
+  <dialog id="create-run-dialog" aria-labelledby="create-run-title">
+    <form id="create-run-form">
+      <div class="dialog-heading"><h2 id="create-run-title">Create Run</h2><button type="button" id="close-create-run" class="icon-button" aria-label="Close Create Run">×</button></div>
+      <div class="create-run-body">
+        <div class="run-settings">
+          <label>Environment<select id="create-environment"></select></label>
+          <label>Generation model<select id="create-generation-model" required><option value="">Select a model</option></select></label>
+          <label>Grader model<select id="create-grader-model"><option value="">Select a model</option></select></label>
+        </div>
+        <p id="run-models-status" class="field-hint" role="status"></p><button type="button" id="retry-run-models" class="text-button" hidden>Retry loading models</button>
+        <label>Run Description <span class="optional">(optional)</span><textarea id="run-description" maxlength="2000" rows="1"></textarea></label>
+        <div class="filters run-eval-filters">
+          <label class="search-field">Search evaluations<input id="create-eval-search" type="search" placeholder="Search by name…"></label>
+          <label>Endpoint<select id="create-eval-type"><option value="">All endpoints</option><option value="ideas">Generate ideas</option><option value="code">Automate tests</option><option value="code_ideas">Automate test ideas</option></select></label>
+          <label>Method<select id="create-eval-method"><option value="">All methods</option></select></label>
+        </div>
+        <div class="table-scroll"><table aria-label="Select evaluations for this run"><thead><tr><th><input id="create-select-all" type="checkbox" aria-label="Select all visible evaluations"></th><th>Evaluation name</th><th>Type</th><th>Method</th></tr></thead><tbody id="create-eval-rows"></tbody></table></div>
+        <p id="create-eval-empty" class="empty-state" hidden>No evaluations match these filters.</p>
+      </div>
+      <div class="dialog-footer"><div class="run-submit-status"><span id="create-selected-count">0 selected · maximum 50</span><p id="create-run-error" role="alert"></p></div><button type="button" id="cancel-create-run" class="button">Cancel</button><button id="submit-create-run" type="submit" class="button primary" disabled>Create Run</button></div>
+    </form>
   </dialog>
   <dialog id="delete-library-dialog" class="compact-dialog" role="alertdialog" aria-labelledby="delete-library-title" aria-describedby="delete-library-description">
     <form id="delete-library-form"><div class="dialog-heading"><h2 id="delete-library-title">Delete evaluation?</h2></div><div class="compact-body"><p id="delete-library-name" class="delete-run-summary"></p><p id="delete-library-description"></p><p id="delete-library-error" class="session-error" role="alert"></p></div><div class="dialog-footer"><button id="cancel-delete-library" type="button" class="button" autofocus>Cancel</button><button id="confirm-delete-library" type="submit" class="button danger-solid">Delete evaluation</button></div></form>

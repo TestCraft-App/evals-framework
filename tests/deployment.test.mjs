@@ -12,11 +12,9 @@ const env = {
 
 test('deploy config binds account, region, repository, main and immutable release identities', () => {
   const config = releaseConfig(env);
-  assert.equal(config.allowance, 200);
-  assert.equal(releaseConfig({ ...env, WORKSHOP_MAX_MODEL_CALLS: '0' }).allowance, 0);
   const manifest = manifestFor(config, 'sha256:' + 'b'.repeat(64));
   assert.equal(manifest.image, env.ECR_REPOSITORY_URI + '@sha256:' + 'b'.repeat(64));
-  assert.deepEqual(Object.keys(manifest).sort(), ['account', 'region', 'origin', 'allowance', 'secretArn', 'workshop', 'release', 'image'].sort());
+  assert.deepEqual(Object.keys(manifest).sort(), ['account', 'region', 'origin', 'secretArn', 'workshop', 'release', 'image'].sort());
   assert.equal(JSON.stringify(manifestFor(releaseConfig({ ...env, OPENAI_API_KEY: 'never-copy', AWS_SECRET_ACCESS_KEY: 'never-copy' }), 'sha256:' + 'b'.repeat(64))).includes('never-copy'), false);
   assert.throws(() => manifestFor(config, 'latest'));
 });
@@ -26,7 +24,7 @@ test('wrong accounts, PRs, malformed identifiers and shell payloads fail before 
     GITHUB_REPOSITORY: 'someone/fork', GITHUB_REF: 'refs/pull/1/merge', GITHUB_SHA: 'main', GITHUB_RUN_ID: '123;command', GITHUB_RUN_ATTEMPT: '1\n2',
     AWS_ACCOUNT_ID: '999999999999', AWS_REGION: 'eu-central-1', AWS_INSTANCE_ID: 'i-123;command', AWS_ARTIFACT_BUCKET: 'bucket/../target',
     ECR_REPOSITORY_URI: '999999999999.dkr.ecr.us-east-1.amazonaws.com/evals', AWS_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:999999999999:secret:other',
-    APP_ORIGIN: 'https://example.cloudfront.net/path', WORKSHOP_ID: 'workshop\nOPENAI_API_KEY=bad', WORKSHOP_MAX_MODEL_CALLS: '1.5',
+    APP_ORIGIN: 'https://example.cloudfront.net/path', WORKSHOP_ID: 'workshop\nOPENAI_API_KEY=bad',
   };
   for (const [key, value] of Object.entries(invalid)) assert.throws(() => releaseConfig({ ...env, [key]: value }), key);
   for (const origin of ['http://example.cloudfront.net', 'https://example.cloudfront.net/', 'https://user:password@example.com', 'https://example.com?other']) assert.throws(() => releaseConfig({ ...env, APP_ORIGIN: origin }));

@@ -101,9 +101,9 @@ export const workshopSuite = {
       model: '', judgeModel: 'gpt-4o-mini', pageUrl, pom: false, fromIdeas: true, ideas: selectedIdeas,
       input: codeContext, html,
       criteria: [
-        { text: '@playwright/test', method: 'contains', weight: 10 },
-        { text: 'waitForTimeout', method: 'not_contains', weight: 10 },
-        { text: 'The code implements all three selected login ideas with executable field entry and submission, HTML-supported selectors, and meaningful awaited assertions for the success URL and heading or the appropriate visible error. Comments listing scenarios or API names are insufficient. Evaluate the artifact without claiming execution or verified live behavior.', method: 'model_grade', weight: 80 },
+        { text: '@playwright/test', method: 'contains', weight: 1 },
+        { text: 'waitForTimeout', method: 'not_contains', weight: 1 },
+        { text: 'The code implements all three selected login ideas with executable field entry and submission, HTML-supported selectors, and meaningful awaited assertions for the success URL and heading or the appropriate visible error. Comments listing scenarios or API names are insufficient. Evaluate the artifact without claiming execution or verified live behavior.', method: 'model_grade', weight: 1 },
       ],
     },
     {
@@ -112,8 +112,8 @@ export const workshopSuite = {
       model: '', judgeModel: 'gpt-4o-mini', pageUrl, pom: false, fromIdeas: false, ideas: '',
       input: ideasContext, html,
       criteria: [
-        { text: 'CAPTCHA', method: 'not_contains', weight: 20 },
-        { text: 'The ideas cover successful login, an invalid password, and a missing password as distinct scenarios, each with concrete actions and an observable expected outcome grounded in the supplied HTML and its illustrated states. Do not treat invented controls or unsupported authentication features as existing behavior.', method: 'model_grade', weight: 80 },
+        { text: 'CAPTCHA', method: 'not_contains', weight: 1 },
+        { text: 'The ideas cover successful login, an invalid password, and a missing password as distinct scenarios, each with concrete actions and an observable expected outcome grounded in the supplied HTML and its illustrated states. Do not treat invented controls or unsupported authentication features as existing behavior.', method: 'model_grade', weight: 1 },
       ],
     },
     {

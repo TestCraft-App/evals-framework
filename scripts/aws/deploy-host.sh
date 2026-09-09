@@ -14,7 +14,6 @@ jq -e 'type == "object" and
   (.release | test("^[a-f0-9]{40}$")) and
   (.workshop | test("^[A-Za-z0-9_-]{1,80}$")) and
   (.origin | test("^https://[a-zA-Z0-9.-]+$")) and
-  (.allowance | type == "number" and . >= 0 and . <= 100000 and . == floor) and
   (.secretArn | type == "string") and (.image | type == "string")' "$manifest" >/dev/null
 region=$(jq -r .region "$manifest")
 account=$(jq -r .account "$manifest")
@@ -62,7 +61,7 @@ aws ecr get-login-password --region "$region" | docker --config "$task_dir/docke
 docker --config "$task_dir/docker" pull "$image" >/dev/null
 # These are identifiers/settings, never API keys or AWS access credentials.
 jq -r '"APP_ORIGIN=" + .origin, "AWS_REGION=" + .region, "AWS_SECRET_ARN=" + .secretArn,
-  "WORKSHOP_ID=" + .workshop, "WORKSHOP_MAX_MODEL_CALLS=" + (.allowance|tostring),
+  "WORKSHOP_ID=" + .workshop,
   "APP_RELEASE=" + .release, "WORKSHOP_SESSION_HOURS=24", "AWS_EC2_METADATA_V1_DISABLED=true"' "$manifest" > "$task_dir/runtime.env"
 options=(--read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 128
   --memory 768m --cpus 1 --tmpfs /tmp:rw,noexec,nosuid,size=64m --env-file "$task_dir/runtime.env"

@@ -6,29 +6,31 @@ TestCraft's browser extension is the application being evaluated. This project s
 
 ## Participant flow
 
+Open the workshop URL directly or follow a shared link from another site or phone app in your browser. External links can load the public dashboard, which then creates or restores the browser's private session. Cross-site API access remains blocked.
+
 1. Inspect a UI with TestCraft and obtain its selected HTML.
 2. Open New evaluation. Step 1: choose the TestCraft endpoint and parameters, then provide a name, optional test description, HTML, and page URL. Framework/language apply only to code.
-3. Choose Next. Step 2: choose the evaluation family and concrete method. Rule-based offers Contains, Does not contain and Exact match; Model-based offers LLM as a judge, with a model dropdown. Add literal fragments for rules or observable quality criteria for the judge. Each method preserves its own draft while editing. No separate reference-response field or configurable percentage is required.
+3. Choose Next. Step 2: choose the evaluation family and concrete method. Rule-based offers Contains, Does not contain and Exact match; Model-based offers LLM as a judge. Choose models later in Create Run. Add literal fragments for rules or observable quality criteria for the judge. Each method preserves its own draft while editing. No separate reference-response field or configurable percentage is required.
 4. Save the case; repeat to build a dataset.
-5. Select cases and run them. The backend generates through TestCraft and applies the grader.
-6. Inspect actual output against the criteria, scores, evidence, and errors in Runs or in a separate browser tab.
+5. Open **Runs → Create Run**. Choose Prod/Dev/Local and a generation model, add an optional description below the selectors, then select evaluations using search and Type/Method filters. Choose a grader if needed. Create Run generates through TestCraft and applies the grader. Local is available only on a loopback development server.
+6. On the run's full-page detail, filter by Suite, Model, Eval method, or score range, and sort any column. The Eval method column and filter use rule-based, model-graded, and hybrid. Expand an evaluation to read its specific rule checks, criterion verdicts, and concise reasons; open **Inspect generated output** beneath them to review the saved response. **Back to runs** opens the table: search by date-based name or ID, filter status/model, and sort using column headers. Scores display from 0.00 to 1.00 and average available evaluation scores; partial coverage is labeled. Red is below 0.50, yellow is 0.50 to below 0.80, and green is 0.80 or above. Criteria met counts passing verdicts independently of weighted scores. Active runs update automatically. Model selections apply to the whole run. Both selectors offer the same TestCraft catalog models. Catalog failures offer an environment-specific cached list or Retry; no successful catalog means creation is blocked.
 7. Save a revised copy or rerun a case; compare historical snapshots without overwriting evidence.
-8. Optional cleanup: select a finished run and use **Delete run**, then confirm. This permanently removes that run's evidence, not its evaluations, and does not restore used model calls. Active runs are protected. Keep runs you still want to compare during the workshop.
+8. Optional cleanup: use a finished run's delete icon in the table or **Delete run** in detail, then confirm. This permanently removes that run's evidence, not its evaluations, and does not restore used model calls. Active runs are protected. Keep runs you still want to compare during the workshop.
 
 ## Exercises
 
-- **Credential-free baseline:** Load example uses synthetic pasted output and three Contains checks. Remove a phrase in a revised case and observe the computed score decrease.
+- **Rule-based baseline:** Load example supplies synthetic HTML and three Contains checks. Create a run with TestCraft generation; revise a criterion and compare the next run’s score.
 - **Text match versus quality:** a candidate can include required words but still be poor. Compare Rule-based → Contains to Model-based → LLM as a judge with an explicit quality rubric. Model-based is the family; LLM-as-a-judge is the implementation used here.
 - **Forbidden fragments:** use Does not contain with `waitForTimeout` and `TODO`; inspect the individual checks. Show that comments also match and different spellings may escape a literal check. The overall score is an average, not a guarantee that every criterion passed.
 - **Ideas coverage:** grade positive, negative, and boundary coverage of a login form. v1's ideas route consumes HTML; the separate intent is judge context.
 - **Code quality:** assess grounded selectors, meaningful assertions, and waiting in a selected framework/language. These are artifact checks, not runtime results.
-- **Code from ideas:** enable the selected-ideas option and enter one idea per line in its dedicated field for the automate-tests-ideas endpoint. The test description remains optional evaluator context.
+- **Code from ideas:** select Automate test ideas and enter one idea per line in its dedicated field.
 - **Error versus failure:** missing credentials or a failed provider call means Error and no score, not a failed quality check.
 - **Prompt injection:** use synthetic hostile HTML/output to study judge robustness. Never use real secrets or execute the generated code.
 
 ## Rubric example
 
-Use Add criteria for each item; all criteria have equal weight. The backend stores a list of strings:
+Select Model-graded and use **Add**, to the right of the text field, for each item. All criteria have equal weight; the backend stores objects with text, method, and weight. Example criterion texts:
 
 ```json
 [
@@ -43,10 +45,10 @@ Choose criteria for the generation type. The judge is not ground truth: compare 
 
 ## Setup and boundaries
 
-Use synthetic HTML fixtures, clear criteria, a working TestCraft API, and separate grader credentials supporting strict JSON-schema output. The dropdown loads TestCraft's public catalog through the backend; this does not verify access with your grader account. Verify a live generation and grader run with the workshop accounts before presenting; automated tests use mocks and cannot verify quota or availability. All new runs use a shared 80/100 policy, hidden from the form, to keep the exercise focused on the evaluation criteria.
+Use synthetic HTML fixtures, clear criteria, a working TestCraft API, and separate grader credentials supporting strict JSON-schema output. The dropdown loads TestCraft's public catalog through the backend; this does not verify access with your grader account. Verify a live generation and grader run with the workshop accounts before presenting; automated tests use mocks and cannot verify quota or availability. All new runs use a shared 0.80 displayed passing threshold (80 internally), hidden from the form, to keep the exercise focused on the evaluation criteria.
 
-Participants open the URL and automatically receive a private browser session, without accounts or an access code. Keep the same browser and hostname throughout the workshop; clearing cookies, changing devices or session expiry automatically starts a new empty workspace. The backend enforces ownership, and session cookies expire after 24 hours by default. Anyone with the URL can enter and consume the shared allowance, but cannot read another browser's evaluations or runs through the app.
+Participants open the URL and automatically receive a private browser session, without accounts or an access code. Keep the same browser and hostname throughout the workshop; clearing cookies, changing devices or session expiry automatically starts a new empty workspace. The backend enforces ownership, and session cookies expire after 24 hours by default. Anyone with the URL can enter and make provider requests, but cannot read another browser's evaluations or runs through the app.
 
-No workshop access secret is required. The global allowance defaults to 200 model-call attempts: generation and model grading each count as one. Simultaneous batches reserve their calls before starting; restarting or opening another browser does not reset usage. This is not a dollar cap. Pasted output with any Rule-based method remains available without model calls.
+No workshop access secret is required. Manage spending through API keys and provider-side budgets; the app does not enforce a call limit. Every new run generates through TestCraft, including legacy pasted definitions; historical evidence remains unchanged.
 
 AWS hosting still needs HTTPS, APP_ORIGIN, runtime secrets, one Node process and durable SQLite storage. Rehearse with two independent browser profiles and real provider credentials before the event. Generated-code execution, sandboxed browsers, extension UI automation, automatic DOM extraction, participant accounts/cross-device recovery, and hosting are not included in the current implementation.
