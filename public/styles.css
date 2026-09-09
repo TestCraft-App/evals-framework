@@ -2,8 +2,8 @@
 #create-run-dialog{width:min(1100px,calc(100% - 32px))}#create-run-form{display:flex;flex-direction:column;max-height:90vh}.create-run-body{overflow:auto;padding:24px;min-height:0}.run-settings{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin:18px 0}.run-eval-filters{padding:20px 0}.run-submit-status{margin-right:auto;font-size:.875rem}#create-run-error{color:#9a3434;margin-top:6px}#create-run-form .dialog-heading,#create-run-form .dialog-footer{flex-shrink:0}#create-run-form table{min-width:570px}@media(max-width:700px){.run-settings{grid-template-columns:1fr}.create-run-body{padding:16px}#create-run-form .dialog-footer{flex-wrap:wrap}.run-submit-status{flex-basis:100%}}
 #runs-list-page{background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden}
 #runs-list-page .runs-heading{padding:24px}
-.runs-table{min-width:950px}.runs-table th button{border:0;background:none;color:inherit;font:inherit;font-weight:600;padding:5px 0;white-space:nowrap}
-.runs-table th button::after{content:' ↕';color:var(--muted)}.runs-table th[aria-sort=ascending] button::after{content:' ↑';color:var(--teal)}.runs-table th[aria-sort=descending] button::after{content:' ↓';color:var(--teal)}
+.runs-table{min-width:950px}:is(.runs-table, .evaluations-table) th button{border:0;background:none;color:inherit;font:inherit;font-weight:600;padding:5px 0;white-space:nowrap}
+:is(.runs-table, .evaluations-table) th button::after{content:' ↕';color:var(--muted)}:is(.runs-table, .evaluations-table) th[aria-sort=ascending] button::after{content:' ↑';color:var(--teal)}:is(.runs-table, .evaluations-table) th[aria-sort=descending] button::after{content:' ↓';color:var(--teal)}
 .runs-table tbody tr{cursor:pointer}.runs-table tbody tr:focus-within{background:#f0f7f4}.runs-table .eval-name{white-space:nowrap}.runs-table .score{white-space:nowrap}.runs-table .row-meta{font-weight:400}
 .run-delete{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:36px}.back-to-runs{display:inline-block;margin:0 0 18px;font-size:.875rem}
 *{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}a{color:var(--teal);text-decoration:none}a:hover{text-decoration:underline}h1,h2,h3,p{margin:0}button:focus-visible,a:focus-visible{outline:3px solid #3dafa1;outline-offset:3px}[hidden]{display:none!important}
@@ -106,9 +106,6 @@ html { scrollbar-gutter: stable; }
 .criteria-composer .button { min-height: 42px; }
 #models-feedback { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 #models-feedback .text-button { padding: 0; }
-.suite-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; padding: 0 24px 20px; }
-.suite-toolbar > label { min-width: 200px; max-width: 360px; flex: 1; }
-.suite-toolbar .text-button { min-height: 38px; }
 .row-actions { display: flex; gap: 4px; align-items: center; }
 .actions { flex-wrap: wrap; }
 .weights-toggle { margin-top: 14px; margin-bottom: 0; font-weight: 400; }
@@ -192,3 +189,19 @@ html { scrollbar-gutter: stable; }
 .detail-empty{text-align:center;padding:20px;color:var(--muted)}
 @media(max-width:760px){.detail-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.run-heading{gap:12px}.run-heading h3{flex-basis:100%}.criterion-reason{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3}}
 @media(max-width:520px){#run-detail .run-top{padding:16px}.detail-filters{padding:16px 16px 0}.detail-count{padding:12px 16px}.detail-table-scroll{margin:0 16px 16px}.criterion-panel{max-width:calc(100vw - 100px);padding:14px}.detail-table .detail-expansion>td{background:#f8faf9}}
+
+.eval-action{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:36px}.evaluations-table{min-width:960px;table-layout:fixed}.evaluations-table tbody tr:focus-within{background:#f0f7f4}
+
+/* Leave room for the full text line inside fixed-height filter controls. */
+.filters select{padding-block:0;line-height:normal}
+.evaluations-table th:last-child,.evaluations-table td:last-child{padding-right:24px}
+.evaluations-table .row-actions{justify-content:flex-end}
+.library-actions{position:relative}
+.library-actions-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:10;min-width:200px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #1b362a20}
+.library-actions-menu button{display:block;width:100%;border:0;border-radius:4px;background:none;color:#36534b;text-align:left;padding:10px 12px;font-size:.875rem;white-space:nowrap}
+.library-actions-menu button:hover:not(:disabled),.library-actions-menu button:focus-visible{background:#f0f7f4}
+
+.evaluations-table .eval-name,.evaluations-table .eval-suite{display:block;width:100%;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.evaluations-table .eval-suite-column{width:18%}.evaluations-table .eval-metadata-column{width:148px}.evaluations-table .eval-actions-column{width:154px}
+#library-actions-toggle{display:inline-flex;align-items:center;justify-content:center;gap:8px}.actions-chevron{flex:none}#library-actions-toggle[aria-expanded=true] .actions-chevron{transform:rotate(180deg)}

@@ -28,20 +28,16 @@
 
     <section id="evaluations-panel" role="tabpanel" aria-labelledby="evaluations-tab">
       <section class="table-card" aria-label="Evaluation library">
-        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><button id="example-button" class="button">Load example</button><button id="workshop-button" class="button">Load workshop suite</button><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
-        <div class="suite-toolbar" aria-label="Suites">
-          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">Unfiled</option></select></label>
-          <button id="new-suite" class="button small">＋ New suite</button><button id="rename-suite" class="text-button" disabled>Rename suite</button><button id="delete-suite" class="text-button danger" disabled>Delete suite</button>
-        </div>
+        <div class="section-heading"><h2>Evaluation library</h2><div class="actions"><div class="library-actions"><button id="library-actions-toggle" class="button" aria-expanded="false" aria-controls="library-actions-menu">Actions <svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div id="library-actions-menu" class="library-actions-menu" hidden><button id="example-button" type="button">Load example</button><button id="workshop-button" type="button">Load workshop suite</button></div></div><button id="new-button" class="button primary">＋ New evaluation</button></div></div>
         <div class="filters">
           <label class="search-field">Search evaluations<input id="search" type="search" placeholder="Search by name or input…"></label>
-          <label>Type<select id="filter-type"><option value="">All types</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
-          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">All Rule-based</option><option value="model_based">All Model-based</option><option value="hybrid">Hybrid</option><optgroup label="Rule-based"><option value="contains">Contains</option><option value="not_contains">Does not contain</option><option value="exact_match">Exact match</option></optgroup><optgroup label="Model-based"><option value="model_grade">LLM as a judge</option></optgroup></select></label>
+          <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">Unfiled</option></select></label>
+          <label>Endpoint<select id="filter-type"><option value="">All endpoints</option><option value="ideas">Generate ideas</option><option value="code">Generate code</option></select></label>
+          <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">rule-based</option><option value="model_based">model-graded</option><option value="hybrid">hybrid</option></select></label>
           <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
-          <label>Sort<select id="sort"><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="score">Highest score</option></select></label>
         </div>
         <div class="table-scroll">
-          <table><thead><tr><th>Evaluation</th><th>Type</th><th>Framework / language</th><th>Method</th><th>Source</th><th>Status</th><th>Score</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
+          <table class="evaluations-table" aria-label="Evaluations"><colgroup><col><col class="eval-suite-column"><col class="eval-metadata-column"><col class="eval-metadata-column"><col class="eval-metadata-column"><col class="eval-actions-column"></colgroup><thead><tr><th aria-sort="none"><button data-eval-sort="name">Eval name</button></th><th aria-sort="none"><button data-eval-sort="suite">Suite</button></th><th aria-sort="none"><button data-eval-sort="type">Endpoint</button></th><th aria-sort="none"><button data-eval-sort="method">Method</button></th><th aria-sort="descending"><button data-eval-sort="createdAt">Created</button></th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
         </div>
         <div class="empty-state" id="empty-library"><div class="empty-icon" aria-hidden="true">☷</div><h3>Your first evaluation starts here.</h3><p>Add the HTML, define what a good output looks like, and choose how to measure it.</p><button class="button" id="empty-create">Create an evaluation</button></div>
         <div class="table-footer"><span id="filtered-count">0 evaluations</span></div>
@@ -156,9 +152,6 @@
       </div>
       <div class="dialog-footer"><div class="run-submit-status"><span id="create-selected-count">0 selected · maximum 50</span><p id="create-run-error" role="alert"></p></div><button type="button" id="cancel-create-run" class="button">Cancel</button><button id="submit-create-run" type="submit" class="button primary" disabled>Create Run</button></div>
     </form>
-  </dialog>
-  <dialog id="suite-dialog" class="compact-dialog" aria-labelledby="suite-title">
-    <form id="suite-form"><div class="dialog-heading"><h2 id="suite-title">New suite</h2></div><div class="compact-body"><label>Suite name<input id="suite-name" required maxlength="140"></label><p id="suite-error" class="session-error" role="alert"></p></div><div class="dialog-footer"><button id="cancel-suite" type="button" class="button">Cancel</button><button id="save-suite" type="submit" class="button primary">Save suite</button></div></form>
   </dialog>
   <dialog id="delete-library-dialog" class="compact-dialog" role="alertdialog" aria-labelledby="delete-library-title" aria-describedby="delete-library-description">
     <form id="delete-library-form"><div class="dialog-heading"><h2 id="delete-library-title">Delete evaluation?</h2></div><div class="compact-body"><p id="delete-library-name" class="delete-run-summary"></p><p id="delete-library-description"></p><p id="delete-library-error" class="session-error" role="alert"></p></div><div class="dialog-footer"><button id="cancel-delete-library" type="button" class="button" autofocus>Cancel</button><button id="confirm-delete-library" type="submit" class="button danger-solid">Delete evaluation</button></div></form>

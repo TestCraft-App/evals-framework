@@ -6,14 +6,14 @@ const languages = { playwright: ['typescript','javascript','python','java','csha
 const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
-let suites = [], suiteEditing = null, savingSuite = false, libraryDeleteTarget = null, deletingLibrary = false;
+let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
 let session = null, sessionTimer, sessionSetup;
 let currentMethod = null, methodDrafts = new Map(), familyChoices = {};
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
+let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
 let runSelection = new Set(), runCatalogs = new Map(), catalogLoads = new Map(), runCatalog = null, runModelsLoading = false, creatingRun = false, runDraftRevision = 0, catalogRequest = 0;
 const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
-const familyLabel = method => config?.evaluationMethods?.[method]?.familyLabel || (method === 'model_grade' ? 'Model-based' : 'Rule-based');
 const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
@@ -38,15 +38,16 @@ async function api(path, options) {
   return body;
 }
 function showConnecting() {
+  closeLibraryActions();
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
   methodDrafts.clear(); currentMethod = null; familyChoices = {};
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   closeRunDraft(); $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
-  ['suite-dialog', 'delete-library-dialog'].forEach(id => $(id).close());
-  suiteEditing = null; libraryDeleteTarget = null; savingEvaluation = false; savingSuite = false; deletingLibrary = false;
-  $('filter-suite').value = ''; renderSuites();
+  $('delete-library-dialog').close();
+  libraryDeleteTarget = null; savingEvaluation = false; deletingLibrary = false;
+  $('filter-suite').value = ''; evalSort = 'createdAt'; evalSortDirection = -1; renderSuites();
   $('run-search').value = ''; $('run-status').value = ''; $('run-model').value = ''; runSort = 'createdAt'; runSortDirection = -1; lastRunRows = null;
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
   $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
@@ -77,8 +78,11 @@ async function loadRuns() {
   if (request !== runsRequest) return;
   runs = data.runs; $('runs-count').textContent = runs.length; renderRunList();
 }
+const evaluationSuite = e => suites.find(s => s.id === e.suiteId)?.name || 'Unfiled';
+const evaluationMethod = e => e.method === 'hybrid' ? 'hybrid' : e.method === 'model_grade' ? 'model-graded' : 'rule-based';
 function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
+  const value = e => evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[e.type] : e[evalSort];
   return evaluations.filter(e => {
     const status = e.latest?.status || 'not_run';
     return (!query || (e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
@@ -86,17 +90,17 @@ function visibleEvaluations() {
       && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
       && (!$('filter-method').value || e.method === $('filter-method').value || config.evaluationMethods[e.method]?.family === $('filter-method').value)
       && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
-  }).sort((a,b) => $('sort').value === 'name' ? a.name.localeCompare(b.name) : $('sort').value === 'score' ? (b.latest?.score ?? -1) - (a.latest?.score ?? -1) : b.createdAt.localeCompare(a.createdAt));
+  }).sort((a, b) => String(value(a)).localeCompare(String(value(b))) * evalSortDirection || a.id.localeCompare(b.id));
 }
 function renderLibrary() {
   $('eval-count').textContent = evaluations.length;
   const visible = visibleEvaluations();
   $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
-    + '<td><button class="eval-name" data-inspect="' + e.id + '" title="Edit evaluation">' + escape(e.name) + '</button><div class="eval-id">' + escape(suites.find(s => s.id === e.suiteId)?.name || 'Unfiled') + ' · v' + (e.revision || 1) + '</div></td>'
-    + '<td>' + badge(e.type) + '</td><td>' + (e.type === 'ideas' ? '<span class="muted">Not applicable</span>' : escape(names[e.framework]) + '<span class="row-meta">' + escape(names[e.language]) + '</span>') + '</td>'
-    + '<td>' + escape(names[e.method]) + '<span class="row-meta">' + escape(familyLabel(e.method)) + '</span></td><td>' + escape(names[e.source]) + '</td><td>' + badge(e.latest?.status || 'not_run') + '</td>'
-    + '<td class="score">' + scoreMarkup(e.latest?.score) + '</td><td>' + escape(date(e.createdAt)) + '</td>'
-    + '<td><div class="row-actions">' + (e.latest ? '<button class="text-button" data-run-link="' + e.latest.runId + '">View run ↗</button>' : '') + '<button class="text-button" data-inspect="' + e.id + '" aria-label="Edit ' + escape(e.name) + '">Edit</button><button class="text-button" data-duplicate-evaluation="' + e.id + '" aria-label="Duplicate ' + escape(e.name) + '">Duplicate</button><button class="text-button danger" data-delete-evaluation="' + e.id + '" aria-label="Delete ' + escape(e.name) + '">Delete</button></div></td></tr>').join('');
+    + '<td><button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button></td>'
+    + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(e.type) + '</td>'
+    + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
+    + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
+  document.querySelectorAll('[data-eval-sort]').forEach(button => button.parentElement.setAttribute('aria-sort', button.dataset.evalSort === evalSort ? (evalSortDirection === 1 ? 'ascending' : 'descending') : 'none'));
   $('empty-library').hidden = visible.length > 0;
   $('empty-library').querySelector('h3').textContent = evaluations.length ? 'No evaluations match these filters.' : 'Your first evaluation starts here.';
   $('filtered-count').textContent = visible.length + ' of ' + evaluations.length + ' evaluations';
@@ -266,24 +270,6 @@ function renderSuites() {
     $(id).innerHTML = empty + suites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if ([...$(id).options].some(o => o.value === current)) $(id).value = current;
   }
-  const hasSuite = suites.some(s => s.id === $('filter-suite').value);
-  $('rename-suite').disabled = !hasSuite; $('delete-suite').disabled = !hasSuite;
-}
-function openSuiteForm(existing = null) {
-  suiteEditing = existing; $('suite-form').reset(); $('suite-error').textContent = '';
-  $('suite-title').textContent = existing ? 'Rename suite' : 'New suite'; $('suite-name').value = existing?.name || '';
-  $('suite-dialog').showModal(); lockBody(); $('suite-name').focus();
-}
-async function saveSuite(event) {
-  event.preventDefault(); if (savingSuite || !$('suite-form').reportValidity()) return;
-  const target = suiteEditing, requestSession = session;
-  savingSuite = true; $('save-suite').disabled = true; $('cancel-suite').disabled = true; $('suite-error').textContent = '';
-  let saved = false;
-  try {
-    const result = await api('/api/suites' + (target ? '/' + target.id : ''), { method: target ? 'PUT' : 'POST', body: JSON.stringify({ name: $('suite-name').value.trim(), ...(target ? { revision: target.revision || 1 } : {}) }) });
-    saved = true; $('suite-dialog').close(); await loadLibrary(); $('filter-suite').value = result.id; renderSuites(); renderLibrary(); toast('Suite saved.');
-  } catch (e) { if (requestSession === session) { if (saved) error('Suite saved. Reload to refresh the library.'); else $('suite-error').textContent = e.message; } }
-  finally { if (requestSession === session) { savingSuite = false; $('save-suite').disabled = false; $('cancel-suite').disabled = false; } }
 }
 async function duplicateEvaluation(id) {
   if (savingEvaluation) return;
@@ -579,15 +565,27 @@ async function route() {
 }
 $('evaluation-form').addEventListener('submit', saveEvaluation);
 ['new-button','empty-create'].forEach(id => $(id).addEventListener('click', () => openForm()));
-$('example-button').addEventListener('click', () => openForm(true));
-$('workshop-button').addEventListener('click', loadWorkshop);
-$('new-suite').addEventListener('click', () => openSuiteForm());
-$('rename-suite').addEventListener('click', () => openSuiteForm(suites.find(s => s.id === $('filter-suite').value)));
-$('delete-suite').addEventListener('click', () => askDeleteLibrary('suite', suites.find(s => s.id === $('filter-suite').value)));
-$('suite-form').addEventListener('submit', saveSuite);
-$('cancel-suite').addEventListener('click', () => { if (!savingSuite) $('suite-dialog').close(); });
-$('suite-dialog').addEventListener('cancel', event => { if (savingSuite) event.preventDefault(); });
-$('suite-dialog').addEventListener('close', lockBody);
+function closeLibraryActions(restoreFocus = false) {
+  $('library-actions-menu').hidden = true;
+  $('library-actions-toggle').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) $('library-actions-toggle').focus();
+}
+$('library-actions-toggle').addEventListener('click', () => {
+  const open = $('library-actions-menu').hidden;
+  $('library-actions-menu').hidden = !open;
+  $('library-actions-toggle').setAttribute('aria-expanded', String(open));
+});
+document.addEventListener('click', event => {
+  if (!event.target.closest('.library-actions')) closeLibraryActions();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('library-actions-menu').hidden) { event.preventDefault(); closeLibraryActions(true); }
+});
+document.querySelector('.library-actions').addEventListener('focusout', event => {
+  if (!event.currentTarget.contains(event.relatedTarget)) closeLibraryActions();
+});
+$('example-button').addEventListener('click', () => { closeLibraryActions(); openForm(true); });
+$('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(); });
 $('delete-library-form').addEventListener('submit', deleteLibrary);
 $('cancel-delete-library').addEventListener('click', () => { if (!deletingLibrary) $('delete-library-dialog').close(); });
 $('delete-library-dialog').addEventListener('cancel', event => { if (deletingLibrary) event.preventDefault(); });
@@ -632,7 +630,7 @@ $('criteria-list').addEventListener('click', event => {
 $('evaluation-form').addEventListener('input', resizeTextareas);
 new ResizeObserver(resizeTextareas).observe($('wizard-body'));
 $('framework').addEventListener('change', () => setLanguages());
-['search','filter-type','filter-method','filter-status','sort'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
+['search','filter-type','filter-method','filter-status'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
 $('filter-suite').addEventListener('change', () => { renderSuites(); renderLibrary(); });
 document.addEventListener('click', event => {
   const el = event.target.closest('button');
@@ -640,7 +638,6 @@ document.addEventListener('click', event => {
   if (el.dataset.inspect) openForm(false, evaluations.find(e => e.id === el.dataset.inspect));
   if (el.dataset.duplicateEvaluation) void duplicateEvaluation(el.dataset.duplicateEvaluation);
   if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));
-  if (el.dataset.runLink) location.hash = 'runs/' + el.dataset.runLink;
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
 });
 $('evaluations-tab').addEventListener('click', () => { location.hash = 'evaluations'; });
@@ -674,6 +671,11 @@ document.querySelector('.tabs').addEventListener('keydown', event => {
   }
 });
 ['run-search', 'run-status', 'run-model'].forEach(id => $(id).addEventListener(id === 'run-search' ? 'input' : 'change', renderRunList));
+document.querySelectorAll('[data-eval-sort]').forEach(button => button.addEventListener('click', () => {
+  const key = button.dataset.evalSort;
+  evalSortDirection = evalSort === key ? -evalSortDirection : key === 'createdAt' ? -1 : 1;
+  evalSort = key; renderLibrary();
+}));
 document.querySelectorAll('[data-run-sort]').forEach(button => button.addEventListener('click', () => {
   const key = button.dataset.runSort;
   runSortDirection = runSort === key ? -runSortDirection : ['createdAt', 'total', 'score'].includes(key) ? -1 : 1;

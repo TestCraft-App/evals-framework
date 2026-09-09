@@ -19,6 +19,7 @@ async function auth(page) {
 }
 
 test('Load example and manual creation submit the same input-only contract and generate only on Run', async ({ page, generationCalls }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example', exact: true }).click();
   await expect(page.locator('#source, #model, #judge-model')).toHaveCount(0);
   await expect(page.locator('#actual-output, #actual-field, #source option[value="pasted"]')).toHaveCount(0);
@@ -55,6 +56,7 @@ test('Load example and manual creation submit the same input-only contract and g
 });
 
 test('workshop templates have no supplied output and use the same editor and generation path', async ({ page, generationCalls }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(8);
   const entries = (await (await page.request.get('/api/evaluations')).json()).evaluations;

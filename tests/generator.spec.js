@@ -17,6 +17,7 @@ test.afterEach(() => expect(pageErrors).toEqual([]));
 test('create, persist, select and run an evaluation in the results tab', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Backend connected', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByLabel('Eval name', { exact: true }).fill('UI login coverage');
@@ -38,12 +39,14 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await page.reload();
   await expect(page.locator('.result-score')).toContainText('1.00');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
-  await expect(page.locator('#evaluation-rows .score')).toHaveText('1.00');
+  await page.locator('#filter-status').selectOption('passed');
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await expect(page.locator('#run-list .score')).toHaveText('1.00');
 });
 
 test('finished runs can be deleted with confirmation while evaluations stay runnable', async ({ page }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByLabel('Eval name', { exact: true }).fill('Keep this evaluation');
   await page.getByRole('button', { name: 'Next' }).click();
@@ -74,7 +77,8 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here.');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
-  await expect(page.locator('#evaluation-rows .badge.not_run')).toHaveText('Not run');
+  await page.locator('#filter-status').selectOption('not_run');
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
   await createSelectedRun(page);
@@ -82,6 +86,7 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
 });
 
 test('failed deletion keeps the run and lets the user retry or cancel', async ({ page }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
@@ -123,6 +128,7 @@ test('batch selection grades each case independently and preserves HTML as inert
 
 test('LLM as a judge has quality criteria and reports missing configuration honestly', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByLabel('Eval name', { exact: true }).fill('Judge configuration');
   await expect(page.getByRole('dialog').getByRole('combobox', { name: 'Framework', exact: true })).toBeDisabled();
@@ -212,6 +218,7 @@ test('code parameters and selected ideas validate independently of the optional 
 test('evaluation creation does not depend on the model catalog', async ({ page }) => {
   let calls = 0;
   await page.route('**/api/models*', route => { calls++; return route.fulfill({ status: 503, json: { error: 'Unavailable' } }); });
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('combobox', { name: 'Evaluation family', exact: true }).selectOption('model_based');
@@ -223,7 +230,8 @@ test('evaluation creation does not depend on the model catalog', async ({ page }
 });
 
 test('exact match has its own single-target draft and preserves Contains criteria when switching back', async ({ page }) => {
-  await page.goto('/'); await page.getByRole('button', { name: 'Load example' }).click();
+  await page.goto('/'); await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('dialog').getByRole('combobox', { name: 'Method', exact: true }).selectOption('exact_match');
   await expect(page.locator('#criteria-list li')).toHaveCount(0);
@@ -243,6 +251,7 @@ test('exact match has its own single-target draft and preserves Contains criteri
 });
 
 test('family switching restores rubric drafts and never turns them into literal checks', async ({ page }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('#method-family')).toHaveValue('rule_based');
@@ -265,6 +274,7 @@ test('family switching restores rubric drafts and never turns them into literal 
 });
 
 test('Does not contain saves a rule-based case and runs without a model grader', async ({ page }) => {
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load example' }).click();
   await page.getByLabel('Eval name', { exact: true }).fill('No placeholder code');
   await page.getByRole('button', { name: 'Next' }).click();
@@ -285,7 +295,8 @@ test('Does not contain saves a rule-based case and runs without a model grader',
 for (const viewport of [{ width: 1280, height: 650 }, { width: 390, height: 700 }]) {
   test(`modal keeps a single scroll area and accessible actions at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport); await page.goto('/');
-    await page.getByRole('button', { name: 'Load example' }).click();
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  await page.getByRole('button', { name: 'Load example' }).click();
     await page.locator('#html').fill('<form>\n' + '<button>Login</button>\n'.repeat(70) + '</form>');
     for (const step of [1, 2]) {
       if (step === 2) await page.getByRole('button', { name: 'Next' }).click();
