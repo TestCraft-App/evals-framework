@@ -163,6 +163,7 @@ for (const width of [1280, 390]) test(`generation dropdown supports multiple cho
   await expect(toggle).toContainText('gpt-4o-mini');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false'); await expect(options).toBeHidden();
   expect((await toggle.boundingBox()).height).toBeCloseTo((await page.locator('#create-grader-model').boundingBox()).height, 0);
+  for (const control of [toggle, page.locator('#create-grader-model'), page.locator('#create-environment')]) await expect(control).toHaveCSS('height', '41px');
   await toggle.focus(); await page.keyboard.press('Enter');
   await expect(toggle).toHaveAttribute('aria-expanded', 'true'); await expect(options).toBeVisible();
   await page.keyboard.press('Tab'); await expect(options.locator('input[value="gpt-4o-mini"]')).toBeFocused();

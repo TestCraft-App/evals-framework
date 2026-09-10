@@ -106,6 +106,9 @@ test('counts sort numerically and model totals retain units and state through po
   const run = { id: 'count-polling', createdAt: '2026-09-10T12:00:00Z', status: 'running', settings: { environment: 'prod', generationModels: ['gpt-4o-mini'], graderModel: 'gpt-4o-mini' }, items: [makeItem('ideas', 'ideas', 12), makeItem('code', 'code', 2), makeItem('pending', 'ideas', undefined)] };
   browserApp.store.saveRun(run, scope); await page.goto('/#runs/' + run.id);
   await expect(page.locator('.model-count-total')).toHaveText(['12 ideas', '2 automated tests']);
+  await expect(page.locator('.model-summary')).not.toContainText('Test counts sum measured outputs');
+  await expect(page.locator('#model-summary-help')).toHaveCount(0);
+  await expect(page.getByRole('table', { name: 'Model summary', exact: true })).not.toHaveAttribute('aria-describedby');
   await expect(page.locator('.detail-table th')).toHaveText(['Eval ID ↕', 'Eval name ↕', 'Suite ↕', 'Model ↕', 'Eval method ↕', 'Status ↕', 'Score ↕', 'Test count ↕', 'Criteria met ↕']);
   const ids = () => page.locator('.detail-eval-row').evaluateAll(rows => rows.map(row => row.dataset.detailItem));
   await page.locator('#detail-sort-count').click(); expect(await ids()).toEqual(['code', 'ideas', 'pending']);
