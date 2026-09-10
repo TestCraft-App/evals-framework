@@ -150,7 +150,9 @@ html { scrollbar-gutter: stable; }
 .run-settings>*{min-width:0}
 #create-generation-models{margin:0;padding:0;border:0;min-width:0}
 #create-generation-models legend{padding:0;font-size:.875rem;font-weight:500}
-.model-select-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;height:41px;margin-top:7px;padding:9px 10px;border:1px solid #cfdbd6;border-radius:6px;background:white;color:#294239;font-size:.875rem;text-align:left}
+.model-select-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin-top:7px;padding:9px 10px;border:1px solid #cfdbd6;border-radius:6px;background:white;color:#294239;font-size:.875rem;text-align:left}
+/* Align native selects and the custom toggle across browser/platform defaults. */
+.run-settings select,.run-settings .model-select-toggle{height:41px;padding-block:0}
 .model-select-toggle span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.model-select-toggle span:last-child{flex:none}
 .model-checklist{position:fixed;inset:auto;margin:0;padding:4px;max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;background:white;color:#294239;box-shadow:0 6px 20px #1b362a20}
 .model-checklist .model-option{display:flex;align-items:center;gap:8px;margin:0;padding:7px 8px;font-weight:400;cursor:pointer}
