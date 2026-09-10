@@ -34,7 +34,7 @@
           <label>Suite<select id="filter-suite"><option value="">All evaluations</option><option value="__unfiled">None</option></select></label>
           <label>Endpoint<select id="filter-type"><option value="">All endpoints</option><option value="ideas">Generate ideas</option><option value="code">Automate tests</option><option value="code_ideas">Automate test ideas</option></select></label>
           <label>Method<select id="filter-method"><option value="">All methods</option><option value="rule_based">rule-based</option><option value="model_based">model-graded</option><option value="hybrid">hybrid</option></select></label>
-          <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="error">Error</option><option value="active">In progress</option></select></label>
+          <label>Status<select id="filter-status"><option value="">All statuses</option><option value="not_run">Not run</option><option value="passed">Passed</option><option value="failed">Failed</option><option value="counted">Counted</option><option value="error">Error</option><option value="active">In progress</option></select></label>
         </div>
         <div class="table-scroll">
           <table class="evaluations-table" aria-label="Evaluations"><colgroup><col class="eval-id-column"><col><col class="eval-suite-column"><col class="eval-metadata-column"><col class="eval-metadata-column"><col class="eval-metadata-column"><col class="eval-actions-column"></colgroup><thead><tr><th aria-sort="none"><button data-eval-sort="reference">Eval ID</button></th><th aria-sort="none"><button data-eval-sort="name">Eval name</button></th><th aria-sort="none"><button data-eval-sort="suite">Suite</button></th><th aria-sort="none"><button data-eval-sort="type">Endpoint</button></th><th aria-sort="none"><button data-eval-sort="method">Method</button></th><th aria-sort="descending"><button data-eval-sort="createdAt">Created</button></th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="evaluation-rows"></tbody></table>
@@ -123,7 +123,8 @@
           <div class="criteria-section" aria-labelledby="criteria-title">
             <section class="criterion-create-panel" aria-labelledby="criteria-title">
             <h3 id="criteria-title">Add criterion</h3>
-            <div class="criteria-toolbar"><label for="method">Method<select id="method"><option value="rule_based">Rule-based</option><option value="model_based" selected>Model-graded</option></select></label><label id="criterion-description-field" for="criterion-description" hidden>Description<input id="criterion-description" maxlength="2000" placeholder="What this rule checks" disabled></label></div>
+            <div class="criteria-toolbar"><label for="method">Method<select id="method"><option value="rule_based">Rule-based</option><option value="model_based" selected>Model-graded</option><option value="test_count">Test count</option></select></label><label id="criterion-description-field" for="criterion-description" hidden>Description<input id="criterion-description" maxlength="2000" placeholder="What this rule checks" disabled></label></div>
+            <p id="test-count-hint" class="field-hint" hidden>The selected model grader counts test ideas or automated tests according to the endpoint. Add once per evaluation; the count does not affect the quality score.</p>
             <label id="criterion-composer-label" for="criterion-draft">Criteria</label>
             <div class="criteria-composer">
               <label id="criterion-rule-field" for="criterion-rule" hidden><span class="sr-only">Criteria rule</span><select id="criterion-rule"><option value="contains">Contains</option><option value="not_contains">Not Contains</option><option value="exact_match">Exact match</option></select></label>
@@ -147,7 +148,7 @@
       <div class="create-run-body">
         <div class="run-settings">
           <label>Environment<select id="create-environment"></select></label>
-          <label>Generation model<select id="create-generation-model" required><option value="">Select a model</option></select></label>
+          <fieldset id="create-generation-models"><legend id="generation-models-label">Generation models</legend><button type="button" id="generation-model-toggle" class="model-select-toggle" popovertarget="generation-model-options" aria-expanded="false" aria-controls="generation-model-options" aria-labelledby="generation-models-label generation-model-selection"><span id="generation-model-selection">Select models</span><span aria-hidden="true">▾</span></button><div id="generation-model-options" class="model-checklist" popover="auto" aria-label="Available generation models"></div></fieldset>
           <label>Grader model<select id="create-grader-model"><option value="">Select a model</option></select></label>
         </div>
         <p id="run-models-status" class="field-hint" role="status"></p><button type="button" id="retry-run-models" class="text-button" hidden>Retry loading models</button>
@@ -161,7 +162,7 @@
         <div class="table-scroll"><table aria-label="Select evaluations for this run"><thead><tr><th><input id="create-select-all" type="checkbox" aria-label="Select all visible evaluations"></th><th>Eval ID</th><th>Evaluation name</th><th>Suite</th><th>Endpoint</th><th>Method</th></tr></thead><tbody id="create-eval-rows"></tbody></table></div>
         <p id="create-eval-empty" class="empty-state" hidden>No evaluations match these filters.</p>
       </div>
-      <div class="dialog-footer"><div class="run-submit-status"><span id="create-selected-count">0 selected · maximum 50</span><p id="create-run-error" role="alert"></p></div><button type="button" id="cancel-create-run" class="button">Cancel</button><button id="submit-create-run" type="submit" class="button primary" disabled>Create Run</button></div>
+      <div class="dialog-footer"><div class="run-submit-status"><span id="create-selected-count">0 selected · maximum 50</span><span id="create-combination-count" class="field-hint" role="status"></span><p id="create-run-error" role="alert"></p></div><button type="button" id="cancel-create-run" class="button">Cancel</button><button id="submit-create-run" type="submit" class="button primary" disabled>Create Run</button></div>
     </form>
   </dialog>
   <dialog id="clear-workspace-dialog" class="compact-dialog" role="alertdialog" aria-labelledby="clear-workspace-title" aria-describedby="clear-workspace-description">

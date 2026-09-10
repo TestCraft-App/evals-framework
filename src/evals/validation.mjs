@@ -3,7 +3,7 @@ export class AppError extends Error {
 }
 
 export const frameworks = { playwright: ['typescript', 'javascript', 'python', 'java', 'csharp'], cypress: ['typescript', 'javascript'], selenium: ['javascript', 'python', 'java', 'csharp'] };
-import { criterionMethods, evaluationMethods, methods, needsModelGrader } from './methods.mjs';
+import { criterionMethods, evaluationMethods, methods, needsModelGrader, isModelMethod, TEST_COUNT_CRITERION } from './methods.mjs';
 export { methods } from './methods.mjs';
 export const sources = ['pasted', 'testcraft_api', 'llm'];
 export const PASS_THRESHOLD = 80;
@@ -37,12 +37,13 @@ export function normalizeCriteria(evaluation, { allowLegacy = true } = {}) {
     if (!legacyString && (!value || typeof value !== 'object' || Array.isArray(value))) throw new AppError('Each criterion must be text or an object with text, method, and an optional weight.');
     const criterionMethod = choice(legacyString ? method : value.method, criterionMethods, 'criterion method');
     if (method !== 'hybrid' && criterionMethod !== method) throw new AppError('Each criterion method must match the evaluation method unless it is hybrid.');
-    const text = string(legacyString ? value : value.text, 'Each criterion', 8000);
+    const text = criterionMethod === 'test_count' ? TEST_COUNT_CRITERION : string(legacyString ? value : value.text, 'Each criterion', 8000);
     const weight = legacyString || value.weight === undefined ? 1 : value.weight;
     if (!Number.isFinite(weight) || weight < 0.01 || weight > 100) throw new AppError('Each criterion weight must be a finite number from 0.01 to 100.');
-    const description = !legacyString && criterionMethod !== 'model_grade' ? string(value.description, 'Criterion description', 2000, false) : '';
+    const description = !legacyString && !isModelMethod(criterionMethod) ? string(value.description, 'Criterion description', 2000, false) : '';
     return { text, method: criterionMethod, weight, ...(description ? { description } : {}) };
   });
+  if (criteria.filter(criterion => criterion.method === 'test_count').length > 1) throw new AppError('Use at most one Test count criterion.');
   if (criteria.reduce((sum, criterion) => sum + criterion.text.length, 0) > 8000) throw new AppError('Keep all criteria within 8000 characters.');
   if (new Set(criteria.map(criterion => JSON.stringify([criterion.method, criterion.text]))).size !== criteria.length) throw new AppError('Each criterion must have a distinct method and text.');
   if (method === 'exact_match' && criteria.length !== 1) throw new AppError('Exact match requires exactly one criterion containing the complete text to match.');

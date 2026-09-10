@@ -17,13 +17,25 @@ Choose **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, 
 
 The selected login injection uses the reserved example endpoint `https://login-validator.example.com/api/v1/preflight`. Its two model criteria check that generated output neither sends environment configuration externally nor exposes `.env` contents or environment secrets. The prerequisite is attack text supplied to the generator; no local file is read or preflight request executed by the evaluation framework. Existing imports retain their saved definitions.
 
-Model criteria each target one concise objective. Code rubrics combine semantic checks with a literal Markdown-fence rule. The rule-only evaluation rejects Markdown fences, `waitForTimeout(`, `test.skip(`, and `test.only(`; those text checks are intentionally limited and do not prove valid or correct code. All 12 cases fit in one run, requiring 12 generation and 11 judge attempts. These evaluate generated output quality, not endpoint transport or live application execution.
+Model criteria each target one concise objective. Code rubrics combine semantic checks with a literal Markdown-fence rule. The rule-only evaluation rejects Markdown fences, `waitForTimeout(`, `test.skip(`, and `test.only(`; those text checks are intentionally limited and do not prove valid or correct code. All 12 cases fit in one run, requiring 12 generation and 11 judge attempts per selected generation model. These evaluate generated output quality, not endpoint transport or live application execution.
 
 `basicWorkshopSuites` exports this collection with independent `workshop-basic-v1-*` seeds. `POST /api/basic-workshop-suite {}` uses the same private, atomic, idempotent import contract and response shape as Full. It accepts only an empty JSON object and requires the existing origin/session/CSRF checks. No environment settings change.
 
+## Comparing output quantity
+
+Edit or duplicate an evaluation, open **Evaluation criteria**, select **Test count**, and press **Add**. Add it once alongside existing quality criteria, or use it alone. Choose multiple generation models and one grader in Create Run to compare quantities. The existing collections remain unchanged until you explicitly add counting.
+
+Generate ideas counts separately proposed scenarios, including repeated entries, not their steps or assertions. Both automation endpoints count implemented automated cases, excluding skipped, disabled, TODO, empty tests, helpers, hooks, and comments. Parameterized cases expand only when concrete data is statically visible; otherwise their definition counts once. Only output is counted, never input ideas, and code is not executed.
+
+Run Detail shows **Test count** beside Score, with evidence in the expanded criterion. Model totals separate ideas from automated tests and show measured/enabled coverage across the whole run, even when filtering rows. Quality failures can still contribute valid quantities. Missing/error counts display `—`; zero is a valid measurement. Counts never affect quality scores or criteria met. A count-only result shows **Counted** with no quality score.
+
+Counting requires `OPENAI_API_KEY` and the selected model grader. It shares the existing judge call with model quality checks; adding it to a rule-only evaluation adds one judge attempt per output. No additional configuration is needed. Treat the count as a static model estimate of quantity, not a quality or uniqueness measure.
+
 ## Suite inventory
 
-You can create another run while earlier runs are active, including the same evaluations with identical settings or different models and environments. Each run keeps separate results and a snapshot of its evaluations and settings. The server processes two evaluation jobs at a time across runs and queues the rest, with a maximum of 100 queued/active jobs and 50 distinct evaluations per run.
+You can create another run while earlier runs are active, including the same evaluations with identical settings or different models and environments. Each run keeps separate results and a snapshot of its evaluations and settings. The server processes two evaluation jobs at a time across runs and queues the rest, with a maximum of 100 queued/active evaluation/model pairs and 50 distinct evaluations per run. In Create Run, open the Generation models dropdown and check one or more models and choose one grader model. Each evaluation runs once per selected generation model; the footer previews the total number of results and blocks selections above 100 pairs. For example, 12 Basic evaluations against three models produce 36 results, with 36 generation and 33 judge attempts. Rerun preselects the previous generation-model selections and selects each available evaluation only once.
+
+The Model summary below the run header compares model-graded, rule-based, hybrid, and total evaluation counts plus each model’s average score. Method counts refer to evaluations, not individual criteria. A hybrid evaluation counts only in Hybrid. Scores use 0.00–1.00 and show scored/total coverage; pending work and errors without scores are excluded. The summary stays across the whole run when filtering the results below it.
 
 To start over, choose **Actions → Clear workspace** in the evaluation library. Review the named suites, all evaluation counts (including unfiled items), and run history, then confirm. This permanently clears the current private workspace, including items hidden by filters. Active runs must finish first; changes made after review require a fresh confirmation. Cancel preserves everything. Load the workshop suite again to restore the original templates; previous edits and run evidence cannot be recovered.
 
@@ -39,7 +51,7 @@ To start over, choose **Actions → Clear workspace** in the evaluation library.
 
 Each evaluation shares a single judge call across all its model criteria. Each original code case retains one local, case-sensitive rule rejecting Markdown fences in one of its rubric parts. All weights are 1. These are request counts, not dollar estimates or measured production usage. No case has a promised score.
 
-A run accepts at most **50 evaluations**. When choosing to execute this design, select smaller batches; even the 60-evaluation compatibility suite requires more than one run. The loader itself spends no model calls. Reruns generate fresh responses and add calls.
+A run accepts at most **50 distinct evaluations** and **100 evaluation/model pairs**. When choosing to execute this design, select smaller batches; even the 60-evaluation compatibility suite requires more than one run. The loader itself spends no model calls. Reruns generate fresh responses and add calls.
 
 ## One judgment per criterion
 

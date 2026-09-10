@@ -16,15 +16,16 @@ export function validateRunRequest(body, allowLocal) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('Expected a run configuration.');
   const testcraftBaseUrl = resolveEnvironment(body.environment, allowLocal);
   if (body.description !== undefined && (typeof body.description !== 'string' || body.description.length > 2000)) throw new AppError('Run description must be text up to 2000 characters.');
-  for (const field of ['generationModel', 'graderModel']) {
-    if (field === 'graderModel' && (body[field] === undefined || body[field] === '')) continue;
-    if (typeof body[field] !== 'string' || !/^[\w.:-]{1,120}$/.test(body[field])) throw new AppError(`Choose a valid ${field === 'generationModel' ? 'generation' : 'grader'} model.`);
-  }
-  return { description: (body.description || '').trim(), environment: body.environment, testcraftBaseUrl, generationModel: body.generationModel, graderModel: body.graderModel || '' };
+  // Accept the historical single-model request; persist new runs with a model list.
+  const generationModels = body.generationModels === undefined ? [body.generationModel] : body.generationModels;
+  const validModel = model => typeof model === 'string' && /^[\w.:-]{1,120}$/.test(model);
+  if (!Array.isArray(generationModels) || !generationModels.length || generationModels.length > 200 || generationModels.some(model => !validModel(model)) || new Set(generationModels).size !== generationModels.length) throw new AppError('Choose at least one distinct valid generation model (maximum 200).');
+  if (body.graderModel !== undefined && body.graderModel !== '' && !validModel(body.graderModel)) throw new AppError('Choose a valid grader model.');
+  return { description: (body.description || '').trim(), environment: body.environment, testcraftBaseUrl, generationModels: [...generationModels], graderModel: body.graderModel || '' };
 }
 export function validateRunModels(settings, evaluations, catalog) {
   if (!catalog.models.length) throw new AppError('Models are unavailable for this environment. Retry loading models.', 503);
-  if (!catalog.models.some(model => model.id === settings.generationModel)) throw new AppError('Choose a generation model available in this environment.');
+  if (settings.generationModels.some(id => !catalog.models.some(model => model.id === id))) throw new AppError('Choose generation models available in this environment.');
   const needsGrader = evaluations.some(evaluation => needsModelGrader({ ...evaluation, criteria: normalizeCriteria(evaluation) }));
   if (needsGrader && !catalog.models.some(model => model.id === settings.graderModel)) throw new AppError('Choose a grader model available in this environment.');
   return { ...settings, graderModel: needsGrader ? settings.graderModel : '' };

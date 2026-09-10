@@ -14,7 +14,7 @@ import { createModelCatalog } from '../src/evals/models.mjs';
 import { evaluationMethods, methods } from '../src/evals/methods.mjs';
 
 test('method catalog distinguishes families from implementations and derives family on the server', () => {
-  assert.deepEqual(methods, ['model_grade', 'contains', 'not_contains', 'exact_match', 'hybrid']);
+  assert.deepEqual(methods, ['model_grade', 'contains', 'not_contains', 'exact_match', 'hybrid', 'test_count']);
   assert.equal(evaluationMethods.model_grade.family, 'model_based');
   assert.equal(evaluationMethods.model_grade.label, 'LLM as a judge');
   for (const method of ['contains', 'not_contains', 'exact_match']) {

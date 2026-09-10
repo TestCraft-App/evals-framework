@@ -1,4 +1,4 @@
-import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
+import { test, expect, openRunCreator, createSelectedRun, selectGenerationModels } from './browser-fixtures.mjs';
 
 const rules = { name: 'Alpha rules', type: 'ideas', html: '<button>Login</button>', method: 'contains', criteria: ['valid credentials'] };
 test('new runs default to Dev and GPT-6 Luna and preserve explicit choices', async ({ page }) => {
@@ -6,14 +6,16 @@ test('new runs default to Dev and GPT-6 Luna and preserve explicit choices', asy
   await seed(page);
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click();
   await expect(page.locator('#create-environment')).toHaveValue('dev');
-  for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-6-luna');
-  await page.locator('#create-generation-model').selectOption('gpt-4o-mini');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-6-luna');
+  await expect(page.locator('#create-grader-model')).toHaveValue('gpt-6-luna');
+  await selectGenerationModels(page, ['gpt-4o-mini']);
   await page.locator('#create-environment').selectOption('prod');
-  await expect(page.locator('#create-generation-model')).toHaveValue('gpt-4o-mini');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-4o-mini');
   await expect(page.locator('#create-grader-model')).toHaveValue('gpt-6-luna');
   await page.locator('#cancel-create-run').click(); await page.locator('#create-run').click();
   await expect(page.locator('#create-environment')).toHaveValue('dev');
-  for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-6-luna');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-6-luna');
+  await expect(page.locator('#create-grader-model')).toHaveValue('gpt-6-luna');
 });
 
 test('Luna defaults apply after a failed catalog load is retried', async ({ page }) => {
@@ -23,7 +25,8 @@ test('Luna defaults apply after a failed catalog load is retried', async ({ page
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click();
   await expect(page.locator('#submit-create-run')).toBeDisabled();
   failed = false; await page.locator('#retry-run-models').click();
-  for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-6-luna');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-6-luna');
+  await expect(page.locator('#create-grader-model')).toHaveValue('gpt-6-luna');
 });
 
 test('rerun icon opens a reviewable draft and creates fresh output using current saved evaluations', async ({ page, browserApp, generationCalls }) => {
@@ -41,7 +44,7 @@ test('rerun icon opens a reviewable draft and creates fresh output using current
   await expect(page.getByRole('checkbox', { name: 'Select Alpha rules', exact: true })).toBeChecked();
   await expect(page.locator('#run-description')).toHaveValue(source.description);
   await expect(page.locator('#create-environment')).toHaveValue('dev');
-  await expect(page.locator('#create-generation-model')).toHaveValue('gpt-4o');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-4o');
   await expect(page.locator('#create-grader-model')).toHaveValue('gpt-4o-mini');
   expect(generationCalls).toHaveLength(0);
   await page.locator('#cancel-create-run').click(); await expect(button).toBeFocused();
@@ -53,7 +56,7 @@ test('rerun icon opens a reviewable draft and creates fresh output using current
   expect(generationCalls[0].body.model).toBe('gpt-4o');
   const newId = new URL(page.url()).hash.split('/')[1];
   expect(newId).not.toBe(source.id);
-  expect((await (await page.request.get('/api/runs/' + newId)).json()).settings).toEqual({ ...source.settings, graderModel: '', testcraftBaseUrl: 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app' });
+  expect((await (await page.request.get('/api/runs/' + newId)).json()).settings).toEqual({ environment: source.settings.environment, generationModels: [source.settings.generationModel], graderModel: '', testcraftBaseUrl: 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app' });
   expect((await (await page.request.get('/api/runs/' + source.id)).json()).items[0].output).toBe('Historical output');
 });
 
@@ -66,8 +69,8 @@ test('legacy reruns identify missing evaluations and never invent unavailable mo
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('[data-rerun="legacy-rerun"]').click();
   await expect(page.locator('#create-run-error')).toContainText('Some evaluations are no longer available');
   await expect(page.locator('#create-selected-count')).toContainText('1 selected');
-  await expect(page.locator('#create-generation-model')).toHaveValue('');
-  await expect(page.locator('#create-generation-model option[value="gpt-6-luna"]')).toHaveCount(0);
+  await expect(page.locator('#generation-model-options input:checked')).toHaveCount(0);
+  await expect(page.locator('#generation-model-options input[value="gpt-6-luna"]')).toHaveCount(0);
   await expect(page.locator('#submit-create-run')).toBeDisabled();
   await page.locator('#cancel-create-run').click();
   browserApp.store.deleteEvaluation(saved[0].id, scope);
@@ -110,7 +113,7 @@ test('catalogs preload once at startup and modal spacing stays compact with an a
     await expect(page.locator('#create-grader-model')).toBeEnabled();
   }
   await page.locator('#cancel-create-run').click(); await page.locator('#create-run').click();
-  await expect(page.locator('#create-generation-model option')).toHaveCount(4);
+  await expect(page.locator('#generation-model-options input')).toHaveCount(3);
   expect(reads).toHaveLength(3);
   await page.screenshot({ path: test.info().outputPath('compact-create-run.png'), fullPage: true });
 });
@@ -120,14 +123,15 @@ test('TestCraft models are selectable for both roles and parameters precede desc
   await page.route('**/api/models?environment=dev', route => route.fulfill({ json: { models: models.map(id => ({ id, label: id })), warning: null } }));
   await page.reload(); await expect(page.locator('#workspace')).toBeVisible();
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click();
-  for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-5.6-luna');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-5.6-luna');
+  await expect(page.locator('#create-grader-model')).toHaveValue('gpt-5.6-luna');
   await page.getByRole('checkbox', { name: 'Select Beta model', exact: true }).check();
   await expect(page.locator('#create-grader-model')).toBeEnabled();
-  for (const id of ['create-generation-model', 'create-grader-model']) {
-    await expect(page.locator('#' + id + ' option')).toHaveCount(4);
-    for (const model of models) { await page.locator('#' + id).selectOption(model); await expect(page.locator('#' + id)).toHaveValue(model); }
-    await expect(page.locator('#' + id + ' option:disabled')).toHaveCount(0);
-  }
+  for (const model of models) { await selectGenerationModels(page, [model]); await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', model); }
+  await expect(page.locator('#generation-model-options input:disabled')).toHaveCount(0);
+  await expect(page.locator('#create-grader-model option')).toHaveCount(4);
+  for (const model of models) { await page.locator('#create-grader-model').selectOption(model); await expect(page.locator('#create-grader-model')).toHaveValue(model); }
+  await expect(page.locator('#create-grader-model option:disabled')).toHaveCount(0);
   await expect(page.locator('#run-grader-hint')).toHaveCount(0);
   await expect(page.locator('#run-models-status')).toBeHidden();
   await expect(page.locator('#create-run-dialog')).not.toContainText('Models without verified');
@@ -151,6 +155,86 @@ async function seed(page, count = 3) {
   }
   return saved;
 }
+
+for (const width of [1280, 390]) test(`generation dropdown supports multiple choices, keyboard and dismissal at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 800 });
+  await seed(page); await openRunCreator(page);
+  const toggle = page.locator('#generation-model-toggle'), options = page.locator('#generation-model-options');
+  await expect(toggle).toContainText('gpt-4o-mini');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false'); await expect(options).toBeHidden();
+  expect((await toggle.boundingBox()).height).toBeCloseTo((await page.locator('#create-grader-model').boundingBox()).height, 0);
+  await toggle.focus(); await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true'); await expect(options).toBeVisible();
+  await page.keyboard.press('Tab'); await expect(options.locator('input[value="gpt-4o-mini"]')).toBeFocused();
+  await page.keyboard.press('Tab'); await expect(options.locator('input[value="gpt-4o"]')).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(toggle).toContainText('2 models selected'); await expect(options.locator('input:checked')).toHaveCount(2);
+  await expect(options).toBeVisible();
+  const bounds = await options.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+  expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y + bounds.height).toBeLessThanOrEqual(800);
+  await page.screenshot({ path: test.info().outputPath('generation-dropdown-' + width + '.png'), fullPage: true });
+  await page.locator('#create-run-title').click();
+  await expect(options).toBeHidden(); await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click(); await expect(options.locator('input:checked')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(options).toBeHidden(); await expect(toggle).toBeFocused();
+  await expect(page.locator('#create-run-dialog')).toBeVisible();
+  await expect(toggle).toContainText('2 models selected');
+});
+
+test('generation dropdown runs the full evaluation/model matrix and reruns retain every model once', async ({ page, browserApp, generationCalls }) => {
+  browserApp.engine.env.OPENAI_API_KEY = 'mock-judge';
+  const saved = await seed(page); await openRunCreator(page);
+  const models = page.getByRole('group', { name: 'Generation models', exact: true });
+  await page.locator('#generation-model-toggle').click();
+  await expect(models.getByRole('checkbox')).toHaveCount(3);
+  await page.locator('#create-select-all').check();
+  await page.locator('#generation-model-toggle').click();
+  await models.getByRole('checkbox', { name: 'gpt-4o-mini', exact: true }).uncheck();
+  await expect(page.locator('#submit-create-run')).toBeDisabled();
+  await models.getByRole('checkbox', { name: 'gpt-4o-mini', exact: true }).check();
+  const second = models.getByRole('checkbox', { name: 'gpt-4o', exact: true });
+  await second.focus(); await page.keyboard.press('Space'); await expect(second).toBeChecked(); await expect(second).toBeFocused();
+  await expect(page.locator('#create-combination-count')).toHaveText('3 evals × 2 models = 6 results · maximum 100');
+  await page.locator('#create-eval-search').fill('Alpha');
+  await page.locator('#create-environment').selectOption('prod');
+  await expect(models.locator('input:checked')).toHaveCount(2);
+  await expect(page.locator('#create-grader-model')).toHaveValue('gpt-4o-mini');
+  await createSelectedRun(page);
+  await expect(page.locator('.detail-eval-row')).toHaveCount(6);
+  const summary = page.getByRole('table', { name: 'Model summary', exact: true });
+  await expect(summary.locator('tbody tr')).toHaveCount(2);
+  for (const model of ['gpt-4o-mini', 'gpt-4o']) {
+    const row = summary.getByRole('row').filter({ has: page.getByRole('rowheader', { name: model, exact: true }) });
+    await expect(row.locator('td')).toHaveText(['1', '2', '0', '3', '0.67 3/3 scored']);
+  }
+  expect(generationCalls).toHaveLength(6);
+  const runId = new URL(page.url()).hash.split('/')[1];
+  const run = await (await page.request.get('/api/runs/' + runId)).json();
+  expect(run.settings.generationModels).toEqual(['gpt-4o-mini', 'gpt-4o']);
+  for (const model of run.settings.generationModels) expect(new Set(run.items.filter(item => item.evaluation.model === model).map(item => item.evaluationId))).toEqual(new Set(saved.map(e => e.id)));
+  await page.locator('#detail-filter-model').selectOption('gpt-4o');
+  await expect(page.locator('.detail-eval-row')).toHaveCount(3); await expect(summary.locator('tbody tr')).toHaveCount(2);
+  await page.reload(); await expect(summary.locator('.model-scored-count')).toHaveText(['3/3 scored', '3/3 scored']);
+  await page.getByRole('link', { name: 'Back to runs' }).click();
+  await page.locator('[data-rerun="' + runId + '"]').click();
+  await expect(models.locator('input:checked')).toHaveCount(2);
+  await expect(page.locator('#create-selected-count')).toContainText('3 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('6 results');
+  expect(generationCalls).toHaveLength(6);
+});
+
+test('the modal counts evaluation/model combinations against the shared capacity', async ({ page }) => {
+  await seed(page, 50); await openRunCreator(page); await page.locator('#create-select-all').check();
+  await selectGenerationModels(page, ['gpt-4o-mini', 'gpt-4o', 'o3-mini']);
+  await expect(page.locator('#create-combination-count')).toHaveText('50 evals × 3 models = 150 results · maximum 100');
+  await expect(page.locator('#submit-create-run')).toBeDisabled();
+  await page.locator('#generation-model-toggle').click();
+  await page.getByRole('group', { name: 'Generation models', exact: true }).getByRole('checkbox', { name: 'o3-mini', exact: true }).uncheck();
+  await expect(page.locator('#create-combination-count')).toContainText('100 results');
+  await expect(page.locator('#submit-create-run')).toBeEnabled();
+});
 test('run modal shows suite and endpoint columns and filters by suite before endpoint', async ({ page }) => {
   await seed(page); await openRunCreator(page);
   const dialog = page.locator('#create-run-dialog'), table = dialog.getByRole('table', { name: 'Select evaluations for this run' });
@@ -181,14 +265,14 @@ test('run modal selects across filters, requires a conditional grader and create
   await expect(page.locator('#create-eval-rows')).toContainText('Gamma code'); await page.locator('#create-eval-method').selectOption('model_based');
   await expect(page.locator('#create-eval-empty')).toBeVisible();
   await page.locator('#run-description').fill('Dev check <script>inert</script>');
-  await expect(page.locator('#create-generation-model')).toBeEnabled();
-  await page.locator('#create-generation-model').selectOption('gpt-4o');
+  await expect(page.locator('#create-generation-models')).toBeEnabled();
+  await selectGenerationModels(page, ['gpt-4o']);
   await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('1.00'); await expect(page.locator('.run-top')).toContainText('Env: Dev');
   await expect(page.locator('.run-top')).not.toContainText('Dev check <script>inert</script>');
   await expect(page.locator('.run-top script')).toHaveCount(0);
   const run = await (await page.request.get('/api/runs/' + new URL(page.url()).hash.split('/')[1])).json();
-  expect(run.items.map(item => item.evaluationId)).toEqual([saved[0].id]); expect(run.settings.environment).toBe('dev'); expect(run.settings.generationModel).toBe('gpt-4o');
+  expect(run.items.map(item => item.evaluationId)).toEqual([saved[0].id]); expect(run.settings.environment).toBe('dev'); expect(run.settings.generationModels).toEqual(['gpt-4o']);
   expect(generationCalls).toHaveLength(1); expect(generationCalls[0].url).toContain('openai-api-proxy-dev'); expect(generationCalls[0].body.model).toBe('gpt-4o');
 });
 
@@ -201,13 +285,13 @@ test('catalog failure blocks creation, Retry preserves the draft, and another en
   await page.locator('#run-description').fill('Keep this draft'); await page.getByRole('checkbox', { name: 'Select Alpha rules', exact: true }).check();
   await page.locator('#create-environment').selectOption('prod');
   await expect(page.locator('#run-models-status')).toContainText('unavailable'); await expect(page.locator('#submit-create-run')).toBeDisabled();
-  failed = false; await page.locator('#retry-run-models').click(); await page.locator('#create-generation-model').selectOption('gpt-4o-mini');
+  failed = false; await page.locator('#retry-run-models').click(); await selectGenerationModels(page, ['gpt-4o-mini']);
   await expect(page.locator('#run-description')).toHaveValue('Keep this draft'); await expect(page.locator('#create-selected-count')).toContainText('1 selected');
 
   await page.locator('#create-environment').selectOption('dev'); await expect(page.locator('#run-models-status')).toHaveText('Dev unavailable');
-  await expect(page.locator('#create-generation-model')).toHaveValue(''); await expect(page.locator('#submit-create-run')).toBeDisabled();
-  await page.locator('#create-environment').selectOption('prod'); await expect(page.locator('#create-generation-model')).toBeEnabled();
-  await expect(page.locator('#create-generation-model')).toHaveValue('');
+  await expect(page.locator('#generation-model-options input:checked')).toHaveCount(0); await expect(page.locator('#submit-create-run')).toBeDisabled();
+  await page.locator('#create-environment').selectOption('prod'); await expect(page.locator('#create-generation-models')).toBeEnabled();
+  await expect(page.locator('#generation-model-options input:checked')).toHaveCount(0);
 });
 
 test('late catalog responses cannot overwrite a newer environment and Local availability comes from the backend', async ({ page }) => {
@@ -224,10 +308,10 @@ test('late catalog responses cannot overwrite a newer environment and Local avai
   try {
     await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click(); await page.locator('#create-environment').selectOption('prod'); await page.locator('#retry-run-models').click(); await pending;
     await expect(page.locator('#create-environment option[value="local"]')).toHaveJSProperty('disabled', true);
-    await page.locator('#create-environment').selectOption('dev'); await page.locator('#create-generation-model').selectOption('gpt-4o');
+    await page.locator('#create-environment').selectOption('dev'); await selectGenerationModels(page, ['gpt-4o']);
     const returned = page.waitForResponse('**/api/models?environment=prod'); release(); await returned;
-    await expect(page.locator('#create-environment')).toHaveValue('dev'); await expect(page.locator('#create-generation-model')).toHaveValue('gpt-4o');
-    await expect(page.locator('#create-generation-model option[value="prod-only"]')).toHaveCount(0);
+    await expect(page.locator('#create-environment')).toHaveValue('dev'); await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-4o');
+    await expect(page.locator('#generation-model-options input[value="prod-only"]')).toHaveCount(0);
   } finally { release(); }
 });
 

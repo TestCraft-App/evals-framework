@@ -3,6 +3,10 @@ const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Automate tests', code_ideas: 'Automate test ideas', model_grade: 'Model-graded', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Not Contains', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
 names.rule_based = 'Rule-based';
+names.test_count = 'Test count';
+names.counted = 'Counted';
+const isModelMethod = method => ['model_grade', 'test_count'].includes(method);
+const testCountText = 'Count test ideas or automated tests in the output.';
 const languages = { playwright: ['typescript','javascript','python','java','csharp'], cypress: ['typescript','javascript'], selenium: ['javascript','python','java','csharp'] };
 const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
@@ -17,12 +21,12 @@ let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
 let runSelection = new Set(), runCatalogs = new Map(), catalogLoads = new Map(), runCatalog = null, runModelsLoading = false, creatingRun = false, runDraftRevision = 0, catalogRequest = 0;
 let runModelDefaults = null, rerunRequest = 0;
-const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
+const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'counted', 'error'].includes(item.status));
 const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
 };
-const draftMethod = () => $('method').value === 'model_based' ? 'model_grade' : $('criterion-rule').value;
+const draftMethod = () => $('method').value === 'test_count' ? 'test_count' : $('method').value === 'model_based' ? 'model_grade' : $('criterion-rule').value;
 const endpoint = e => e.type === 'code' && e.fromIdeas ? 'code_ideas' : e.type;
 const runDetail = createRunDetail({ root: $('run-detail'), getSuites: () => suites, getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, canDelete: canDeleteRun });
 function lockBody() { document.body.classList.toggle('modal-open', !!document.querySelector('dialog[open]')); }
@@ -134,6 +138,11 @@ function syncForm() {
   $('criterion-description-field').hidden = $('method').value !== 'rule_based';
   $('criterion-description').disabled = $('method').value !== 'rule_based';
   $('criterion-draft').placeholder = config?.evaluationMethods?.[draftMethod()]?.placeholder || '';
+  $('criterion-draft').hidden = draftMethod() === 'test_count';
+  $('criterion-draft').disabled = draftMethod() === 'test_count';
+  $('criterion-composer-label').hidden = draftMethod() === 'test_count';
+  $('test-count-hint').hidden = draftMethod() !== 'test_count';
+  $('test-count-hint').textContent = 'The selected model grader counts ' + (code ? 'implemented automated tests in the output, excluding skipped and empty tests.' : 'separately proposed test ideas in the output.') + ' Add once per evaluation; the count does not affect the quality score.';
   updateCriteriaState(); resizeTextareas();
 }
 function resizeTextareas() {
@@ -158,7 +167,7 @@ function setStep(step, focus = true) {
 function updateCriteriaState() {
   $('criteria-count').textContent = criteria.length + (criteria.length === 1 ? ' criterion' : ' criteria');
   $('criteria-empty').hidden = criteria.length > 0;
-  $('add-criterion').disabled = criteria.length >= 20 || (draftMethod() === 'exact_match' && criteria.some(c => c.method === 'exact_match'));
+  $('add-criterion').disabled = criteria.length >= 20 || (['exact_match', 'test_count'].includes(draftMethod()) && criteria.some(c => c.method === draftMethod()));
 }
 function updateCriterionTooltip(preview) {
   const field = preview.parentElement.querySelector('textarea');
@@ -173,11 +182,11 @@ function syncCriterionPreview(field) {
 }
 function renderCriteria() {
   criterionPreviewObserver.disconnect();
-  $('criteria-list').innerHTML = criteria.map((value, index) => '<li><div class="criterion-card-header"><span class="criterion-number" aria-hidden="true">' + (index + 1) + '.</span>' + badge(value.method === 'model_grade' ? 'model_grade' : 'rule_based')
-    + (value.method !== 'model_grade' ? '<label class="criterion-description-editor"><span class="sr-only">Description for criterion ' + (index + 1) + '</span><input data-criterion-description="' + index + '" maxlength="2000" placeholder="Description (optional)" value="' + escape(value.description || '') + '"></label>' : '')
+  $('criteria-list').innerHTML = criteria.map((value, index) => '<li><div class="criterion-card-header"><span class="criterion-number" aria-hidden="true">' + (index + 1) + '.</span>' + badge(isModelMethod(value.method) ? value.method : 'rule_based')
+    + (!isModelMethod(value.method) ? '<label class="criterion-description-editor"><span class="sr-only">Description for criterion ' + (index + 1) + '</span><input data-criterion-description="' + index + '" maxlength="2000" placeholder="Description (optional)" value="' + escape(value.description || '') + '"></label>' : '')
     + '<button type="button" class="icon-button" data-remove-criterion="' + index + '" aria-label="Remove criterion ' + (index + 1) + '">×</button></div><div class="criterion-card-body">'
-    + (value.method !== 'model_grade' ? '<select class="criterion-rule-pill" data-criterion-method="' + index + '" aria-label="Rule for criterion ' + (index + 1) + '">' + ['contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (method === value.method ? ' selected' : '') + '>' + names[method] + '</option>').join('') + '</select>' : '')
-    + '<div class="criterion-text-editor"><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required>' + escape(value.text) + '</textarea><span class="criterion-text-preview" aria-hidden="true"></span></div></div></li>').join('');
+    + (!isModelMethod(value.method) ? '<select class="criterion-rule-pill" data-criterion-method="' + index + '" aria-label="Rule for criterion ' + (index + 1) + '">' + ['contains', 'not_contains', 'exact_match'].map(method => '<option value="' + method + '"' + (method === value.method ? ' selected' : '') + '>' + names[method] + '</option>').join('') + '</select>' : '')
+    + '<div class="criterion-text-editor"><label class="sr-only" for="criterion-' + index + '">Criterion ' + (index + 1) + '</label><textarea id="criterion-' + index + '" data-criterion="' + index + '" rows="1" maxlength="8000" required' + (value.method === 'test_count' ? ' readonly' : '') + '>' + escape(value.text) + '</textarea><span class="criterion-text-preview" aria-hidden="true"></span></div></div></li>').join('');
   $('criteria-list').querySelectorAll('[data-criterion]').forEach(field => {
     syncCriterionPreview(field);
     criterionPreviewObserver.observe(field.parentElement.querySelector('.criterion-text-preview'));
@@ -185,17 +194,18 @@ function renderCriteria() {
   updateCriteriaState();
 }
 function addCriterion() {
-  const value = $('criterion-draft').value.trim(), method = draftMethod();
+  const method = draftMethod(), value = method === 'test_count' ? testCountText : $('criterion-draft').value.trim();
   if (!value) { $('form-error').textContent = 'Write a criterion before adding it.'; $('criterion-draft').focus(); return false; }
   if (criteria.length >= 20) { $('form-error').textContent = 'Use at most 20 criteria.'; return false; }
   if (method === 'exact_match' && criteria.some(c => c.method === method)) { $('form-error').textContent = 'Use at most one Exact match criterion.'; return false; }
+  if (method === 'test_count' && criteria.some(c => c.method === method)) { $('form-error').textContent = 'Use at most one Test count criterion.'; return false; }
   if (criteria.map(c => c.text).join('').length + value.length > 8000) { $('form-error').textContent = 'Keep all criteria within 8000 characters.'; return false; }
   if (criteria.some(c => c.method === method && c.text.trim() === value)) { $('form-error').textContent = 'This criterion is already in the list.'; return false; }
-  const description = method !== 'model_grade' ? $('criterion-description').value.trim() : '';
+  const description = !isModelMethod(method) ? $('criterion-description').value.trim() : '';
   criteria.push({ text: value, method, weight: 1, ...(description ? { description } : {}) });
-  if (method !== 'model_grade') $('criterion-description').value = '';
+  if (!isModelMethod(method)) $('criterion-description').value = '';
   $('criterion-draft').value = ''; $('form-error').textContent = ''; renderCriteria(); syncForm();
-  $('criterion-draft').focus(); return true;
+  (method === 'test_count' ? $('method') : $('criterion-draft')).focus(); return true;
 }
 function validateStep(step) {
   const invalid = [...$('step-' + step).querySelectorAll('input,select,textarea')].find(el => !el.disabled && !el.checkValidity());
@@ -233,8 +243,8 @@ function openForm(example = false, existing) {
 
   }
   const initialMethod = criteria[0]?.method || 'model_grade';
-  $('method').value = initialMethod === 'model_grade' ? 'model_based' : 'rule_based';
-  $('criterion-rule').value = initialMethod === 'model_grade' ? 'contains' : initialMethod;
+  $('method').value = initialMethod === 'test_count' ? 'test_count' : initialMethod === 'model_grade' ? 'model_based' : 'rule_based';
+  $('criterion-rule').value = isModelMethod(initialMethod) ? 'contains' : initialMethod;
   renderCriteria(); syncForm(); syncSuiteActions(); setStep(1, false);
   $('evaluation-dialog').showModal(); document.body.classList.add('modal-open'); resizeTextareas(); $('name').focus();
 }
@@ -244,17 +254,17 @@ async function saveEvaluation(event) {
   if (suiteDraft) { $('form-error').textContent = 'Save or cancel the suite change first.'; $('save-suite').focus(); return; }
   if (!validateStep(1)) return;
   if (formStep === 1) { setStep(2); return; }
-  if ($('criterion-draft').value.trim() && !addCriterion()) return;
+  if (!$('criterion-draft').disabled && $('criterion-draft').value.trim() && !addCriterion()) return;
   if (!validateStep(2)) return;
   if (!criteria.length) {
-    $('form-error').textContent = 'Add at least one evaluation criterion.'; $('criterion-draft').focus(); return;
+    $('form-error').textContent = 'Add at least one evaluation criterion.'; (draftMethod() === 'test_count' ? $('add-criterion') : $('criterion-draft')).focus(); return;
   }
   if (criteria.filter(c => c.method === 'exact_match').length > 1) {
     $('form-error').textContent = 'Use at most one Exact match criterion.'; return;
   }
   const target = editing, requestSession = session;
   const payload = { ...Object.fromEntries(new FormData($('evaluation-form'))), source: 'testcraft_api' };
-  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: 1, ...(value.method !== 'model_grade' && value.description?.trim() ? { description: value.description.trim() } : {}) }));
+  payload.criteria = criteria.map(value => ({ text: value.text.trim(), method: value.method, weight: 1, ...(!isModelMethod(value.method) && value.description?.trim() ? { description: value.description.trim() } : {}) }));
   payload.method = new Set(criteria.map(c => c.method)).size === 1 ? criteria[0].method : 'hybrid';
   payload.type = $('type').value === 'ideas' ? 'ideas' : 'code';
   payload.fromIdeas = $('type').value === 'code_ideas';
@@ -479,7 +489,7 @@ function closeRunDraft() {
   $('create-run-dialog').close();
 }
 function selectedNeedsGrader() {
-  return evaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => c.method === 'model_grade'));
+  return evaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => isModelMethod(c.method)));
 }
 function visibleRunEvaluations() {
   const query = $('create-eval-search').value.trim().toLowerCase(), suite = $('create-eval-suite').value, type = $('create-eval-type').value, method = $('create-eval-method').value;
@@ -488,14 +498,31 @@ function visibleRunEvaluations() {
     && (!type || endpoint(e) === type)
     && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
+const selectedGenerationModels = () => [...$('generation-model-options').querySelectorAll('input:checked')].map(input => input.value);
+function positionGenerationModels() {
+  const bounds = $('generation-model-toggle').getBoundingClientRect(), options = $('generation-model-options');
+  const below = innerHeight - bounds.bottom - 12, above = bounds.top - 12, openAbove = below < 180 && above > below;
+  const width = Math.min(bounds.width, document.documentElement.clientWidth - 32);
+  options.style.width = width + 'px';
+  options.style.left = Math.max(16, Math.min(bounds.left, document.documentElement.clientWidth - width - 16)) + 'px';
+  options.style.top = openAbove ? 'auto' : bounds.bottom + 4 + 'px';
+  options.style.bottom = openAbove ? innerHeight - bounds.top + 4 + 'px' : 'auto';
+  options.style.maxHeight = Math.max(80, Math.min(240, openAbove ? above : below)) + 'px';
+}
 function updateRunSubmit() {
   const needsGrader = selectedNeedsGrader();
+  const modelCount = selectedGenerationModels().length, combinations = runSelection.size * modelCount;
   $('create-grader-model').disabled = creatingRun || runModelsLoading;
   $('create-grader-model').required = needsGrader;
-  $('create-generation-model').disabled = creatingRun || runModelsLoading;
-  $('submit-create-run').disabled = creatingRun || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !$('create-generation-model').value || (needsGrader && !$('create-grader-model').value);
+  $('create-generation-models').disabled = creatingRun || runModelsLoading;
+  if (creatingRun || runModelsLoading) $('generation-model-options').hidePopover();
+  const modelLabels = [...$('generation-model-options').querySelectorAll('input:checked')].map(input => input.parentElement.textContent.trim());
+  $('generation-model-selection').textContent = modelCount > 1 ? modelCount + ' models selected' : modelLabels[0] || 'Select models';
+  $('generation-model-toggle').title = modelLabels.join(', ');
+  $('submit-create-run').disabled = creatingRun || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !modelCount || combinations > 100 || (needsGrader && !$('create-grader-model').value);
   $('submit-create-run').textContent = creatingRun ? 'Creating…' : 'Create Run';
   $('create-selected-count').textContent = runSelection.size + ' selected · maximum 50';
+  $('create-combination-count').textContent = runSelection.size + ' evals × ' + modelCount + ' models = ' + combinations + ' results · maximum 100';
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
@@ -527,18 +554,18 @@ function requestRunCatalog(environment, force = false) {
   return pending;
 }
 async function loadRunModels(useDefaults = false, force = false) {
+  $('generation-model-options').hidePopover();
   const request = ++catalogRequest, draft = runDraftRevision, workspace = session, environment = $('create-environment').value;
-  const generation = $('create-generation-model').value, grader = $('create-grader-model').value;
+  const generation = selectedGenerationModels(), grader = $('create-grader-model').value;
   runModelsLoading = force || !runCatalogs.has(environment); runCatalog = null; updateRunSubmit();
   $('run-models-status').hidden = true; $('retry-run-models').hidden = true;
   const catalog = !force && runCatalogs.has(environment) ? runCatalogs.get(environment) : await requestRunCatalog(environment, force);
   if (request !== catalogRequest || draft !== runDraftRevision || workspace !== session) return;
   runCatalog = catalog; runModelsLoading = false;
-  $('create-generation-model').innerHTML = '<option value="">Select a model</option>' + catalog.models.map(m => '<option value="' + escape(m.id) + '">' + escape(m.label) + '</option>').join('');
   $('create-grader-model').innerHTML = '<option value="">Select a model</option>' + catalog.models.map(m => '<option value="' + escape(m.id) + '">' + escape(m.label) + '</option>').join('');
   const luna = ['gpt-6-luna', 'gpt-5.6-luna'].find(id => catalog.models.some(m => m.id === id));
-  const desiredGeneration = generation || (useDefaults ? runModelDefaults.generationModel || luna : '');
-  $('create-generation-model').value = catalog.models.some(m => m.id === desiredGeneration) ? desiredGeneration : '';
+  const desiredGeneration = generation.length ? generation : useDefaults ? runModelDefaults.generationModels || (luna ? [luna] : []) : [];
+  $('generation-model-options').innerHTML = catalog.models.length ? catalog.models.map(m => '<label class="model-option"><input type="checkbox" value="' + escape(m.id) + '"' + (desiredGeneration.includes(m.id) ? ' checked' : '') + '><span>' + escape(m.label) + '</span></label>').join('') : '<span class="muted">No models available</span>';
   const desired = grader || (useDefaults ? runModelDefaults.graderModel || luna || config.judgeModel : '');
   $('create-grader-model').value = catalog.models.some(m => m.id === desired) ? desired : '';
   $('run-models-status').hidden = !catalog.warning;
@@ -549,7 +576,9 @@ async function openCreateRun(sourceRun = null) {
   if (!session || !config || creatingRun) return;
   const draft = ++runDraftRevision;
   runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
-  runModelDefaults = { generationModel: sourceRun?.settings?.generationModel, graderModel: sourceRun?.settings?.graderModel };
+  $('generation-model-options').hidePopover();
+  $('generation-model-options').replaceChildren();
+  runModelDefaults = { generationModels: sourceRun?.settings?.generationModels || (sourceRun?.settings?.generationModel ? [sourceRun.settings.generationModel] : undefined), graderModel: sourceRun?.settings?.graderModel };
   $('create-environment').innerHTML = config.environments.map(e => '<option value="' + e.id + '"' + (e.enabled ? '' : ' disabled') + '>' + escape(e.label) + '</option>').join('');
   const environment = sourceRun?.settings?.environment || 'dev';
   $('create-environment').value = config.environments.some(e => e.id === environment && e.enabled) ? environment : '';
@@ -587,7 +616,7 @@ async function submitRun(event) {
   event.preventDefault();
   if ($('submit-create-run').disabled || !$('create-run-form').reportValidity()) return;
   const workspace = session, draft = runDraftRevision;
-  const body = { evaluationIds: [...runSelection], description: $('run-description').value, environment: $('create-environment').value, generationModel: $('create-generation-model').value, graderModel: selectedNeedsGrader() ? $('create-grader-model').value : '' };
+  const body = { evaluationIds: [...runSelection], description: $('run-description').value, environment: $('create-environment').value, generationModels: selectedGenerationModels(), graderModel: selectedNeedsGrader() ? $('create-grader-model').value : '' };
   setCreatingRun(true); $('create-run-error').textContent = '';
   try {
     const run = await api('/api/runs', { method: 'POST', body: JSON.stringify(body) });
@@ -889,10 +918,17 @@ $('create-run').addEventListener('click', () => openCreateRun());
 $('create-run-form').addEventListener('submit', submitRun);
 ['cancel-create-run', 'close-create-run'].forEach(id => $(id).addEventListener('click', () => { if (!creatingRun) $('create-run-dialog').close(); }));
 $('create-run-dialog').addEventListener('cancel', event => { if (creatingRun) event.preventDefault(); });
-$('create-run-dialog').addEventListener('close', () => { runDraftRevision++; catalogRequest++; lockBody(); });
+$('create-run-dialog').addEventListener('close', () => { $('generation-model-options').hidePopover(); runDraftRevision++; catalogRequest++; lockBody(); });
+$('generation-model-options').addEventListener('beforetoggle', event => {
+  $('generation-model-toggle').setAttribute('aria-expanded', String(event.newState === 'open'));
+  if (event.newState === 'open') positionGenerationModels();
+});
+const repositionGenerationModels = () => { if ($('generation-model-options').matches(':popover-open')) positionGenerationModels(); };
+window.addEventListener('resize', repositionGenerationModels);
+document.querySelector('.create-run-body').addEventListener('scroll', repositionGenerationModels);
 $('create-environment').addEventListener('change', () => loadRunModels());
 $('retry-run-models').addEventListener('click', () => loadRunModels(true, true));
-['create-generation-model', 'create-grader-model'].forEach(id => $(id).addEventListener('change', updateRunSubmit));
+['create-generation-models', 'create-grader-model'].forEach(id => $(id).addEventListener('change', updateRunSubmit));
 ['create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method'].forEach(id => $(id).addEventListener(id === 'create-eval-search' ? 'input' : 'change', renderRunEvaluations));
 $('create-eval-rows').addEventListener('change', event => {
   const id = event.target.dataset.runSelect;

@@ -20,14 +20,17 @@ export class Engine {
   start(ids, scope, settings) {
     if (!this.accepting) throw new AppError('The server is preparing an update. Existing runs will finish; try starting a new run shortly.', 503);
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new AppError('Select between 1 and 50 distinct evaluations.');
-    if (this.queue.length + this.active + ids.length > 100) throw new AppError('Run queue is full. Wait for the active runs to finish.', 429);
+    const generationModels = settings ? settings.generationModels || [settings.generationModel] : [];
+    const itemCount = ids.length * (settings ? generationModels.length : 1);
+    if (itemCount > 100) throw new AppError('Select at most 100 evaluation/model combinations per run.');
+    if (this.queue.length + this.active + itemCount > 100) throw new AppError('Run queue is full. Wait for the active runs to finish.', 429);
     let evaluations = this.evaluationsForRun(ids, scope);
-    if (settings) evaluations = evaluations.map(evaluation => {
-      const effective = { ...evaluation, source: 'testcraft_api', model: settings.generationModel, judgeModel: settings.graderModel, actualOutput: '' };
+    if (settings) evaluations = generationModels.flatMap(model => evaluations.map(evaluation => {
+      const effective = { ...evaluation, source: 'testcraft_api', model, judgeModel: settings.graderModel, actualOutput: '' };
       try { validateEvaluation({ ...effective, criteria: normalizeCriteria(effective) }); }
       catch (error) { if (error instanceof AppError) throw new AppError(`Edit "${evaluation.name}": ${error.message}`); throw error; }
       return effective;
-    });
+    }));
     evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None' }));
     const run = { id: randomUUID(), gradingVersion: GRADING_VERSION, status: 'queued', createdAt: new Date().toISOString(), items: evaluations.map(evaluation => ({ id: randomUUID(), gradingVersion: GRADING_VERSION, evaluationId: evaluation.id, evaluation, status: 'queued', score: null, output: null, checks: [], events: [] })) };
     if (settings) { const { description, ...configuration } = settings; run.description = description; run.settings = configuration; }
@@ -63,14 +66,14 @@ export class Engine {
       item.status = 'grading'; event(`Output received. Applying ${item.evaluation.method.replaceAll('_', ' ')}`);
       const result = await grade(item.evaluation, item.output, this.env, this.fetchImpl);
       Object.assign(item, result);
-      item.status = item.score >= item.evaluation.threshold ? 'passed' : 'failed';
-      event(`Evaluation ${item.status}: ${item.score}/100`);
+      item.status = item.score === null ? 'counted' : item.score >= item.evaluation.threshold ? 'passed' : 'failed';
+      event(`Evaluation ${item.status}: ${item.score === null ? 'no quality score' : `${item.score}/100`}${item.testCount !== undefined ? `; ${item.testCount} ${item.testCountUnit.replaceAll('_', ' ')}` : ''}`);
     } catch (error) {
       item.status = 'error'; item.error = error instanceof AppError ? error.message : 'Unexpected evaluation failure. Check the server logs.';
       event(item.error);
     }
     item.durationMs = Date.now() - started;
-    if (run.items.every(x => ['passed', 'failed', 'error'].includes(x.status))) { run.status = 'completed'; run.finishedAt = new Date().toISOString(); }
+    if (run.items.every(x => ['passed', 'failed', 'counted', 'error'].includes(x.status))) { run.status = 'completed'; run.finishedAt = new Date().toISOString(); }
     this.store.saveRun(run, scope);
   }
 }

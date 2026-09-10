@@ -45,6 +45,9 @@ test('short references are searchable and consistent across the library, selecto
   await expect(page.locator('.detail-eval-row .evaluation-id')).toHaveText(['EVAL-2', 'EVAL-10']);
   await page.setViewportSize({ width: 390, height: 800 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(2);
+  // The model summary places results below the fold on small screens.
+  await page.locator('.detail-eval-row').first().scrollIntoViewIfNeeded();
+  expect(await page.locator('.detail-table-scroll').evaluate(element => element.scrollLeft)).toBe(0);
   await expect(page.locator('.detail-eval-row .evaluation-id').first()).toBeInViewport();
   await page.screenshot({ path: test.info().outputPath('references-mobile.png'), fullPage: true });
 });

@@ -1,4 +1,4 @@
-import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
+import { test, expect, openRunCreator, selectGenerationModels, createSelectedRun } from './browser-fixtures.mjs';
 
 test('Create Run reuses an active evaluation and shows separate running and completed results', async ({ page, browserApp, generationCalls }) => {
   const gate = Promise.withResolvers(), originalFetch = browserApp.engine.fetchImpl;
@@ -17,7 +17,7 @@ test('Create Run reuses an active evaluation and shows separate running and comp
       await page.getByRole('checkbox', { name: 'Select Concurrent login', exact: true }).check();
       if (index) {
         await page.locator('#create-environment').selectOption('prod');
-        await page.locator('#create-generation-model').selectOption('gpt-4o');
+        await selectGenerationModels(page, ['gpt-4o']);
       }
       await createSelectedRun(page);
       await expect(page.locator('#run-detail-page')).toBeVisible();
