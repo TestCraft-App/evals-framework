@@ -5,7 +5,7 @@ import { grade } from './graders.mjs';
 import { GRADING_VERSION, needsModelGrader } from './methods.mjs';
 
 export class Engine {
-  constructor(store, env, fetchImpl = fetch) { this.store = store; this.env = env; this.fetchImpl = fetchImpl; this.queue = []; this.active = 0; this.inFlight = new Set(); this.accepting = true; this.idleWaiters = new Set(); }
+  constructor(store, env, fetchImpl = fetch) { this.store = store; this.env = env; this.fetchImpl = fetchImpl; this.queue = []; this.active = 0; this.accepting = true; this.idleWaiters = new Set(); }
   get idle() { return this.active === 0 && this.queue.length === 0; }
   drain() {
     this.accepting = false;
@@ -28,19 +28,18 @@ export class Engine {
       catch (error) { if (error instanceof AppError) throw new AppError(`Edit "${evaluation.name}": ${error.message}`); throw error; }
       return effective;
     });
-    if (ids.some(id => this.inFlight.has(id))) throw new AppError('One of these evaluations is already running.', 409);
     evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None' }));
     const run = { id: randomUUID(), gradingVersion: GRADING_VERSION, status: 'queued', createdAt: new Date().toISOString(), items: evaluations.map(evaluation => ({ id: randomUUID(), gradingVersion: GRADING_VERSION, evaluationId: evaluation.id, evaluation, status: 'queued', score: null, output: null, checks: [], events: [] })) };
     if (settings) { const { description, ...configuration } = settings; run.description = description; run.settings = configuration; }
     this.store.saveRun(run, scope);
-    for (const item of run.items) { this.inFlight.add(item.evaluationId); this.queue.push({ run, item, scope }); }
+    for (const item of run.items) this.queue.push({ run, item, scope });
     setImmediate(() => this.pump());
     return run;
   }
   pump() {
     while (this.active < 2 && this.queue.length) {
       const job = this.queue.shift(); this.active++;
-      this.execute(job).catch(error => console.error('Evaluation persistence failure:', error.message)).finally(() => { this.inFlight.delete(job.item.evaluationId); this.active--; this.pump(); });
+      this.execute(job).catch(error => console.error('Evaluation persistence failure:', error.message)).finally(() => { this.active--; this.pump(); });
     }
     if (this.idle) {
       for (const resolve of this.idleWaiters) resolve();
