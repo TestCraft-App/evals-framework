@@ -16,6 +16,7 @@ let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest =
 let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
 let runSelection = new Set(), runCatalogs = new Map(), catalogLoads = new Map(), runCatalog = null, runModelsLoading = false, creatingRun = false, runDraftRevision = 0, catalogRequest = 0;
+let runModelDefaults = null, rerunRequest = 0;
 const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
 const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
@@ -88,15 +89,15 @@ const evaluationSuite = e => suites.find(s => s.id === e.suiteId)?.name || 'None
 const evaluationMethod = e => ({ rule_based: 'rule-based', model_based: 'model-graded', hybrid: 'hybrid' }[evaluationFamily(e)]);
 function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
-  const value = e => evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
+  const value = e => evalSort === 'reference' ? Number(e.reference?.slice(5) || 0) : evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
   return evaluations.filter(e => {
     const status = e.latest?.status || 'not_run';
-    return (!query || (e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
+    return (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
       && (!$('filter-type').value || endpoint(e) === $('filter-type').value)
       && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
       && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value)
       && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
-  }).sort((a, b) => String(value(a)).localeCompare(String(value(b))) * evalSortDirection || a.id.localeCompare(b.id));
+  }).sort((a, b) => (evalSort === 'reference' ? value(a) - value(b) : String(value(a)).localeCompare(String(value(b)))) * evalSortDirection || a.id.localeCompare(b.id));
 }
 function renderLibrary() {
   $('eval-count').textContent = evaluations.length;
@@ -104,11 +105,12 @@ function renderLibrary() {
   if (inlineName) visible.unshift(inlineName.record);
   const focused = document.activeElement?.id === 'duplicate-name', selection = focused ? [$('duplicate-name').selectionStart, $('duplicate-name').selectionEnd] : null;
   renderingLibrary = true;
-  $('evaluation-rows').innerHTML = visible.map(e => '<tr>'
+  $('evaluation-rows').innerHTML = visible.map(e => '<tr><td class="evaluation-id">' + escape(e.reference || '—') + '</td>'
     + '<td>' + (e.id === inlineName?.record.id ? inlineNameMarkup() : '<button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button>') + '</td>'
     + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(endpoint(e)) + '</td>'
     + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
+  $('evaluation-rows').querySelectorAll('td:not(:nth-child(2)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
   renderingLibrary = false;
   document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = duplicatingEvaluation; });
   if (focused && $('duplicate-name')) { $('duplicate-name').focus(); $('duplicate-name').setSelectionRange(...selection); }
@@ -272,7 +274,7 @@ function setSavingEvaluation(busy) {
   syncSuiteActions();
 }
 function renderSuites() {
-  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">None</option>'], ['evaluation-suite', '<option value="">None</option>']]) {
+  for (const [id, empty] of [['filter-suite', '<option value="">All evaluations</option><option value="__unfiled">None</option>'], ['create-eval-suite', '<option value="">All suites</option><option value="__unfiled">None</option>'], ['evaluation-suite', '<option value="">None</option>']]) {
     const current = $(id).value;
     $(id).innerHTML = empty + suites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if ([...$(id).options].some(o => o.value === current)) $(id).value = current;
@@ -462,15 +464,15 @@ async function clearWorkspace(event) {
   } catch (e) { if (review.session === session) $('clear-workspace-error').textContent = e.message; }
   finally { if (review.session === session) { clearingWorkspace = false; $('cancel-clear-workspace').disabled = false; $('confirm-clear-workspace').disabled = false; } }
 }
-async function loadWorkshop() {
+async function loadWorkshop(basic = false) {
   if ($('workshop-button').disabled) return;
-  const requestSession = session; $('workshop-button').disabled = true; error('');
+  const requestSession = session; $('workshop-button').disabled = true; $('basic-workshop-button').disabled = true; error('');
   try {
-    const imported = await api('/api/workshop-suite', { method: 'POST', body: '{}' });
+    const imported = await api(basic ? '/api/basic-workshop-suite' : '/api/workshop-suite', { method: 'POST', body: '{}' });
     await loadLibrary(); $('filter-suite').value = imported.suites?.length > 1 ? '' : imported.suite.id; renderSuites(); renderLibrary();
     toast('Workshop templates ready. Open Runs and choose Create Run to generate and evaluate with TestCraft.');
   } catch (e) { if (requestSession === session) error(e.message); }
-  finally { $('workshop-button').disabled = false; }
+  finally { $('workshop-button').disabled = false; $('basic-workshop-button').disabled = false; }
 }
 function closeRunDraft() {
   runDraftRevision++; catalogRequest++; runSelection.clear(); runCatalog = null; runCatalogs.clear(); catalogLoads.clear(); creatingRun = false;
@@ -480,8 +482,11 @@ function selectedNeedsGrader() {
   return evaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => c.method === 'model_grade'));
 }
 function visibleRunEvaluations() {
-  const query = $('create-eval-search').value.trim().toLowerCase(), type = $('create-eval-type').value, method = $('create-eval-method').value;
-  return evaluations.filter(e => (!query || e.name.toLowerCase().includes(query)) && (!type || endpoint(e) === type) && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const query = $('create-eval-search').value.trim().toLowerCase(), suite = $('create-eval-suite').value, type = $('create-eval-type').value, method = $('create-eval-method').value;
+  return evaluations.filter(e => (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name).toLowerCase().includes(query))
+    && (!suite || (suite === '__unfiled' ? !e.suiteId : e.suiteId === suite))
+    && (!type || endpoint(e) === type)
+    && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 function updateRunSubmit() {
   const needsGrader = selectedNeedsGrader();
@@ -494,7 +499,8 @@ function updateRunSubmit() {
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
-  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td>' + escape(e.name) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
+  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td class="evaluation-id">' + escape(e.reference || '—') + '</td><td>' + escape(e.name) + '</td><td>' + escape(evaluationSuite(e)) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
+  $('create-eval-rows').querySelectorAll('td:not(:first-child)').forEach(cell => { cell.title = cell.textContent; });
   $('create-select-all').checked = !!visible.length && visible.every(e => runSelection.has(e.id));
   $('create-select-all').indeterminate = visible.some(e => runSelection.has(e.id)) && !$('create-select-all').checked;
   $('create-select-all').disabled = creatingRun || !visible.length;
@@ -520,7 +526,7 @@ function requestRunCatalog(environment, force = false) {
   catalogLoads.set(environment, pending);
   return pending;
 }
-async function loadRunModels(defaultJudge = false, force = false) {
+async function loadRunModels(useDefaults = false, force = false) {
   const request = ++catalogRequest, draft = runDraftRevision, workspace = session, environment = $('create-environment').value;
   const generation = $('create-generation-model').value, grader = $('create-grader-model').value;
   runModelsLoading = force || !runCatalogs.has(environment); runCatalog = null; updateRunSubmit();
@@ -530,28 +536,51 @@ async function loadRunModels(defaultJudge = false, force = false) {
   runCatalog = catalog; runModelsLoading = false;
   $('create-generation-model').innerHTML = '<option value="">Select a model</option>' + catalog.models.map(m => '<option value="' + escape(m.id) + '">' + escape(m.label) + '</option>').join('');
   $('create-grader-model').innerHTML = '<option value="">Select a model</option>' + catalog.models.map(m => '<option value="' + escape(m.id) + '">' + escape(m.label) + '</option>').join('');
-  $('create-generation-model').value = catalog.models.some(m => m.id === generation) ? generation : '';
-  const desired = grader || (defaultJudge ? config.judgeModel : '');
+  const luna = ['gpt-6-luna', 'gpt-5.6-luna'].find(id => catalog.models.some(m => m.id === id));
+  const desiredGeneration = generation || (useDefaults ? runModelDefaults.generationModel || luna : '');
+  $('create-generation-model').value = catalog.models.some(m => m.id === desiredGeneration) ? desiredGeneration : '';
+  const desired = grader || (useDefaults ? runModelDefaults.graderModel || luna || config.judgeModel : '');
   $('create-grader-model').value = catalog.models.some(m => m.id === desired) ? desired : '';
   $('run-models-status').hidden = !catalog.warning;
   $('run-models-status').textContent = catalog.warning || '';
   $('retry-run-models').hidden = !catalog.warning; updateRunSubmit();
 }
-async function openCreateRun() {
+async function openCreateRun(sourceRun = null) {
   if (!session || !config || creatingRun) return;
   const draft = ++runDraftRevision;
   runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
+  runModelDefaults = { generationModel: sourceRun?.settings?.generationModel, graderModel: sourceRun?.settings?.graderModel };
   $('create-environment').innerHTML = config.environments.map(e => '<option value="' + e.id + '"' + (e.enabled ? '' : ' disabled') + '>' + escape(e.label) + '</option>').join('');
-  $('create-environment').value = 'prod';
+  const environment = sourceRun?.settings?.environment || 'prod';
+  $('create-environment').value = config.environments.some(e => e.id === environment && e.enabled) ? environment : '';
+  $('run-description').value = sourceRun?.description || '';
   $('create-eval-method').innerHTML = '<option value="">All methods</option>' + Object.entries({ rule_based: 'Rule-based', model_based: 'Model-graded', hybrid: 'Hybrid' }).map(([id, label]) => '<option value="' + id + '">' + label + '</option>').join('');
   setCreatingRun(false); $('create-run-dialog').showModal(); lockBody(); renderRunEvaluations(); $('create-environment').focus();
-  void loadRunModels(true);
-  try { await loadLibrary(); if (draft === runDraftRevision) renderRunEvaluations(); }
+  if ($('create-environment').value) void loadRunModels(true);
+  try {
+    await loadLibrary();
+    if (draft !== runDraftRevision) return;
+    if (sourceRun) {
+      const ids = new Set(sourceRun.items.map(item => item.evaluationId || item.evaluation?.id).filter(Boolean));
+      runSelection = new Set([...ids].filter(id => evaluations.some(e => e.id === id)).slice(0, 50));
+      $('create-run-error').textContent = runSelection.size < ids.size ? 'Some evaluations are no longer available or exceed the 50-evaluation limit. Review the selection before creating the run.' : '';
+    }
+    renderRunEvaluations();
+  }
   catch (e) { if (draft === runDraftRevision) $('create-run-error').textContent = e.message; }
+}
+async function rerun(id) {
+  const workspace = session, draft = runDraftRevision, request = ++rerunRequest, route = location.hash;
+  error('');
+  try {
+    const run = await api('/api/runs/' + encodeURIComponent(id));
+    if (workspace !== session || draft !== runDraftRevision || request !== rerunRequest || route !== location.hash) return;
+    await openCreateRun(run);
+  } catch (e) { if (workspace === session && draft === runDraftRevision && request === rerunRequest && route === location.hash) error(e.message); }
 }
 function setCreatingRun(busy) {
   creatingRun = busy;
-  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models'].forEach(id => { $(id).disabled = busy; });
+  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models'].forEach(id => { $(id).disabled = busy; });
   renderRunEvaluations();
 }
 async function submitRun(event) {
@@ -592,18 +621,18 @@ function renderRunList() {
   if ($('run-model').innerHTML !== options) { $('run-model').innerHTML = options; $('run-model').value = model; }
   const visible = visibleRuns(), focused = document.activeElement;
   const focusId = $('run-list').contains(focused) ? focused.closest('[data-run-row]')?.dataset.runRow : null;
-  const focusDelete = focused?.hasAttribute('data-delete-run');
+  const focusAction = focused?.hasAttribute('data-delete-run') ? '[data-delete-run]' : focused?.hasAttribute('data-rerun') ? '[data-rerun]' : 'a';
   const rows = visible.map(run => '<tr data-run-row="' + escape(run.id) + '"><td><a class="eval-name" data-run-link="' + escape(run.id) + '" href="#runs/' + escape(run.id) + '">' + escape(runName(run)) + '</a></td>'
     + '<td><time datetime="' + escape(run.createdAt) + '">' + escape(new Date(run.createdAt).toLocaleString()) + '</time></td>'
     + '<td>' + (run.models.length ? run.models.map(escape).join('<br>') : '—') + '</td><td>' + run.total + '</td>'
     + '<td><span class="badge ' + escape(run.status) + '">' + escape(runStatus(run)) + '</span>' + (run.errors ? '<span class="row-meta">' + run.errors + ' error' + (run.errors === 1 ? '' : 's') + '</span>' : '') + '</td>'
     + '<td class="score">' + scoreMarkup(run.score) + (run.scoredCount < run.total ? '<span class="row-meta">' + run.scoredCount + ' of ' + run.total + ' scored</span>' : '') + '</td>'
-    + '<td><button class="text-button danger run-delete" data-delete-run="' + escape(run.id) + '" aria-label="Delete ' + escape(runName(run)) + '"' + (run.canDelete ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></td></tr>').join('');
+    + '<td><div class="row-actions"><button class="text-button run-action" data-rerun="' + escape(run.id) + '" title="Rerun" aria-label="Rerun ' + escape(runName(run)) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg></button><button class="text-button danger run-delete" data-delete-run="' + escape(run.id) + '" aria-label="Delete ' + escape(runName(run)) + '"' + (run.canDelete ? '' : ' disabled title="Wait for this run to finish before deleting it."') + '><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></div></td></tr>').join('');
   const changed = rows !== lastRunRows;
   if (changed) { $('run-list').innerHTML = rows; lastRunRows = rows; }
   if (changed && focusId) {
     const row = [...$('run-list').rows].find(row => row.dataset.runRow === focusId);
-    (row?.querySelector(focusDelete ? 'button' : 'a') || $('runs-title')).focus();
+    (row?.querySelector(focusAction) || $('runs-title')).focus();
   }
   document.querySelectorAll('[data-run-sort]').forEach(button => button.parentElement.setAttribute('aria-sort', button.dataset.runSort === runSort ? (runSortDirection === 1 ? 'ascending' : 'descending') : 'none'));
   $('empty-runs').hidden = visible.length > 0;
@@ -742,6 +771,7 @@ document.querySelector('.library-actions').addEventListener('focusout', event =>
   if (!event.currentTarget.contains(event.relatedTarget)) closeLibraryActions();
 });
 $('example-button').addEventListener('click', () => { closeLibraryActions(); openForm(true); });
+$('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(true); });
 $('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(); });
 $('clear-workspace-button').addEventListener('click', reviewWorkspace);
 $('clear-workspace-form').addEventListener('submit', clearWorkspace);
@@ -852,17 +882,18 @@ document.addEventListener('click', async event => {
   if (el.dataset.duplicateEvaluation) void duplicateEvaluation(el.dataset.duplicateEvaluation);
   if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
+  if (el.dataset.rerun) void rerun(el.dataset.rerun);
 });
 $('evaluations-tab').addEventListener('click', () => { location.hash = 'evaluations'; });
-$('create-run').addEventListener('click', openCreateRun);
+$('create-run').addEventListener('click', () => openCreateRun());
 $('create-run-form').addEventListener('submit', submitRun);
 ['cancel-create-run', 'close-create-run'].forEach(id => $(id).addEventListener('click', () => { if (!creatingRun) $('create-run-dialog').close(); }));
 $('create-run-dialog').addEventListener('cancel', event => { if (creatingRun) event.preventDefault(); });
 $('create-run-dialog').addEventListener('close', () => { runDraftRevision++; catalogRequest++; lockBody(); });
 $('create-environment').addEventListener('change', () => loadRunModels());
-$('retry-run-models').addEventListener('click', () => loadRunModels(false, true));
+$('retry-run-models').addEventListener('click', () => loadRunModels(true, true));
 ['create-generation-model', 'create-grader-model'].forEach(id => $(id).addEventListener('change', updateRunSubmit));
-['create-eval-search', 'create-eval-type', 'create-eval-method'].forEach(id => $(id).addEventListener(id === 'create-eval-search' ? 'input' : 'change', renderRunEvaluations));
+['create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method'].forEach(id => $(id).addEventListener(id === 'create-eval-search' ? 'input' : 'change', renderRunEvaluations));
 $('create-eval-rows').addEventListener('change', event => {
   const id = event.target.dataset.runSelect;
   if (!id || creatingRun) return;

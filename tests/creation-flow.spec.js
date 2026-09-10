@@ -61,7 +61,7 @@ test('Load example and manual creation submit the same input-only contract and g
 test('workshop templates have no supplied output and use the same editor and generation path', async ({ page, generationCalls, browserApp }) => {
   browserApp.engine.env.OPENAI_API_KEY = 'mock-judge-key';
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
-  await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
+  await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
   const entries = (await (await page.request.get('/api/evaluations')).json()).evaluations;
   expect(entries.every(e => e.source === 'testcraft_api' && e.actualOutput === '' && e.latest === null)).toBe(true);

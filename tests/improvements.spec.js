@@ -3,6 +3,37 @@ import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtu
 
 const workshopCount = workshopSuites.reduce((sum, suite) => sum + suite.evaluations.length, 0);
 
+test('Basic and Full actions load separate collections without generating output', async ({ page, generationCalls }) => {
+  const ids = page.locator('#evaluation-rows .evaluation-id');
+  const expectedIds = count => Array.from({ length: count }, (_, index) => 'EVAL-' + (index + 1)).sort();
+  for (let load = 0; load < 2; load++) {
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.getByRole('button', { name: 'Load Basic Suite', exact: true }).click();
+    await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
+    expect((await ids.allTextContents()).sort()).toEqual(expectedIds(12));
+  }
+  const suites = (await (await page.request.get('/api/suites')).json()).suites;
+  expect(suites).toHaveLength(6);
+  await page.locator('#filter-suite').selectOption(suites[0].id);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount + 12);
+  expect((await ids.allTextContents()).sort()).toEqual(expectedIds(workshopCount + 12));
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  const reloaded = page.waitForResponse(response => response.url().endsWith('/api/workshop-suite') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
+  expect((await reloaded).status()).toBe(200);
+  await page.reload();
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount + 12);
+  expect((await ids.allTextContents()).sort()).toEqual(expectedIds(workshopCount + 12));
+  await openRunCreator(page);
+  expect((await page.locator('#create-eval-rows .evaluation-id').allTextContents()).sort()).toEqual(expectedIds(workshopCount + 12));
+  await page.locator('#cancel-create-run').click();
+  expect(generationCalls).toHaveLength(0);
+  expect((await (await page.request.get('/api/runs')).json()).runs).toHaveLength(0);
+});
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/models', route => route.fulfill({ json: { source: 'testcraft', warning: null, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true }] } }));
   await page.goto('/');
@@ -103,7 +134,7 @@ test('suite filter sits beside search and assignment stays in the evaluation for
   await page.reload();
   await page.locator('#filter-suite').selectOption({ label: 'Login rules' });
   await example(page, 'Inside suite');
-  await expect(page.locator('#evaluation-rows tr td').nth(1)).toHaveText('Login rules');
+  await expect(page.locator('#evaluation-rows tr td').nth(2)).toHaveText('Login rules');
   await page.getByRole('button', { name: 'Edit Inside suite', exact: true }).click();
   await expect(page.locator('#evaluation-suite option:checked')).toHaveText('Login rules');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -178,14 +209,14 @@ test('model criteria retain their badge and text alongside rules', async ({ page
 
 test('workshop collection loads once, filters by suite, and makes no provider calls', async ({ page, generationCalls }) => {
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
-  await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
+  await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
   const imported = (await (await page.request.get('/api/suites')).json()).suites;
   expect(imported).toHaveLength(workshopSuites.length);
   await page.locator('#filter-suite').selectOption(imported.find(suite => suite.seedKey === workshopSuites[3].seedKey).id);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopSuites[3].evaluations.length);
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
-  await page.getByRole('button', { name: 'Load workshop suite', exact: true }).click();
+  await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
   expect(generationCalls).toHaveLength(0);
   expect((await (await page.request.get('/api/runs')).json()).runs).toHaveLength(0);
@@ -230,7 +261,7 @@ test('evaluation columns sort displayed values in both directions with icon-only
   await page.route('**/api/suites', route => route.fulfill({ json: { suites: [{ id: 'z', name: 'Zulu' }, { id: 'a', name: 'Alpha' }] } }));
   await page.reload();
   const table = page.getByRole('table', { name: 'Evaluations', exact: true });
-  await expect(table.locator('th')).toHaveText(['Eval name', 'Suite', 'Endpoint', 'Method', 'Created', 'Actions']);
+  await expect(table.locator('th')).toHaveText(['Eval ID', 'Eval name', 'Suite', 'Endpoint', 'Method', 'Created', 'Actions']);
   const rows = page.locator('#evaluation-rows tr');
   await expect(rows.locator('.eval-name')).toHaveText(['Gamma', 'Beta', 'Alpha <safe>']);
   for (const [key, order] of [['name', ['Alpha <safe>', 'Beta', 'Gamma']], ['suite', ['Beta', 'Gamma', 'Alpha <safe>']], ['type', ['Beta', 'Alpha <safe>', 'Gamma']], ['method', ['Gamma', 'Beta', 'Alpha <safe>']], ['createdAt', ['Gamma', 'Beta', 'Alpha <safe>']]]) {
@@ -293,12 +324,16 @@ for (const width of [1440, 390]) test('library actions and field layout stay usa
     return { button: el.getBoundingClientRect().width, available: cell.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), client: el.clientWidth, scroll: el.scrollWidth };
   });
   expect(Math.abs(geometry.button - geometry.available)).toBeLessThan(2);
-  if (width === 1440) expect(geometry.button).toBeGreaterThan(470);
   const columns = await page.locator('.evaluations-table th').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().width));
-  expect(columns[2]).toBeCloseTo(148, 0);
-  expect(columns[3]).toBeCloseTo(columns[2], 0);
-  expect(columns[4]).toBeCloseTo(columns[2], 0);
-  if (width === 1440) expect(columns[1]).toBeGreaterThan(220);
+  expect(columns[0]).toBeCloseTo(80, 0);
+  expect(columns[3]).toBeCloseTo(148, 0);
+  expect(columns[4]).toBeCloseTo(columns[3], 0);
+  expect(columns[5]).toBeCloseTo(columns[3], 0);
+  if (width === 1440) {
+    // The reference column shares the space previously reserved for the name.
+    expect(geometry.button + columns[0]).toBeGreaterThan(470);
+    expect(columns[2]).toBeGreaterThan(220);
+  }
   const gap = await page.locator('#evaluation-rows .row-actions').evaluate(el => el.closest('td').getBoundingClientRect().right - el.lastElementChild.getBoundingClientRect().right);
   expect(gap).toBeCloseTo(24, 0);
   for (const field of await page.locator('#evaluations-panel .filters select').all()) {

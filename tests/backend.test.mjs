@@ -271,7 +271,7 @@ test('generator never receives expected output or grading criteria', async () =>
   });
 });
 
-test('API run integrates TestCraft generation with model grading, rejects duplicates and stores evidence', async () => {
+test('API run integrates TestCraft generation with model grading, rejects duplicate selections and stores evidence', async () => {
   let releaseGeneration;
   const gate = new Promise(resolve => { releaseGeneration = resolve; });
   const calls = [];
@@ -300,7 +300,7 @@ test('API run integrates TestCraft generation with model grading, rejects duplic
     const evaluation = await (await post('/api/evaluations', { ...base, source: 'testcraft_api', method: 'model_grade' })).json();
     assert.equal(calls.length, 0, 'saving must not call a model');
     const started = await (await post('/api/runs', { evaluationIds: [evaluation.id] })).json(); runId = started.id;
-    assert.equal((await post('/api/runs', { evaluationIds: [evaluation.id] })).status, 409);
+    assert.equal((await post('/api/runs', { evaluationIds: [evaluation.id, evaluation.id] })).status, 400);
     releaseGeneration();
     const run = await waitForRun(participant, runId);
     assert.equal(run.items[0].status, 'passed'); assert.equal(run.items[0].score, 100);

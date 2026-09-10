@@ -10,7 +10,7 @@ import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
 import { createSessions } from './src/evals/sessions.mjs';
-import { workshopSuites } from './src/evals/workshop.mjs';
+import { workshopSuites, basicWorkshopSuites } from './src/evals/workshop.mjs';
 import { loadRuntimeSecrets } from './src/runtime/secrets.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -74,10 +74,10 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       if (req.method === 'GET' && url.pathname === '/api/workspace') return json(res, 200, store.workspaceSummary(scope));
       if (req.method === 'DELETE' && url.pathname === '/api/workspace') return json(res, 200, store.clearWorkspace(await readBody(req, 2048), scope));
-      if (req.method === 'POST' && url.pathname === '/api/workshop-suite') {
+      if (req.method === 'POST' && ['/api/workshop-suite', '/api/basic-workshop-suite'].includes(url.pathname)) {
         const body = await readBody(req, 2048);
         if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('Workshop import expects an empty JSON object.');
-        const { created, ...result } = store.importWorkshop(workshopSuites, scope);
+        const { created, ...result } = store.importWorkshop(url.pathname === '/api/basic-workshop-suite' ? basicWorkshopSuites : workshopSuites, scope);
         return json(res, created ? 201 : 200, result);
       }
       if (url.pathname === '/api/suites') {
