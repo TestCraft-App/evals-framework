@@ -551,7 +551,7 @@ async function openCreateRun(sourceRun = null) {
   runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
   runModelDefaults = { generationModel: sourceRun?.settings?.generationModel, graderModel: sourceRun?.settings?.graderModel };
   $('create-environment').innerHTML = config.environments.map(e => '<option value="' + e.id + '"' + (e.enabled ? '' : ' disabled') + '>' + escape(e.label) + '</option>').join('');
-  const environment = sourceRun?.settings?.environment || 'prod';
+  const environment = sourceRun?.settings?.environment || 'dev';
   $('create-environment').value = config.environments.some(e => e.id === environment && e.enabled) ? environment : '';
   $('run-description').value = sourceRun?.description || '';
   $('create-eval-method').innerHTML = '<option value="">All methods</option>' + Object.entries({ rule_based: 'Rule-based', model_based: 'Model-graded', hybrid: 'Hybrid' }).map(([id, label]) => '<option value="' + id + '">' + label + '</option>').join('');

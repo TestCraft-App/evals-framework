@@ -16,7 +16,7 @@ test('Create Run reuses an active evaluation and shows separate running and comp
       await openRunCreator(page);
       await page.getByRole('checkbox', { name: 'Select Concurrent login', exact: true }).check();
       if (index) {
-        await page.locator('#create-environment').selectOption('dev');
+        await page.locator('#create-environment').selectOption('prod');
         await page.locator('#create-generation-model').selectOption('gpt-4o');
       }
       await createSelectedRun(page);
@@ -36,7 +36,7 @@ test('Create Run reuses an active evaluation and shows separate running and comp
     expect(generationCalls.map(call => call.body.model)).toEqual(['gpt-4o-mini', 'gpt-4o']);
     for (const [index, id] of runs.entries()) {
       await page.locator('[data-run-row="' + id + '"] a').click();
-      await expect(page.locator('.run-top')).toContainText(index ? 'Env: Dev' : 'Env: Prod');
+      await expect(page.locator('.run-top')).toContainText(index ? 'Env: Prod' : 'Env: Dev');
       await expect(page.locator('.result-score')).toContainText('1.00');
       await page.getByRole('tab', { name: /^Runs/ }).click();
     }
