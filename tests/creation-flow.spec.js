@@ -51,7 +51,7 @@ test('Load example and manual creation submit the same input-only contract and g
   await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('1.00');
   expect(generationCalls).toHaveLength(1);
-  expect(generationCalls[0].url).toBe('https://api.testcraft.app/api/generate-ideas');
+  expect(generationCalls[0].url).toBe('https://openai-api-proxy-dev-rtu664353a-uc.a.run.app/api/generate-ideas');
   expect(generationCalls[0].body.sourceCode).toBe(inputs.html);
   expect(generationCalls[0].body).not.toHaveProperty('criteria');
   expect(generationCalls[0].body).not.toHaveProperty('actualOutput');

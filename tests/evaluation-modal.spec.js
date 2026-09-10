@@ -49,7 +49,7 @@ for (const [endpoint, path] of [['ideas', 'generate-ideas'], ['code', 'automate-
     await openRunCreator(page); await page.locator('#create-eval-type').selectOption(endpoint);
     await page.getByRole('checkbox', { name: 'Select ' + endpoint, exact: true }).check(); await createSelectedRun(page);
     await expect(page.locator('.result-score')).toHaveText('1.00'); expect(generationCalls).toHaveLength(1);
-    expect(generationCalls[0].url).toBe('https://api.testcraft.app/api/' + path);
+    expect(generationCalls[0].url).toBe('https://openai-api-proxy-dev-rtu664353a-uc.a.run.app/api/' + path);
     expect(generationCalls[0].body).toEqual({ sourceCode: '<button>Login</button>', stream: true, model: 'gpt-4o-mini',
       ...(endpoint !== 'ideas' ? { baseUrl: 'https://example.com/login', framework: 'cypress', language: 'javascript', pom: true } : {}),
       ...(endpoint === 'code_ideas' ? { ideas: ['Valid login', 'Invalid login'] } : {}),

@@ -15,7 +15,7 @@ const test = base.extend({
       env: { NODE_ENV: 'test', WORKSHOP_ID: 'grader-browser-tests', WORKSHOP_MAX_MODEL_CALLS: '2', OPENAI_API_KEY: 'browser-test-only' },
       fetchImpl: async (url, options) => {
         if (url.endsWith('/api/models')) return Response.json({ models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] });
-        if (url.startsWith('https://api.testcraft.app/api/')) return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: generationOutput }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+        if (url.startsWith('https://openai-api-proxy-dev-rtu664353a-uc.a.run.app/api/')) return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: generationOutput }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
         if (url !== 'https://api.openai.com/v1/chat/completions') throw new Error('Unexpected provider request');
         const request = JSON.parse(options.body);
         if (!request.response_format?.json_schema.strict) throw new Error('Expected strict grading');

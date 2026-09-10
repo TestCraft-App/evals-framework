@@ -1,16 +1,18 @@
 import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 
 const rules = { name: 'Alpha rules', type: 'ideas', html: '<button>Login</button>', method: 'contains', criteria: ['valid credentials'] };
-test('new runs default both model selectors to GPT-6 Luna and preserve explicit choices', async ({ page }) => {
+test('new runs default to Dev and GPT-6 Luna and preserve explicit choices', async ({ page }) => {
   await page.route('**/api/models?environment=*', route => route.fulfill({ json: { models: [{ id: 'gpt-6-luna', label: 'GPT-6 Luna' }, { id: 'gpt-4o-mini', label: 'Mini' }], warning: null } }));
   await seed(page);
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click();
+  await expect(page.locator('#create-environment')).toHaveValue('dev');
   for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-6-luna');
   await page.locator('#create-generation-model').selectOption('gpt-4o-mini');
-  await page.locator('#create-environment').selectOption('dev');
+  await page.locator('#create-environment').selectOption('prod');
   await expect(page.locator('#create-generation-model')).toHaveValue('gpt-4o-mini');
   await expect(page.locator('#create-grader-model')).toHaveValue('gpt-6-luna');
   await page.locator('#cancel-create-run').click(); await page.locator('#create-run').click();
+  await expect(page.locator('#create-environment')).toHaveValue('dev');
   for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-6-luna');
 });
 
@@ -115,7 +117,7 @@ test('catalogs preload once at startup and modal spacing stays compact with an a
 test('TestCraft models are selectable for both roles and parameters precede description without extra helper text', async ({ page }) => {
   const models = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
   await seed(page);
-  await page.route('**/api/models?environment=prod', route => route.fulfill({ json: { models: models.map(id => ({ id, label: id })), warning: null } }));
+  await page.route('**/api/models?environment=dev', route => route.fulfill({ json: { models: models.map(id => ({ id, label: id })), warning: null } }));
   await page.reload(); await expect(page.locator('#workspace')).toBeVisible();
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click();
   for (const id of ['create-generation-model', 'create-grader-model']) await expect(page.locator('#' + id)).toHaveValue('gpt-5.6-luna');
@@ -165,7 +167,7 @@ test('run modal shows suite and endpoint columns and filters by suite before end
 test('run modal selects across filters, requires a conditional grader and creates a persisted Dev run', async ({ page, generationCalls }) => {
   const saved = await seed(page); await openRunCreator(page);
   await expect(page.locator('#create-eval-rows tr')).toHaveCount(3);
-  await expect(page.locator('#create-environment')).toHaveValue('prod');
+  await expect(page.locator('#create-environment')).toHaveValue('dev');
   await expect(page.locator('#create-grader-model')).toBeEnabled();
   await expect(page.locator('#run-grader-hint')).toHaveCount(0);
   await page.locator('#create-eval-search').fill('Alpha'); await page.locator('#create-select-all').check();
@@ -179,7 +181,6 @@ test('run modal selects across filters, requires a conditional grader and create
   await expect(page.locator('#create-eval-rows')).toContainText('Gamma code'); await page.locator('#create-eval-method').selectOption('model_based');
   await expect(page.locator('#create-eval-empty')).toBeVisible();
   await page.locator('#run-description').fill('Dev check <script>inert</script>');
-  await page.locator('#create-environment').selectOption('dev');
   await expect(page.locator('#create-generation-model')).toBeEnabled();
   await page.locator('#create-generation-model').selectOption('gpt-4o');
   await createSelectedRun(page);
@@ -198,6 +199,7 @@ test('catalog failure blocks creation, Retry preserves the draft, and another en
   await page.reload(); await expect(page.locator('#workspace')).toBeVisible();
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click();
   await page.locator('#run-description').fill('Keep this draft'); await page.getByRole('checkbox', { name: 'Select Alpha rules', exact: true }).check();
+  await page.locator('#create-environment').selectOption('prod');
   await expect(page.locator('#run-models-status')).toContainText('unavailable'); await expect(page.locator('#submit-create-run')).toBeDisabled();
   failed = false; await page.locator('#retry-run-models').click(); await page.locator('#create-generation-model').selectOption('gpt-4o-mini');
   await expect(page.locator('#run-description')).toHaveValue('Keep this draft'); await expect(page.locator('#create-selected-count')).toContainText('1 selected');
@@ -220,7 +222,7 @@ test('late catalog responses cannot overwrite a newer environment and Local avai
   const pending = new Promise(resolve => { started = resolve; }), gate = new Promise(resolve => { release = resolve; });
   await page.route('**/api/models?environment=prod', async route => { started(); await gate; await route.fulfill({ json: { models: [{ id: 'prod-only', label: 'Prod only' }] } }); });
   try {
-    await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click(); await page.locator('#retry-run-models').click(); await pending;
+    await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('#create-run').click(); await page.locator('#create-environment').selectOption('prod'); await page.locator('#retry-run-models').click(); await pending;
     await expect(page.locator('#create-environment option[value="local"]')).toHaveJSProperty('disabled', true);
     await page.locator('#create-environment').selectOption('dev'); await page.locator('#create-generation-model').selectOption('gpt-4o');
     const returned = page.waitForResponse('**/api/models?environment=prod'); release(); await returned;
