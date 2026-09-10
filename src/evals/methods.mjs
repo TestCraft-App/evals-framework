@@ -40,16 +40,26 @@ export const evaluationMethods = {
     placeholder: 'A literal text fragment or an observable quality, depending on the criterion method',
     limitation: 'Text rules only check text. Model judgments can vary and need human review of their evidence.',
   },
+  test_count: {
+    family: 'model_based', familyLabel: 'Model-based', label: 'Test count',
+    gradingCalls: 1, deterministic: false,
+    description: 'A model counts test ideas for Generate ideas, or automated test cases for either automation endpoint. This measurement does not affect the quality score.',
+    criteriaHint: 'Add once per evaluation. Counting shares the selected grader and one call with model-graded quality criteria.',
+    placeholder: 'Count test ideas or automated tests in the output.',
+    limitation: 'Static model estimate; no code is executed. Counts measure quantity, not quality or uniqueness.',
+  },
 };
 
 export const methods = Object.keys(evaluationMethods);
 export const criterionMethods = methods.filter(method => method !== 'hybrid');
-export const GRADING_VERSION = 3;
+export const GRADING_VERSION = 4;
+export const TEST_COUNT_CRITERION = 'Count test ideas or automated tests in the output.';
+export const isModelMethod = method => ['model_grade', 'test_count'].includes(method);
 
-// Shared by reservation and preflight: hybrid grading costs depend on its criteria.
+// Shared by run configuration and preflight: hybrid grading needs depend on its criteria.
 // Count explicit model criteria conservatively even in an invalid definition;
 // validation rejects method mismatches before any provider call is attempted.
 export function needsModelGrader(evaluation) {
-  return evaluation?.method === 'model_grade' || (Array.isArray(evaluation?.criteria)
-    && evaluation.criteria.some(criterion => criterion?.method === 'model_grade'));
+  return isModelMethod(evaluation?.method) || (Array.isArray(evaluation?.criteria)
+    && evaluation.criteria.some(criterion => isModelMethod(criterion?.method)));
 }

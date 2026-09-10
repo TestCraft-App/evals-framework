@@ -31,6 +31,15 @@ test('detail table has concise metadata, normalized score boundaries and combine
   await expect(page.locator('.detail-table th')).toHaveText(['Eval ID ↕', 'Eval name ↕', 'Suite ↕', 'Model ↕', 'Eval method ↕', 'Status ↕', 'Score ↕', 'Criteria met ↕']);
   await expect(page.locator('.run-context')).toHaveText('Env: Dev · Grader: GPT 4o');
   await expect(page.locator('.run-top')).not.toContainText('Hidden description');
+  const summary = page.getByRole('table', { name: 'Model summary', exact: true });
+  await expect(page.locator('.model-summary')).not.toContainText('Counts include all evals in the run.');
+  await expect(page.locator('#model-summary-help')).toHaveCount(0);
+  await expect(summary.locator('thead th')).toHaveText(['Model', 'Model-graded evals', 'Rule-based evals', 'Hybrid evals', 'Total evals', 'Total score']);
+  await expect(summary.locator('tbody th')).toHaveText(['gpt-4o-mini', 'GPT 4o', 'Supplied output']);
+  await expect(summary.locator('tbody tr').first().locator('td')).toHaveText(['0', '3', '1', '4', '0.52 4/4 scored']);
+  const headerBox = await page.locator('.run-top').boundingBox(), summaryBox = await page.locator('.model-summary').boundingBox(), filtersBox = await page.locator('.detail-filters').boundingBox();
+  expect(summaryBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height);
+  expect(summaryBox.y + summaryBox.height).toBeLessThanOrEqual(filtersBox.y);
   await expect(page.locator('.result-score')).toHaveText(['0.50', '0.50', '0.80', '0.80', '0.00', '—']);
   for (const [id, color] of [['b', 'low'], ['a', 'medium'], ['c', 'medium'], ['d', 'high'], ['e', 'low'], ['f', 'missing']]) await expect(page.locator('[data-detail-item="' + id + '"] .result-score span')).toHaveClass('score-' + color);
   await expect(page.locator('.criteria-met')).toHaveText(['2/2', '1/2', '1/2', '2/2', '0/2', '—/2']);
@@ -43,6 +52,8 @@ test('detail table has concise metadata, normalized score boundaries and combine
   expect(await ids(page)).toEqual(['b']); await expect(page.locator('.detail-count')).toHaveText('1 of 6 evaluations');
   await page.locator('#detail-filter-score').selectOption('high');
   await expect(page.locator('.detail-empty')).toHaveText('No evaluations match these filters.');
+  await expect(summary.locator('tbody tr')).toHaveCount(3);
+  await expect(summary.locator('tbody tr').first().locator('td')).toHaveText(['0', '3', '1', '4', '0.52 4/4 scored']);
 });
 
 test('all columns sort both ways with stable ties and missing numeric values last', async ({ page, browserApp }) => {
@@ -83,6 +94,8 @@ test('multiple rows expand with keyboard, concise reasons, saved output and pres
 
 test('polling retains focus, filters, sort and output expansion while the final item completes', async ({ page, browserApp }) => {
   const { run, scope } = await seed(page, browserApp, 'running');
+  const suppliedSummary = page.getByRole('table', { name: 'Model summary', exact: true }).getByRole('row').filter({ has: page.getByRole('rowheader', { name: 'Supplied output', exact: true }) });
+  await expect(suppliedSummary.locator('.model-total-score')).toHaveText('— 0/1 scored');
   await page.locator('#expand-f').click(); await page.locator('#output-toggle-f').click();
   await expect(page.locator('#criteria-f')).toContainText('Waiting for grading results');
   await page.locator('#detail-filter-suite').selectOption('None'); await page.locator('#detail-sort-score').click();
@@ -90,6 +103,7 @@ test('polling retains focus, filters, sort and output expansion while the final 
   run.items[5].status = 'failed'; run.items[5].score = 50; run.items[5].checks = run.items[1].checks; run.status = 'completed';
   browserApp.store.saveRun(run, scope);
   await expect(page.locator('[data-detail-item="f"] .badge')).toHaveText('Graded');
+  await expect(suppliedSummary.locator('.model-total-score')).toHaveText('0.50 1/1 scored');
   await expect(page.locator('#detail-filter-suite')).toHaveValue('None'); await expect(page.locator('#detail-sort-score').locator('..')).toHaveAttribute('aria-sort', 'ascending');
   await expect(page.locator('#expand-f')).toHaveAttribute('aria-expanded', 'true'); await expect(page.locator('#criteria-f details')).toHaveAttribute('open', '');
   await expect(page.locator('#output-toggle-f')).toBeFocused();
@@ -130,6 +144,7 @@ for (const width of [1280, 390]) test('detail layout stays usable at ' + width +
   await page.locator('#expand-b').click(); await page.locator('#expand-a').click();
   await expect(page.locator('#expand-b')).toHaveAttribute('title', longName);
   await expect(page.locator('#expand-b')).toHaveAccessibleName(longName.trim());
+  await expect(page.getByRole('table', { name: 'Model summary', exact: true }).getByRole('rowheader', { name: longModel, exact: true })).toHaveText(longModel);
   const layout = await page.locator('[data-detail-item="b"]').evaluate(row => {
     const label = row.querySelector('.detail-name'), cells = [...row.cells].map(cell => cell.getBoundingClientRect());
     return { truncated: label.scrollWidth > label.clientWidth, ellipsis: getComputedStyle(label).textOverflow, nameRight: label.getBoundingClientRect().right, suiteLeft: cells[2].left, widths: cells.map(cell => cell.width) };

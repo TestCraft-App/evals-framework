@@ -7,7 +7,8 @@ import { createApp } from '../server.mjs';
 export const test = base.extend({
   generationOutput: ['Generated ideas: valid credentials; invalid email; empty password.', { option: true }],
   generationCalls: async ({}, use) => { await use([]); },
-  browserApp: async ({ generationOutput, generationCalls }, use) => {
+  judgeCount: [3, { option: true }],
+  browserApp: async ({ generationOutput, generationCalls, judgeCount }, use) => {
     const app = createApp({
       dbPath: ':memory:',
       env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
@@ -16,7 +17,9 @@ export const test = base.extend({
         if (url === 'https://api.openai.com/v1/chat/completions') {
           const body = JSON.parse(options.body);
           const context = JSON.parse(body.messages.find(message => message.role === 'user').content);
-          const checks = context.criteria.map(criterion => ({ id: criterion.id, passed: false, evidence: 'Synthetic output does not demonstrate this criterion.', reason: 'Mocked judge verdict for browser flow coverage.' }));
+          const checks = context.criteria.map(criterion => criterion.method === 'test_count'
+            ? { id: criterion.id, count: judgeCount, evidence: '<script>window.countInjection = true</script> Synthetic counted cases.', reason: 'Mocked count of separately listed cases.' }
+            : { id: criterion.id, passed: false, evidence: 'Synthetic output does not demonstrate this criterion.', reason: 'Mocked judge verdict for browser flow coverage.' });
           return Response.json({ model: body.model, choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ checks }) } }] });
         }
         if (!['https://api.testcraft.app', 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app', 'http://127.0.0.1:8080'].some(base => ['/api/generate-ideas', '/api/automate-tests', '/api/automate-tests-ideas'].some(path => url === base + path))) throw new Error('Browser tests must not contact real providers.');
@@ -32,10 +35,18 @@ export const test = base.extend({
 });
 export { expect };
 
+export async function selectGenerationModels(page, models) {
+  const toggle = page.locator('#generation-model-toggle');
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  for (const model of models) await expect(page.locator('#generation-model-options input[value="' + model + '"]')).toBeVisible();
+  for (const checkbox of await page.locator('#generation-model-options input').all()) await checkbox.setChecked(models.includes(await checkbox.inputValue()));
+  await toggle.click();
+}
+
 export async function openRunCreator(page) {
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await page.locator('#create-run').click();
-  await page.locator('#create-generation-model').selectOption('gpt-4o-mini');
+  await selectGenerationModels(page, ['gpt-4o-mini']);
 }
 export async function createSelectedRun(page) {
   await page.locator('#submit-create-run').click();

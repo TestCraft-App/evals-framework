@@ -1,5 +1,5 @@
 export const canDeleteRun = run => ['completed', 'interrupted'].includes(run.status)
-  && run.items.every(item => ['passed', 'failed', 'error'].includes(item.status));
+  && run.items.every(item => ['passed', 'failed', 'counted', 'error'].includes(item.status));
 
 export function summarizeRun(run) {
   const scored = run.items.filter(item => Number.isFinite(item.score));

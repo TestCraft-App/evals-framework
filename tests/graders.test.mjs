@@ -108,7 +108,7 @@ test('criteria validate count, nonempty text, total length, weights, methods, an
 
 test('hybrid allows shared text across methods and multiple exact matches, with conditional judge requirements', () => {
   assert.ok(methods.includes('hybrid'));
-  assert.deepEqual(criterionMethods, ['model_grade', 'contains', 'not_contains', 'exact_match']);
+  assert.deepEqual(criterionMethods, ['model_grade', 'contains', 'not_contains', 'exact_match', 'test_count']);
   assert.equal(evaluationMethods.hybrid.gradingCalls, null);
   const criteria = [criterion('a'), criterion('a', 'not_contains'), criterion('a', 'exact_match'), criterion('b', 'exact_match')];
   const rules = validateEvaluation({ ...base, method: 'hybrid', criteria, judgeModel: 'o1-mini' });
@@ -344,13 +344,13 @@ test('engine keeps 79.6 below the fixed pass threshold and tags only new runs', 
   assert.equal(run.items[0].score, 79.6);
   assert.equal(run.items[0].status, 'failed');
   assert.equal(run.items[0].evaluation.threshold, 80);
-  assert.equal(run.gradingVersion, 3);
-  assert.equal(run.items[0].gradingVersion, 3);
+  assert.equal(run.gradingVersion, GRADING_VERSION);
+  assert.equal(run.items[0].gradingVersion, GRADING_VERSION);
   const atThreshold = await runCase(fixture, { ...base, criteria: ['valid', 'user', 'invalid', 'password', 'missing'] });
   assert.equal(atThreshold.run.items[0].score, 80);
   assert.equal(atThreshold.run.items[0].status, 'passed');
   const legacy = await runCase(fixture, historical);
-  assert.equal(legacy.run.items[0].gradingVersion, 3);
+  assert.equal(legacy.run.items[0].gradingVersion, GRADING_VERSION);
   assert.deepEqual(legacy.run.items[0].evaluation.criteria, ['valid user']);
   assert.equal(legacy.run.items[0].evaluation.schemaVersion, 2);
   assert.equal(fixture.store.evaluation(legacy.saved.id, fixture.scope).threshold, 1);
