@@ -6,6 +6,7 @@ COPY server.mjs ./
 COPY src/evals ./src/evals
 COPY src/runtime ./src/runtime
 COPY public/index.html public/app.js public/run-detail.js public/styles.css ./public/
+COPY public/assets ./public/assets/
 RUN mkdir /data && chown node:node /data
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 TESTCRAFT_EVALS_DB=/data/evals.sqlite
 USER node

@@ -29,8 +29,12 @@ label,input:not([type=checkbox]),select,textarea,.filters label,.filters input,.
 .output-card pre,.context-pre,.check blockquote,.code-input{font-size:.8125rem}
 label small,.field-hint,.row-meta,.eval-id,.table-footer,footer span{color:#647b71}.shell{padding-top:28px}
 .app-header { height: 64px; }
-.app-header .brand { gap: 10px; font-size: 19px; }
-.app-header .brand-icon { width: 34px; height: 34px; border-radius: 9px; font-size: 21px; }
+@font-face { font-family:'Sora'; src:url('/assets/Sora-VariableFont_wght.ttf') format('truetype'); font-weight:100 900; font-style:normal; font-display:swap; }
+.app-header .brand { gap:10px; letter-spacing:normal; flex-shrink:0; }
+.app-header .brand-icon { display:block; width:38px; height:38px; padding:0; background:transparent; border-radius:50%; }
+.brand-copy { display:flex; align-items:baseline; gap:8px; }
+.brand-wordmark { font-family:'Sora','Segoe UI',sans-serif; font-size:22px; font-weight:900; letter-spacing:-.7px; color:#315cf4; background:linear-gradient(90deg,#315cf4,#6865ac); background-clip:text; -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.brand-product { font-size:15px; font-weight:400; color:#647b71; }
 .app-header .header-right { gap: 20px; }
 .app-header .workspace-badge { letter-spacing: 0; }
 .section-heading > .actions { max-width: 100%; min-width: 0; flex-shrink: 1; }
@@ -335,6 +339,10 @@ html { scrollbar-gutter: stable; }
 @media(max-width:700px) { .workspace-controls { grid-template-columns:minmax(0,1fr); gap:16px; padding:16px; } .workspace-identity { align-items:flex-start; gap:12px; } .header-right { flex-wrap:wrap; } }
 @media(max-width:700px) {
   .app-header { height:auto; min-height:64px; gap:12px; padding-block:12px; }
+  .app-header .brand-icon { width:34px; height:34px; }
+  .brand-copy { flex-direction:column; gap:1px; }
+  .brand-wordmark { font-size:20px; }
+  .brand-product { font-size:12px; }
   .app-header .header-right { min-width:0; flex-wrap:nowrap; }
   #user-menu-toggle { max-width:125px; }
 }

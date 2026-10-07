@@ -56,6 +56,8 @@ Manage spending through the configured API keys and provider-side budgets. The a
 
 The workspace bar above Evaluations and Runs identifies the active workspace: teal **TestCraft · Shared**, or blue **My workspace · Private**, with distinct icons and explicit permission text. Shared visibility is separate from editing permissions: collaborators see the read-only notice and private run destination in TestCraft, while admins can manage it. Use the labeled Workspace dropdown to switch; on mobile it sits below the identity. The bar also appears on run detail and follows automatic switches to private results. The Evaluations tab opens directly on the evaluation library, without summary cards.
 
+The header uses the extension's checkmark logo and Sora wordmark, with a blue-to-purple gradient adapted for the white dashboard header. Logo and font assets are served locally from `public/assets/` and included in the Docker image; the Sora font's SIL Open Font License is bundled alongside it. The Evals label remains visible, stacking below TestCraft on narrow screens.
+
 ### AWS deployment requirements (not deployed by this change)
 
 The [AWS deployment guide](docs/aws-deployment.md) describes the initial setup, required IAM permissions, GitHub variables and operational checks. The Docker image, deployment scripts and GitHub Actions workflow are prepared; cloud provisioning and pipeline activation are separate steps. `AWS_DEPLOY_ENABLED` must remain unset until the approved infrastructure is ready. Local data and `.env` are never packaged into the image.

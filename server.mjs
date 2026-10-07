@@ -24,6 +24,8 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
   const catalogs = Object.fromEntries(Object.entries(environments).map(([id, base]) => [id, createModelCatalog({ ...env, TESTCRAFT_BASE_URL: base }, fetchImpl)]));
   let stopping = false, shutdownPromise;
   const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/run-detail.js': ['run-detail.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
+  files['/assets/testcraft-logo.png'] = ['assets/testcraft-logo.png', 'image/png'];
+  files['/assets/Sora-VariableFont_wght.ttf'] = ['assets/Sora-VariableFont_wght.ttf', 'font/ttf'];
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(body));
@@ -167,7 +169,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       if (req.method === 'GET' && files[url.pathname]) {
         const [file, mime] = files[url.pathname];
-        res.writeHead(200, { 'content-type': mime + '; charset=utf-8', 'cache-control': 'no-store' });
+        res.writeHead(200, { 'content-type': mime + (mime.startsWith('text/') ? '; charset=utf-8' : ''), 'cache-control': 'no-store' });
         res.end(await readFile(join(root, 'public', file)));
         return;
       }

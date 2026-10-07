@@ -6,6 +6,18 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 780 
     await page.clock.install();
     await page.setViewportSize(viewport); await page.goto('/');
     await expect(page.locator('#workspace')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    const brand = page.getByRole('link', { name: 'TestCraft Evals', exact: true });
+    await expect(brand.locator('img')).toHaveAttribute('src', '/assets/testcraft-logo.png');
+    await expect(brand.locator('img')).toHaveAttribute('alt', '');
+    expect(await brand.locator('img').evaluate(image => image.complete && image.naturalWidth === 128)).toBe(true);
+    await expect(brand.locator('.brand-wordmark')).toHaveText('TestCraft');
+    await expect(brand.locator('.brand-wordmark')).toHaveCSS('font-family', 'Sora, "Segoe UI", sans-serif');
+    expect(await page.evaluate(() => [...document.fonts].some(font => font.family === 'Sora' && font.status === 'loaded'))).toBe(true);
+    await expect(brand.locator('.brand-product')).toHaveText('Evals');
+    const brandBox = await brand.boundingBox(), accountBox = await page.locator('#user-menu-toggle').boundingBox();
+    expect(brandBox.x + brandBox.width).toBeLessThan(accountBox.x);
+    await page.locator('.app-header').screenshot({ path: test.info().outputPath('branding-header.png') });
     await expect(page.locator('#user-menu-name')).toHaveText('user-1');
     await expect(page.locator('#user-menu-panel')).toBeHidden();
     await page.locator('#user-menu-toggle').focus();
