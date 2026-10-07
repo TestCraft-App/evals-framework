@@ -90,9 +90,11 @@
       <div class="dialog-heading"><h2 id="api-key-title">OpenAI API key</h2><button id="close-api-key" type="button" class="icon-button" aria-label="Close API key">×</button></div>
       <div class="compact-body">
         <p id="api-key-description">Used by TestCraft for generation and OpenAI for grading. Kept only in this tab and active runs. Enter it again after refreshing.</p>
-        <label for="personal-api-key">API key</label><input id="personal-api-key" type="password" autocomplete="off" spellcheck="false" maxlength="4096" aria-describedby="api-key-description" autofocus>
+        <label for="personal-api-key">API key</label><input id="personal-api-key" type="password" autocomplete="off" spellcheck="false" maxlength="4096" aria-describedby="api-key-description api-key-error" autofocus>
+        <p id="api-key-error" class="session-error" role="alert"></p>
+        <p id="api-key-progress" class="muted" role="status" hidden>Checking API key…</p>
       </div>
-      <div class="dialog-footer"><button id="clear-api-key" type="button" class="text-button">Clear key</button><button id="cancel-api-key" type="button" class="button">Cancel</button><button type="submit" class="button primary">Save key</button></div>
+      <div class="dialog-footer"><button id="clear-api-key" type="button" class="text-button">Clear key</button><button id="cancel-api-key" type="button" class="button">Cancel</button><button id="save-api-key" type="submit" class="button primary">Save key</button></div>
     </form>
   </dialog>
   <dialog id="inspect-evaluation" aria-labelledby="inspect-title"><div class="dialog-heading"><h2 id="inspect-title"></h2><button id="close-inspect" class="icon-button" aria-label="Close evaluation">×</button></div><div id="inspect-content" class="compact-body"></div></dialog>
@@ -176,7 +178,7 @@
         <p id="run-models-status" class="field-hint" role="status"></p><button type="button" id="retry-run-models" class="text-button" hidden>Retry loading models</button>
         <label>Run Description <span class="optional">(optional)</span><textarea id="run-description" maxlength="2000" rows="1"></textarea></label>
         <p id="run-destination" class="notice"></p>
-        <label id="run-key-field" hidden>OpenAI API key<input id="run-api-key" type="password" autocomplete="off" spellcheck="false" maxlength="4096"><span class="field-hint">Sent to TestCraft for generation and OpenAI for grading. Never saved.</span></label>
+        <div id="run-key-warning" class="notice" role="status" hidden><p>Set and validate your API key before creating a run.</p><button id="set-run-api-key" type="button" class="text-button">Set API key</button></div>
         <div class="filters run-eval-filters">
           <label class="search-field">Search evaluations<input id="create-eval-search" type="search" placeholder="Search by name or ID…"></label>
           <label>Suite<select id="create-eval-suite"><option value="">All suites</option><option value="__unfiled">None</option></select></label>

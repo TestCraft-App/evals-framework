@@ -41,10 +41,24 @@ test('main runs and reruns save privately, preserve their source, and never stor
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select ' + definition.name, exact: true }).check();
   await expect(page.locator('#run-destination')).toContainText('My workspace (private)');
-  await page.locator('#submit-create-run').click();
-  await expect(page.locator('#create-run-error')).toContainText('Enter your OpenAI API key');
+  await expect(page.locator('#submit-create-run')).toBeDisabled();
+  await expect(page.locator('#run-api-key, #run-key-field')).toHaveCount(0);
+  await expect(page.locator('#run-key-warning')).toContainText('Set and validate your API key');
   expect(generationCalls).toHaveLength(0);
-  await page.locator('#run-api-key').fill('synthetic-collaborator-key');
+  await page.locator('#set-run-api-key').click();
+  await page.locator('#personal-api-key').fill('invalid-key');
+  await page.locator('#save-api-key').click();
+  await expect(page.locator('#api-key-error')).toContainText('API key was rejected');
+  await expect(page.locator('#api-key-dialog')).toBeVisible();
+  await expect(page.locator('#personal-api-key')).toHaveValue('invalid-key');
+  await expect(page.locator('#user-menu')).toBeVisible();
+  await expect(page.locator('#submit-create-run')).toBeDisabled();
+  await page.locator('#personal-api-key').fill('synthetic-collaborator-key');
+  await page.locator('#save-api-key').click();
+  await expect(page.locator('#api-key-dialog')).toBeHidden();
+  await expect(page.locator('#run-key-warning')).toBeHidden();
+  await expect(page.getByRole('checkbox', { name: 'Select ' + definition.name, exact: true })).toBeChecked();
+  await expect(page.locator('#submit-create-run')).toBeEnabled();
   await createSelectedRun(page);
   await expect(page).toHaveURL(/#personal\/runs\//);
   await expect(page.locator('.result-score')).toContainText('1.00');
@@ -56,7 +70,8 @@ test('main runs and reruns save privately, preserve their source, and never stor
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await page.locator('[data-rerun]').click();
   await expect(page.locator('#create-eval-rows')).toContainText(definition.name);
-  await expect(page.locator('#run-api-key')).toHaveValue('synthetic-collaborator-key');
+  await expect(page.locator('#run-key-warning')).toBeHidden();
+  await expect(page.locator('#submit-create-run')).toBeEnabled();
   await page.locator('#cancel-create-run').click();
   await page.reload();
   await expect(page.locator('#workspace')).toBeVisible();
@@ -97,7 +112,7 @@ test('logout clears the key and exposes GitHub sign-in without an anonymous fall
   await expect(page.locator('#github-login')).toBeVisible();
   await expect(page.locator('#workspace')).toBeHidden();
   await expect(page.locator('#personal-api-key')).toHaveValue('');
-  await expect(page.locator('#run-api-key')).toHaveValue('');
+  await expect(page.locator('#run-api-key')).toHaveCount(0);
   await expect(page.locator('#user-menu')).toBeHidden();
   await expect(page.locator('#user-menu-panel')).toBeHidden();
   await expect(page.locator('#private-badge')).toBeEmpty();
@@ -129,7 +144,7 @@ test('a key saved from the user menu is used by runs and stays out of storage', 
   await page.locator('#workspace-switcher').selectOption('main');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await openRunCreator(page);
-  await expect(page.locator('#run-api-key')).toHaveValue('synthetic-menu-key');
+  await expect(page.locator('#run-key-warning')).toBeHidden();
   await page.getByRole('checkbox', { name: 'Select ' + definition.name, exact: true }).check();
   await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('1.00');
@@ -167,7 +182,10 @@ for (const width of [1280, 390]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(2);
     await page.locator('#clear-api-key').click();
     await expect(page.locator('#api-key-dialog')).toBeHidden();
-    await expect(page.locator('#run-api-key')).toHaveValue('');
+    await openRunCreator(page);
+    await expect(page.locator('#run-key-warning')).toBeVisible();
+    await expect(page.locator('#submit-create-run')).toBeDisabled();
+    await page.locator('#cancel-create-run').click();
     await openKeySettings(page);
     await expect(page.locator('#personal-api-key')).toHaveValue('');
     await expect(page.locator('#clear-api-key')).toBeDisabled();
@@ -194,6 +212,56 @@ test('late main-library responses cannot overwrite a personal workspace after sw
   const returned = page.waitForResponse('**/api/workspaces/main/evaluations'); release(); await returned;
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
   await expect(page.locator('#workspace-switcher')).toHaveValue('personal');
+});
+
+test('unavailable key checks keep the dialog open and preserve the previously validated key', async ({ page }) => {
+  await page.goto('/'); await openKeySettings(page);
+  await page.locator('#personal-api-key').fill('original-key'); await page.locator('#save-api-key').click();
+  await expect(page.locator('#api-key-dialog')).toBeHidden();
+  await page.route('**/api/api-key/validate', route => route.fulfill({ status: 503, json: { error: 'OpenAI is rate limiting the key check. Please try again shortly.' } }));
+  await openKeySettings(page);
+  await page.locator('#personal-api-key').fill('replacement-key'); await page.locator('#save-api-key').click();
+  await expect(page.locator('#api-key-error')).toContainText('rate limiting');
+  await expect(page.locator('#api-key-dialog')).toBeVisible();
+  await expect(page.locator('#personal-api-key')).toHaveValue('replacement-key');
+  await expect(page.locator('#personal-api-key')).toBeEnabled();
+  await expect(page.locator('#save-api-key')).toBeEnabled();
+  await page.locator('#cancel-api-key').click(); await openKeySettings(page);
+  await expect(page.locator('#personal-api-key')).toHaveValue('original-key');
+  await expect(page.locator('#api-key-error')).toBeEmpty();
+  await page.unroute('**/api/api-key/validate');
+  await page.locator('#personal-api-key').fill(''); await page.locator('#save-api-key').click();
+  await expect(page.locator('#api-key-error')).toContainText('Enter a valid OpenAI API key');
+  await page.locator('#personal-api-key').fill('replacement-key'); await page.locator('#save-api-key').click();
+  await expect(page.locator('#api-key-dialog')).toBeHidden();
+  await openKeySettings(page); await expect(page.locator('#personal-api-key')).toHaveValue('replacement-key');
+});
+
+test('cancelled validation cannot overwrite a newer saved key and checking prevents duplicate submits', async ({ page }) => {
+  await page.goto('/');
+  let release, started, held = false, requests = 0;
+  const gate = new Promise(resolve => { release = resolve; }), pending = new Promise(resolve => { started = resolve; });
+  await page.route('**/api/api-key/validate', async route => {
+    requests++;
+    if (held) return route.continue();
+    held = true; const response = await route.fetch(); started(); await gate; await route.fulfill({ response });
+  });
+  try {
+    await openKeySettings(page); await page.locator('#personal-api-key').fill('cancelled-key');
+    await page.locator('#save-api-key').click(); await pending;
+    await expect(page.locator('#save-api-key')).toBeDisabled();
+    await expect(page.locator('#personal-api-key')).toBeDisabled();
+    await expect(page.locator('#api-key-progress')).toBeVisible();
+    await page.locator('#api-key-form').evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    expect(requests).toBe(1);
+    await page.keyboard.press('Escape'); await expect(page.locator('#api-key-dialog')).toBeHidden();
+    await openKeySettings(page); await expect(page.locator('#personal-api-key')).toHaveValue('');
+    await page.locator('#personal-api-key').fill('newer-key'); await page.locator('#save-api-key').click();
+    await expect(page.locator('#api-key-dialog')).toBeHidden();
+    const returned = page.waitForResponse('**/api/api-key/validate'); release(); await returned;
+    await openKeySettings(page); await expect(page.locator('#personal-api-key')).toHaveValue('newer-key');
+    expect(requests).toBe(2);
+  } finally { release(); }
 });
 
 test.describe('admin', () => {

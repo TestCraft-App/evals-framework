@@ -15,6 +15,7 @@ let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
 let workspaceReview = null, clearingWorkspace = false;
 let session = null, sessionTimer, sessionSetup;
 let activeWorkspace = 'main', personalKey = '', acceptedHash = '', runSourceWorkspace = null;
+let validatingKey = false, keyRequest = 0, keyReturnFocus = null;
 let runEvaluations = [], runSuites = [];
 const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('testcraft-account') : null;
 const routeHash = () => location.hash.replace(/^#(?:main|personal)\//, '#');
@@ -22,7 +23,7 @@ const navigate = value => { location.hash = activeWorkspace + '/' + value.replac
 const canWriteWorkspace = () => activeWorkspace === 'personal' || session?.user.role === 'admin';
 const resourcePath = (path, workspace = activeWorkspace) => '/api/workspaces/' + workspace + path.slice(4);
 function updateKey(value) {
-  personalKey = value; $('personal-api-key').value = value; $('run-api-key').value = value;
+  personalKey = value; updateRunSubmit();
 }
 function applyWorkspaceControls() {
   $('workspace-switcher').value = activeWorkspace;
@@ -549,6 +550,8 @@ function positionGenerationModels() {
   options.style.maxHeight = Math.max(80, Math.min(240, openAbove ? above : below)) + 'px';
 }
 function updateRunSubmit() {
+  const missingKey = session?.user.role !== 'admin' && !personalKey;
+  $('run-key-warning').hidden = !missingKey;
   const needsGrader = selectedNeedsGrader();
   const modelCount = selectedGenerationModels().length, combinations = runSelection.size * modelCount;
   $('create-grader-model').disabled = creatingRun || runModelsLoading;
@@ -558,7 +561,7 @@ function updateRunSubmit() {
   const modelLabels = [...$('generation-model-options').querySelectorAll('input:checked')].map(input => input.parentElement.textContent.trim());
   $('generation-model-selection').textContent = modelCount > 1 ? modelCount + ' models selected' : modelLabels[0] || 'Select models';
   $('generation-model-toggle').title = modelLabels.join(', ');
-  $('submit-create-run').disabled = creatingRun || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !modelCount || combinations > 100 || (needsGrader && !$('create-grader-model').value);
+  $('submit-create-run').disabled = creatingRun || missingKey || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !modelCount || combinations > 100 || (needsGrader && !$('create-grader-model').value);
   $('submit-create-run').textContent = creatingRun ? 'Creating…' : 'Create Run';
   $('create-selected-count').textContent = runSelection.size + ' selected · maximum 50';
   $('create-combination-count').textContent = runSelection.size + ' evals × ' + modelCount + ' models = ' + combinations + ' results · maximum 100';
@@ -616,10 +619,8 @@ async function openCreateRun(sourceRun = null) {
   const draft = ++runDraftRevision;
   runEvaluations = []; runSuites = [];
   runSourceWorkspace = sourceRun?.sourceWorkspace?.alias || activeWorkspace;
-  $('run-key-field').hidden = session.user.role === 'admin';
-  $('run-api-key').value = personalKey;
   $('run-destination').textContent = 'Evaluations from ' + (runSourceWorkspace === 'main' ? 'TestCraft' : 'My workspace') + '. Results saved in ' + (session.user.role !== 'admin' || runSourceWorkspace === 'personal' ? 'My workspace (private)' : 'TestCraft (visible to everyone)') + '. ' + (session.user.role === 'admin' ? 'Uses server credentials.' : 'Uses your OpenAI key.');
-  runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('run-api-key').value = personalKey; $('create-run-error').textContent = '';
+  runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
   $('generation-model-options').hidePopover();
   $('generation-model-options').replaceChildren();
   runModelDefaults = { generationModels: sourceRun?.settings?.generationModels || (sourceRun?.settings?.generationModel ? [sourceRun.settings.generationModel] : undefined), graderModel: sourceRun?.settings?.graderModel };
@@ -657,7 +658,7 @@ async function rerun(id) {
 }
 function setCreatingRun(busy) {
   creatingRun = busy;
-  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models'].forEach(id => { $(id).disabled = busy; });
+  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models', 'set-run-api-key'].forEach(id => { $(id).disabled = busy; });
   renderRunEvaluations();
 }
 async function submitRun(event) {
@@ -667,7 +668,7 @@ async function submitRun(event) {
   const body = { evaluationIds: [...runSelection], description: $('run-description').value, environment: $('create-environment').value, generationModels: selectedGenerationModels(), graderModel: selectedNeedsGrader() ? $('create-grader-model').value : '' };
   setCreatingRun(true); $('create-run-error').textContent = '';
   try {
-    if (session.user.role !== 'admin') { updateKey($('run-api-key').value.trim()); body.openAiApiKey = personalKey; }
+    if (session.user.role !== 'admin') body.openAiApiKey = personalKey;
     const run = await api(resourcePath('/api/runs', runSourceWorkspace), { method: 'POST', body: JSON.stringify(body) });
     if (workspace !== session || draft !== runDraftRevision) return;
     setCreatingRun(false); $('create-run-dialog').close(); location.hash = (run.resultWorkspace?.alias || activeWorkspace) + '/runs/' + run.id;
@@ -1087,7 +1088,6 @@ $('logout').addEventListener('click', async () => {
   catch (e) { error(e.message); }
 });
 $('workspace-switcher').addEventListener('change', () => { location.hash = $('workspace-switcher').value + '/evaluations'; });
-$('run-api-key').addEventListener('input', () => updateKey($('run-api-key').value));
 function closeUserMenu(restoreFocus = false) {
   $('user-menu-panel').hidden = true; $('user-menu-toggle').setAttribute('aria-expanded', 'false');
   if (restoreFocus) $('user-menu-toggle').focus();
@@ -1106,19 +1106,39 @@ document.addEventListener('keydown', event => {
 });
 $('user-menu').addEventListener('focusout', event => { if (!event.currentTarget.contains(event.relatedTarget)) closeUserMenu(); });
 $('extension-link').addEventListener('click', () => closeUserMenu(true));
-$('open-api-key').addEventListener('click', () => {
+function setKeyBusy(busy) {
+  validatingKey = busy; $('personal-api-key').disabled = busy; $('save-api-key').disabled = busy;
+  $('save-api-key').textContent = busy ? 'Checking…' : 'Save key';
+  $('clear-api-key').disabled = busy || !personalKey; $('api-key-progress').hidden = !busy;
+}
+function openKeyDialog(returnFocus) {
   if (!session || session.user.role === 'admin') return;
-  closeUserMenu(true); $('personal-api-key').value = personalKey; $('clear-api-key').disabled = !personalKey;
+  keyReturnFocus = returnFocus; closeUserMenu(); $('personal-api-key').value = personalKey; $('api-key-error').textContent = ''; setKeyBusy(false);
   $('api-key-dialog').showModal(); lockBody(); $('personal-api-key').focus();
-});
-$('api-key-form').addEventListener('submit', event => {
+}
+$('open-api-key').addEventListener('click', () => openKeyDialog($('user-menu-toggle')));
+$('set-run-api-key').addEventListener('click', () => openKeyDialog($('set-run-api-key')));
+$('api-key-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!session || session.user.role === 'admin') return;
-  updateKey($('personal-api-key').value.trim()); $('api-key-dialog').close(); toast(personalKey ? 'API key saved for this tab.' : 'API key cleared.');
+  if (!session || session.user.role === 'admin' || validatingKey) return;
+  const value = $('personal-api-key').value.trim(), workspace = session, request = ++keyRequest;
+  $('api-key-error').textContent = ''; setKeyBusy(true);
+  try {
+    const result = await api('/api/api-key/validate', { method: 'POST', body: JSON.stringify({ openAiApiKey: value }) });
+    if (request !== keyRequest || workspace !== session || !$('api-key-dialog').open) return;
+    if (result.valid !== true) throw new Error('The API key could not be validated. Please try again.');
+    updateKey(value); setKeyBusy(false); $('api-key-dialog').close(); toast('API key validated and saved for this tab.');
+  } catch (e) {
+    if (request === keyRequest && workspace === session && $('api-key-dialog').open) { $('api-key-error').textContent = e.message; setKeyBusy(false); $('personal-api-key').focus(); }
+  }
 });
 $('clear-api-key').addEventListener('click', () => { updateKey(''); $('api-key-dialog').close(); toast('API key cleared.'); });
 ['close-api-key', 'cancel-api-key'].forEach(id => $(id).addEventListener('click', () => $('api-key-dialog').close()));
-$('api-key-dialog').addEventListener('close', () => { $('personal-api-key').value = ''; lockBody(); if (session) $('user-menu-toggle').focus(); });
+$('api-key-dialog').addEventListener('close', () => {
+  keyRequest++; setKeyBusy(false); $('personal-api-key').value = ''; $('api-key-error').textContent = ''; lockBody();
+  if (session) (keyReturnFocus?.offsetParent ? keyReturnFocus : $('create-run-dialog').open ? $('create-environment') : $('user-menu-toggle')).focus();
+  keyReturnFocus = null;
+});
 $('close-inspect').addEventListener('click', () => $('inspect-evaluation').close());
 $('inspect-evaluation').addEventListener('close', lockBody);
 if (accountChannel) accountChannel.onmessage = () => { updateKey(''); void connectWorkspace(); };

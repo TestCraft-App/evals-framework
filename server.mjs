@@ -9,6 +9,7 @@ import { environments, localAvailable, resolveEnvironment, validateRunRequest, v
 import { AppError, validateEvaluation } from './src/evals/validation.mjs';
 import { publicConfig } from './src/evals/providers.mjs';
 import { createModelCatalog } from './src/evals/models.mjs';
+import { validatePersonalApiKey } from './src/evals/credentials.mjs';
 import { createSessions } from './src/evals/sessions.mjs';
 import { workshopSuites, basicWorkshopSuites } from './src/evals/workshop.mjs';
 import { loadRuntimeSecrets } from './src/runtime/secrets.mjs';
@@ -74,6 +75,11 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return json(res, 200, sessions.logout(req, res));
       const account = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
+      if (req.method === 'POST' && url.pathname === '/api/api-key/validate') {
+        if (account.user.role === 'admin') throw new AppError('Administrators use the configured server credentials.', 403);
+        const body = await readBody(req, 8192);
+        return json(res, 200, await validatePersonalApiKey(body?.openAiApiKey, env, fetchImpl));
+      }
       if (req.method === 'GET' && url.pathname === '/api/workspaces') return json(res, 200, { workspaces: sessions.workspaces(account) });
       const workspaceMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)(\/.*)$/);
       const scope = account ? sessions.resolveWorkspace(account, workspaceMatch?.[1] || 'personal') : null;
