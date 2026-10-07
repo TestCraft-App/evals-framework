@@ -23,20 +23,21 @@ const canWriteWorkspace = () => activeWorkspace === 'personal' || session?.user.
 const resourcePath = (path, workspace = activeWorkspace) => '/api/workspaces/' + workspace + path.slice(4);
 function updateKey(value) {
   personalKey = value; $('personal-api-key').value = value; $('run-api-key').value = value;
-  $('key-status').textContent = value ? '· set for this tab' : '· not set';
 }
 function applyWorkspaceControls() {
   $('workspace-switcher').value = activeWorkspace;
   document.body.classList.toggle('readonly-workspace', !canWriteWorkspace());
   $('workspace-access').textContent = canWriteWorkspace() ? 'You can manage this workspace.' : 'Read-only library · your runs are saved in My workspace.';
   $('private-badge').textContent = session.user.login + ' · ' + session.user.role;
-  $('logout').hidden = false; $('github-login').hidden = true;
-  $('key-settings').hidden = session.user.role === 'admin';
+  $('user-menu-name').textContent = session.user.login;
+  $('user-menu-toggle').title = 'User menu: ' + session.user.login;
+  $('github-login').hidden = true;
+  $('open-api-key').hidden = session.user.role === 'admin';
   for (const [id, label] of [['example-button', 'Load example'], ['basic-workshop-button', 'Load Basic Suite'], ['workshop-button', 'Load Full Suite']]) $(id).textContent = label + (canWriteWorkspace() ? '' : ' into My workspace');
   document.querySelector('.brand').href = '#' + activeWorkspace + '/evaluations';
   document.querySelector('.back-to-runs').href = '#' + activeWorkspace + '/runs';
 }
-function hasDraft() { return !!inlineName || !!suiteDraft || $('evaluation-dialog').open || $('create-run-dialog').open; }
+function hasDraft() { return !!inlineName || !!suiteDraft || $('evaluation-dialog').open || $('create-run-dialog').open || ($('api-key-dialog').open && $('personal-api-key').value.trim() !== personalKey); }
 async function changeWorkspace(alias) {
   const account = session;
   showConnecting(); activeWorkspace = alias; session = { ...account };
@@ -86,6 +87,7 @@ async function api(path, options) {
 function showConnecting() {
   workspaceReview = null; clearingWorkspace = false; $('clear-workspace-dialog').close();
   closeLibraryActions();
+  closeUserMenu(); $('api-key-dialog').close(); $('personal-api-key').value = '';
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
@@ -98,8 +100,9 @@ function showConnecting() {
   $('filter-suite').value = ''; evalSort = 'createdAt'; evalSortDirection = -1; renderSuites();
   $('run-search').value = ''; $('run-status').value = ''; $('run-model').value = ''; runSort = 'createdAt'; runSortDirection = -1; lastRunRows = null;
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
-  $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
-  $('session-message').textContent = 'Opening your workspace…'; $('logout').hidden = true;
+  $('workspace').hidden = true; $('user-menu').hidden = true; $('session-status').hidden = false;
+  $('private-badge').textContent = ''; $('user-menu-name').textContent = ''; $('user-menu-toggle').removeAttribute('title');
+  $('session-message').textContent = 'Opening your workspace…';
   $('session-error').textContent = ''; $('retry-session').hidden = true;
 }
 function scheduleSessionCheck() {
@@ -1030,7 +1033,7 @@ async function openWorkspace() {
   if (!config.llmReady && session.user.role === 'admin') { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
   await Promise.all([loadLibrary(), loadRuns(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
   if (!session) return;
-  $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;
+  $('session-status').hidden = true; $('workspace').hidden = false; $('user-menu').hidden = false;
   scheduleSessionCheck();
 }
 function inspectEvaluation(evaluation) {
@@ -1078,14 +1081,44 @@ $('github-login').addEventListener('click', async () => {
   } catch (e) { $('session-error').textContent = e.message; $('github-login').disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
+  closeUserMenu(true);
   if (hasDraft() && !confirm('Discard unsaved changes and sign out?')) return;
   try { await api('/api/auth/logout', { method: 'POST', body: '{}' }); updateKey(''); accountChannel?.postMessage('changed'); await connectWorkspace(); }
   catch (e) { error(e.message); }
 });
 $('workspace-switcher').addEventListener('change', () => { location.hash = $('workspace-switcher').value + '/evaluations'; });
-$('personal-api-key').addEventListener('input', () => updateKey($('personal-api-key').value));
 $('run-api-key').addEventListener('input', () => updateKey($('run-api-key').value));
-$('clear-api-key').addEventListener('click', () => updateKey(''));
+function closeUserMenu(restoreFocus = false) {
+  $('user-menu-panel').hidden = true; $('user-menu-toggle').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) $('user-menu-toggle').focus();
+}
+function openUserMenu() {
+  closeLibraryActions(); $('user-menu-panel').hidden = false; $('user-menu-toggle').setAttribute('aria-expanded', 'true');
+}
+$('user-menu-toggle').addEventListener('click', () => $('user-menu-panel').hidden ? openUserMenu() : closeUserMenu());
+$('user-menu-toggle').addEventListener('keydown', event => {
+  if (event.key !== 'ArrowDown') return;
+  event.preventDefault(); openUserMenu(); $('user-menu-panel').querySelector('button:not([hidden]), a').focus();
+});
+document.addEventListener('click', event => { if (!event.target.closest('#user-menu')) closeUserMenu(); });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('user-menu-panel').hidden) { event.preventDefault(); closeUserMenu(true); }
+});
+$('user-menu').addEventListener('focusout', event => { if (!event.currentTarget.contains(event.relatedTarget)) closeUserMenu(); });
+$('extension-link').addEventListener('click', () => closeUserMenu(true));
+$('open-api-key').addEventListener('click', () => {
+  if (!session || session.user.role === 'admin') return;
+  closeUserMenu(true); $('personal-api-key').value = personalKey; $('clear-api-key').disabled = !personalKey;
+  $('api-key-dialog').showModal(); lockBody(); $('personal-api-key').focus();
+});
+$('api-key-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!session || session.user.role === 'admin') return;
+  updateKey($('personal-api-key').value.trim()); $('api-key-dialog').close(); toast(personalKey ? 'API key saved for this tab.' : 'API key cleared.');
+});
+$('clear-api-key').addEventListener('click', () => { updateKey(''); $('api-key-dialog').close(); toast('API key cleared.'); });
+['close-api-key', 'cancel-api-key'].forEach(id => $(id).addEventListener('click', () => $('api-key-dialog').close()));
+$('api-key-dialog').addEventListener('close', () => { $('personal-api-key').value = ''; lockBody(); if (session) $('user-menu-toggle').focus(); });
 $('close-inspect').addEventListener('click', () => $('inspect-evaluation').close());
 $('inspect-evaluation').addEventListener('close', lockBody);
 if (accountChannel) accountChannel.onmessage = () => { updateKey(''); void connectWorkspace(); };

@@ -9,6 +9,12 @@ async function seedMain(app) {
   return (await admin.post('/api/workspaces/main/evaluations', definition)).json();
 }
 
+async function openKeySettings(page) {
+  await page.getByRole('button', { name: 'User menu', exact: true }).click();
+  await page.getByRole('button', { name: 'API key', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'OpenAI API key', exact: true })).toBeVisible();
+}
+
 test('collaborators inspect the main library and load examples only into their personal space', async ({ page, browserApp }) => {
   await seedMain(browserApp);
   await page.goto('/');
@@ -83,14 +89,93 @@ test('tabs retain independent workspaces and switching protects drafts and clear
 test('logout clears the key and exposes GitHub sign-in without an anonymous fallback', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#workspace')).toBeVisible();
-  await page.locator('#key-settings summary').click();
+  await openKeySettings(page);
   await page.locator('#personal-api-key').fill('temporary-key');
+  await page.getByRole('button', { name: 'Save key', exact: true }).click();
+  await page.locator('#user-menu-toggle').click();
   await page.locator('#logout').click();
   await expect(page.locator('#github-login')).toBeVisible();
   await expect(page.locator('#workspace')).toBeHidden();
   await expect(page.locator('#personal-api-key')).toHaveValue('');
+  await expect(page.locator('#run-api-key')).toHaveValue('');
+  await expect(page.locator('#user-menu')).toBeHidden();
+  await expect(page.locator('#user-menu-panel')).toBeHidden();
+  await expect(page.locator('#private-badge')).toBeEmpty();
   expect((await (await page.request.get('/api/session')).json()).authenticated).toBe(false);
 });
+
+test('a key saved from the user menu is used by runs and stays out of storage', async ({ page, context, browserApp, generationCalls }) => {
+  await seedMain(browserApp);
+  await page.goto('/');
+  await openKeySettings(page);
+  await expect(page.locator('#personal-api-key')).toBeFocused();
+  await expect(page.locator('#personal-api-key')).toHaveAttribute('type', 'password');
+  await expect(page.locator('#clear-api-key')).toBeDisabled();
+  await page.locator('#personal-api-key').fill('  synthetic-menu-key  ');
+  await page.getByRole('button', { name: 'Save key', exact: true }).click();
+  await expect(page.locator('#api-key-dialog')).toBeHidden();
+  await expect(page.locator('#personal-api-key')).toHaveValue('');
+  await expect(page.locator('#user-menu-toggle')).toBeFocused();
+  expect(generationCalls).toHaveLength(0);
+  const other = await context.newPage();
+  await other.goto('/'); await openKeySettings(other);
+  await expect(other.locator('#personal-api-key')).toHaveValue('');
+  await other.close();
+  await page.locator('#workspace-switcher').selectOption('personal');
+  await expect(page.locator('#workspace')).toBeVisible();
+  await openKeySettings(page);
+  await expect(page.locator('#personal-api-key')).toHaveValue('synthetic-menu-key');
+  await page.locator('#cancel-api-key').click();
+  await page.locator('#workspace-switcher').selectOption('main');
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
+  await openRunCreator(page);
+  await expect(page.locator('#run-api-key')).toHaveValue('synthetic-menu-key');
+  await page.getByRole('checkbox', { name: 'Select ' + definition.name, exact: true }).check();
+  await createSelectedRun(page);
+  await expect(page.locator('.result-score')).toContainText('1.00');
+  expect(generationCalls[0].body.openAiApiKey).toBe('synthetic-menu-key');
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain('synthetic-menu-key');
+  expect(JSON.stringify(browserApp.store.db.prepare('SELECT data FROM runs').all())).not.toContain('synthetic-menu-key');
+  await page.reload(); await expect(page.locator('#workspace')).toBeVisible();
+  await openKeySettings(page);
+  await expect(page.locator('#personal-api-key')).toHaveValue('');
+  await expect(page.locator('#clear-api-key')).toBeDisabled();
+});
+
+for (const width of [1280, 390]) {
+  test(`API key dialog cancels drafts, saves and clears the tab key at ${width}px`, async ({ page, generationCalls }) => {
+    await page.setViewportSize({ width, height: 780 });
+    await page.goto('/');
+    await expect(page.locator('#key-settings')).toHaveCount(0);
+    await openKeySettings(page);
+    await page.locator('#personal-api-key').fill('cancelled-key');
+    await page.locator('#cancel-api-key').click();
+    await openKeySettings(page);
+    await expect(page.locator('#personal-api-key')).toHaveValue('');
+    await page.locator('#personal-api-key').fill('synthetic-dialog-key');
+    await page.locator('#personal-api-key').press('Enter');
+    await expect(page.locator('#api-key-dialog')).toBeHidden();
+    await openKeySettings(page);
+    await expect(page.locator('#personal-api-key')).toHaveValue('synthetic-dialog-key');
+    await page.locator('#personal-api-key').fill('discard-on-escape');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#api-key-dialog')).toBeHidden();
+    await expect(page.locator('#user-menu-toggle')).toBeFocused();
+    await openKeySettings(page);
+    await expect(page.locator('#personal-api-key')).toHaveValue('synthetic-dialog-key');
+    await page.screenshot({ path: test.info().outputPath('api-key-dialog.png'), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(2);
+    await page.locator('#clear-api-key').click();
+    await expect(page.locator('#api-key-dialog')).toBeHidden();
+    await expect(page.locator('#run-api-key')).toHaveValue('');
+    await openKeySettings(page);
+    await expect(page.locator('#personal-api-key')).toHaveValue('');
+    await expect(page.locator('#clear-api-key')).toBeDisabled();
+    await page.locator('#close-api-key').click();
+    await expect(page.locator('body')).not.toHaveClass(/modal-open/);
+    expect(generationCalls).toHaveLength(0);
+  });
+}
 
 test('late main-library responses cannot overwrite a personal workspace after switching', async ({ page, browserApp }) => {
   await seedMain(browserApp);
@@ -119,7 +204,10 @@ test.describe('admin', () => {
     await page.locator('#library-actions-toggle').click();
     await page.getByRole('button', { name: 'Load Basic Suite', exact: true }).click();
     await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
-    await expect(page.locator('#key-settings')).toBeHidden();
+    await page.locator('#user-menu-toggle').click();
+    await expect(page.locator('#private-badge')).toContainText('user-1 · admin');
+    await expect(page.locator('#open-api-key')).toBeHidden();
+    await page.keyboard.press('Escape');
     await page.locator('#workspace-switcher').selectOption('personal');
     await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
     await expect(page.locator('#new-button')).toBeVisible();
@@ -139,6 +227,8 @@ test.describe('sign-in', () => {
     await expect(page.locator('#workspace')).toBeHidden();
     await page.locator('#github-login').click();
     await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.locator('#user-menu-name')).toHaveText('user-1001');
+    await page.locator('#user-menu-toggle').click();
     await expect(page.locator('#private-badge')).toContainText('user-1001 · collaborator');
     const cookies = await page.context().cookies();
     expect(cookies.find(c => c.name === 'testcraft_session')).toMatchObject({ httpOnly: true, sameSite: 'Strict' });

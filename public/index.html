@@ -11,7 +11,17 @@
 <body>
   <header class="app-header">
     <a class="brand" href="#evaluations"><span class="brand-icon" aria-hidden="true">tc</span><span>TestCraft <b>Evals</b></span></a>
-    <div class="header-right"><span class="workspace-badge" id="private-badge" hidden></span><button id="logout" class="text-button" hidden>Sign out</button><a href="https://home.testcraft.app/" target="_blank" rel="noreferrer">Extension ↗</a></div>
+    <div class="header-right">
+      <div id="user-menu" class="user-menu" hidden>
+        <button id="user-menu-toggle" type="button" class="button" aria-expanded="false" aria-controls="user-menu-panel" aria-label="User menu"><span id="user-menu-name"></span><svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div id="user-menu-panel" class="user-menu-panel" hidden>
+          <p id="private-badge" class="user-menu-identity"></p>
+          <button id="open-api-key" type="button" hidden>API key</button>
+          <a id="extension-link" href="https://home.testcraft.app/" target="_blank" rel="noreferrer" title="Open TestCraft in a new tab">Extension ↗</a>
+          <button id="logout" type="button">Sign out</button>
+        </div>
+      </div>
+    </div>
   </header>
   <section id="session-status" class="session-status" aria-live="polite">
     <p id="session-message">Opening your private workspace…</p>
@@ -21,7 +31,6 @@
   </section>
   <main class="shell" id="workspace" hidden>
     <div class="workspace-controls"><label>Workspace<select id="workspace-switcher"><option value="main">TestCraft</option><option value="personal">My workspace</option></select></label><span id="workspace-access" class="muted"></span></div>
-    <details id="key-settings" class="notice" hidden><summary>Your OpenAI key <span id="key-status">· not set</span></summary><p>Used by TestCraft for generation and OpenAI for grading. Kept only in this tab and active runs. Enter it again after refreshing.</p><label>OpenAI API key<input id="personal-api-key" type="password" autocomplete="off" spellcheck="false" maxlength="4096"></label><button id="clear-api-key" type="button" class="text-button">Clear key</button></details>
     <div class="notice" id="setup-notice" hidden></div>
     <div class="error-banner" id="app-error" role="alert" hidden></div>
     <nav class="tabs" role="tablist" aria-label="Workspaces">
@@ -76,6 +85,16 @@
     </footer>
   </main>
 
+  <dialog id="api-key-dialog" class="compact-dialog" aria-labelledby="api-key-title" aria-describedby="api-key-description">
+    <form id="api-key-form">
+      <div class="dialog-heading"><h2 id="api-key-title">OpenAI API key</h2><button id="close-api-key" type="button" class="icon-button" aria-label="Close API key">×</button></div>
+      <div class="compact-body">
+        <p id="api-key-description">Used by TestCraft for generation and OpenAI for grading. Kept only in this tab and active runs. Enter it again after refreshing.</p>
+        <label for="personal-api-key">API key</label><input id="personal-api-key" type="password" autocomplete="off" spellcheck="false" maxlength="4096" aria-describedby="api-key-description" autofocus>
+      </div>
+      <div class="dialog-footer"><button id="clear-api-key" type="button" class="text-button">Clear key</button><button id="cancel-api-key" type="button" class="button">Cancel</button><button type="submit" class="button primary">Save key</button></div>
+    </form>
+  </dialog>
   <dialog id="inspect-evaluation" aria-labelledby="inspect-title"><div class="dialog-heading"><h2 id="inspect-title"></h2><button id="close-inspect" class="icon-button" aria-label="Close evaluation">×</button></div><div id="inspect-content" class="compact-body"></div></dialog>
   <dialog id="evaluation-dialog" aria-labelledby="dialog-title">
     <form id="evaluation-form" novalidate>
