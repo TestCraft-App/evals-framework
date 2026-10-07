@@ -29,8 +29,18 @@
     <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
     <button id="github-login" type="button" class="button primary" hidden>Sign in with GitHub</button>
   </section>
+  <p id="workspace-announcement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
   <main class="shell" id="workspace" hidden>
-    <div class="workspace-controls"><label for="workspace-switcher">Workspace</label><select id="workspace-switcher"><option value="main">TestCraft</option><option value="personal">My workspace</option></select><span id="workspace-access" class="muted"></span></div>
+    <div class="workspace-controls">
+      <div class="workspace-identity">
+        <span class="workspace-icon" aria-hidden="true">
+          <svg id="workspace-shared-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 20v-2a6 6 0 0 0-4-5.65"/></svg>
+          <svg id="workspace-personal-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>
+        </span>
+        <div class="workspace-context"><div class="workspace-title"><strong id="workspace-name"></strong><span id="workspace-visibility"></span></div><p id="workspace-access" class="muted"></p></div>
+      </div>
+      <div class="workspace-selector"><label for="workspace-switcher">Workspace</label><select id="workspace-switcher"><option value="main">TestCraft</option><option value="personal">My workspace</option></select></div>
+    </div>
     <div class="notice" id="setup-notice" hidden></div>
     <div class="error-banner" id="app-error" role="alert" hidden></div>
     <nav class="tabs" role="tablist" aria-label="Workspaces">

@@ -54,7 +54,7 @@ Additive tables preserve all existing anonymous data and snapshots as archived s
 
 Manage spending through the configured API keys and provider-side budgets. The app does not enforce a model-call allowance. The obsolete `WORKSHOP_MAX_MODEL_CALLS` setting is ignored. `WORKSHOP_ID` scopes private sessions and saved data.
 
-The Evaluations tab opens directly on the evaluation library, without summary cards or a workspace heading.
+The workspace bar above Evaluations and Runs identifies the active workspace: teal **TestCraft · Shared**, or blue **My workspace · Private**, with distinct icons and explicit permission text. Shared visibility is separate from editing permissions: collaborators see the read-only notice and private run destination in TestCraft, while admins can manage it. Use the labeled Workspace dropdown to switch; on mobile it sits below the identity. The bar also appears on run detail and follows automatic switches to private results. The Evaluations tab opens directly on the evaluation library, without summary cards.
 
 ### AWS deployment requirements (not deployed by this change)
 

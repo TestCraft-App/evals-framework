@@ -26,6 +26,12 @@ function updateKey(value) {
   personalKey = value; updateRunSubmit();
 }
 function applyWorkspaceControls() {
+  const personal = activeWorkspace === 'personal';
+  document.querySelector('.workspace-controls').dataset.workspace = activeWorkspace;
+  $('workspace-name').textContent = personal ? 'My workspace' : 'TestCraft';
+  $('workspace-visibility').textContent = personal ? 'Private' : 'Shared';
+  $('workspace-shared-icon').toggleAttribute('hidden', personal);
+  $('workspace-personal-icon').toggleAttribute('hidden', !personal);
   $('workspace-switcher').value = activeWorkspace;
   document.body.classList.toggle('readonly-workspace', !canWriteWorkspace());
   document.querySelector('.library-actions').hidden = !canWriteWorkspace();
@@ -103,6 +109,7 @@ function showConnecting() {
   $('run-search').value = ''; $('run-status').value = ''; $('run-model').value = ''; runSort = 'createdAt'; runSortDirection = -1; lastRunRows = null;
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
   $('workspace').hidden = true; $('user-menu').hidden = true; $('session-status').hidden = false;
+  $('workspace-announcement').textContent = '';
   $('private-badge').textContent = ''; $('user-menu-name').textContent = ''; $('user-menu-toggle').removeAttribute('title');
   $('session-message').textContent = 'Opening your workspace…';
   $('session-error').textContent = ''; $('retry-session').hidden = true;
@@ -1035,6 +1042,7 @@ async function openWorkspace() {
   await Promise.all([loadLibrary(), loadRuns(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
   if (!session) return;
   $('session-status').hidden = true; $('workspace').hidden = false; $('user-menu').hidden = false;
+  $('workspace-announcement').textContent = $('workspace-name').textContent + ' · ' + $('workspace-visibility').textContent;
   scheduleSessionCheck();
 }
 function inspectEvaluation(evaluation) {

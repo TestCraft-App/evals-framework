@@ -8,6 +8,8 @@ TestCraft's browser extension is the application being evaluated. This project s
 
 Open the workshop URL directly or follow a shared link from another site or phone app in your browser. External links can load the public dashboard, where users sign in with GitHub and choose TestCraft or My workspace. Cross-site API access remains blocked.
 
+The workspace bar above Evaluations and Runs shows teal **TestCraft · Shared** or blue **My workspace · Private**, with distinct icons and permission text. Use its Workspace dropdown to switch. Shared visibility does not grant editing permission; collaborator runs from TestCraft open in My workspace, and the bar updates to match their private destination.
+
 For a ready-made starting point, collaborators first select **My workspace**; Actions is hidden from them in TestCraft. Use **Actions → Load Basic Suite**: 12 evaluations, two per Full suite, with concise atomic model criteria and local rules. **Load Full Suite** loads the existing 156-evaluation collection. Both loads preserve edits on repeat use and make no provider calls. Run the Basic collection together to check endpoint output quality with 12 generation and 11 judge attempts.
 
 1. Inspect a UI with TestCraft and obtain its selected HTML.

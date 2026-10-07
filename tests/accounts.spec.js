@@ -67,6 +67,9 @@ test('main runs and reruns save privately, preserve their source, and never stor
   await expect(page.locator('#submit-create-run')).toBeEnabled();
   await createSelectedRun(page);
   await expect(page).toHaveURL(/#personal\/runs\//);
+  await expect(page.locator('.workspace-controls')).toBeVisible();
+  await expect(page.locator('#workspace-name')).toHaveText('My workspace');
+  await expect(page.locator('#workspace-visibility')).toHaveText('Private');
   await expect(page.locator('.result-score')).toContainText('1.00');
   await expect(page.locator('.run-provenance')).toContainText('Source: TestCraft');
   expect(generationCalls[0].body.openAiApiKey).toBe('synthetic-collaborator-key');
@@ -82,6 +85,8 @@ test('main runs and reruns save privately, preserve their source, and never stor
   await page.reload();
   await expect(page.locator('#workspace')).toBeVisible();
   await expect(page.locator('#personal-api-key')).toHaveValue('');
+  await expect(page.locator('#workspace-name')).toHaveText('My workspace');
+  await expect(page.locator('#workspace-visibility')).toHaveText('Private');
   await page.locator('#workspace-switcher').selectOption('main');
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await expect(page.locator('#run-list tr')).toHaveCount(0);
@@ -94,16 +99,29 @@ test('tabs retain independent workspaces and switching protects drafts and clear
   await other.goto('/#main/evaluations');
   await expect(other.locator('#evaluation-rows tr')).toHaveCount(1);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
+  await expect(other.locator('#workspace-name')).toHaveText('TestCraft');
+  await expect(other.locator('#workspace-visibility')).toHaveText('Shared');
+  await expect(page.locator('#workspace-name')).toHaveText('My workspace');
+  await expect(page.locator('#workspace-visibility')).toHaveText('Private');
+  await other.reload();
+  await expect(other.locator('#workspace-name')).toHaveText('TestCraft');
+  await expect(other.locator('#workspace-visibility')).toHaveText('Shared');
   await page.locator('#new-button').click();
   await page.locator('#name').fill('Unsaved personal case');
   page.once('dialog', dialog => dialog.dismiss());
   await page.evaluate(() => { location.hash = 'main/evaluations'; });
   await expect(page).toHaveURL(/#personal\/evaluations$/);
   await expect(page.locator('#name')).toHaveValue('Unsaved personal case');
+  await expect(page.locator('#workspace-switcher')).toHaveValue('personal');
+  await expect(page.locator('.workspace-controls')).toHaveAttribute('data-workspace', 'personal');
+  await expect(page.locator('#workspace-name')).toHaveText('My workspace');
+  await expect(page.locator('#workspace-visibility')).toHaveText('Private');
   page.once('dialog', dialog => dialog.accept());
   await page.evaluate(() => { location.hash = 'main/evaluations'; });
   await expect(page.locator('#evaluation-dialog')).toBeHidden();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
+  await expect(page.locator('#workspace-name')).toHaveText('TestCraft');
+  await expect(page.locator('#workspace-visibility')).toHaveText('Shared');
   await other.close();
 });
 
@@ -117,6 +135,8 @@ test('logout clears the key and exposes GitHub sign-in without an anonymous fall
   await page.locator('#logout').click();
   await expect(page.locator('#github-login')).toBeVisible();
   await expect(page.locator('#workspace')).toBeHidden();
+  await expect(page.locator('.workspace-controls')).toBeHidden();
+  await expect(page.locator('#workspace-announcement')).toBeEmpty();
   await expect(page.locator('#personal-api-key')).toHaveValue('');
   await expect(page.locator('#run-api-key')).toHaveCount(0);
   await expect(page.locator('#user-menu')).toBeHidden();
