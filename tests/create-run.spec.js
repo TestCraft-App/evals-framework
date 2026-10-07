@@ -39,7 +39,7 @@ test('rerun icon opens a reviewable draft and creates fresh output using current
   const button = page.locator('[data-rerun="rerun-source"]');
   await expect(button.locator('..').locator('[data-delete-run]')).toHaveCount(1);
   await button.focus(); await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/#runs$/);
+  await expect(page).toHaveURL(/#personal\/runs$/);
   await expect(page.locator('#create-selected-count')).toContainText('1 selected');
   await expect(page.getByRole('checkbox', { name: 'Select Alpha rules', exact: true })).toBeChecked();
   await expect(page.locator('#run-description')).toHaveValue(source.description);
@@ -54,10 +54,10 @@ test('rerun icon opens a reviewable draft and creates fresh output using current
   expect(generationCalls).toHaveLength(1);
   expect(generationCalls[0].body.sourceCode).toBe(saved[0].html);
   expect(generationCalls[0].body.model).toBe('gpt-4o');
-  const newId = new URL(page.url()).hash.split('/')[1];
+  const newId = new URL(page.url()).hash.split('/').at(-1);
   expect(newId).not.toBe(source.id);
-  expect((await (await page.request.get('/api/runs/' + newId)).json()).settings).toEqual({ environment: source.settings.environment, generationModels: [source.settings.generationModel], graderModel: '', testcraftBaseUrl: 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app' });
-  expect((await (await page.request.get('/api/runs/' + source.id)).json()).items[0].output).toBe('Historical output');
+  expect((await (await page.request.get('/api/workspaces/personal/runs/' + newId)).json()).settings).toEqual({ environment: source.settings.environment, generationModels: [source.settings.generationModel], graderModel: '', testcraftBaseUrl: 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app' });
+  expect((await (await page.request.get('/api/workspaces/personal/runs/' + source.id)).json()).items[0].output).toBe('Historical output');
 });
 
 test('legacy reruns identify missing evaluations and never invent unavailable model options', async ({ page, browserApp }) => {
@@ -84,7 +84,7 @@ test('failed rerun reads show an error without opening a draft or creating a run
   const session = await (await page.request.get('/api/session')).json();
   browserApp.store.saveRun({ id: 'missing-rerun', createdAt: '2026-09-09T12:00:00Z', status: 'completed', items: [] }, { ownerId: session.workspaceId, workshopId: 'browser-tests' });
   await page.getByRole('tab', { name: /^Runs/ }).click();
-  await page.route('**/api/runs/missing-rerun', route => route.fulfill({ status: 404, json: { error: 'Run not found.' } }));
+  await page.route('**/api/workspaces/personal/runs/missing-rerun', route => route.fulfill({ status: 404, json: { error: 'Run not found.' } }));
   await page.locator('[data-rerun="missing-rerun"]').click();
   await expect(page.locator('#app-error')).toHaveText('Run not found.');
   await expect(page.locator('#create-run-dialog')).toBeHidden();
@@ -145,13 +145,13 @@ async function seed(page, count = 3) {
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
   const suiteIds = {};
   if (count === 3) for (const name of ['Core suite', 'Code suite']) {
-    const response = await page.request.post('/api/suites', { headers, data: { name } }); expect(response.status()).toBe(201);
+    const response = await page.request.post('/api/workspaces/personal/suites', { headers, data: { name } }); expect(response.status()).toBe(201);
     suiteIds[name] = (await response.json()).id;
   }
   const definitions = count === 3 ? [rules, { ...rules, name: 'Beta model', method: 'model_grade', suiteId: suiteIds['Core suite'] }, { ...rules, name: 'Gamma code', type: 'code', framework: 'playwright', language: 'typescript', pageUrl: 'https://example.com', suiteId: suiteIds['Code suite'] }] : Array.from({ length: count }, (_, i) => ({ ...rules, name: 'Eval ' + i }));
   const saved = [];
   for (const data of definitions) {
-    const response = await page.request.post('/api/evaluations', { headers, data }); expect(response.status()).toBe(201); saved.push(await response.json());
+    const response = await page.request.post('/api/workspaces/personal/evaluations', { headers, data }); expect(response.status()).toBe(201); saved.push(await response.json());
   }
   return saved;
 }
@@ -211,8 +211,8 @@ test('generation dropdown runs the full evaluation/model matrix and reruns retai
     await expect(row.locator('td')).toHaveText(['1', '2', '0', '3', '0.67 3/3 scored']);
   }
   expect(generationCalls).toHaveLength(6);
-  const runId = new URL(page.url()).hash.split('/')[1];
-  const run = await (await page.request.get('/api/runs/' + runId)).json();
+  const runId = new URL(page.url()).hash.split('/').at(-1);
+  const run = await (await page.request.get('/api/workspaces/personal/runs/' + runId)).json();
   expect(run.settings.generationModels).toEqual(['gpt-4o-mini', 'gpt-4o']);
   for (const model of run.settings.generationModels) expect(new Set(run.items.filter(item => item.evaluation.model === model).map(item => item.evaluationId))).toEqual(new Set(saved.map(e => e.id)));
   await page.locator('#detail-filter-model').selectOption('gpt-4o');
@@ -272,7 +272,7 @@ test('run modal selects across filters, requires a conditional grader and create
   await expect(page.locator('.result-score')).toContainText('1.00'); await expect(page.locator('.run-top')).toContainText('Env: Dev');
   await expect(page.locator('.run-top')).not.toContainText('Dev check <script>inert</script>');
   await expect(page.locator('.run-top script')).toHaveCount(0);
-  const run = await (await page.request.get('/api/runs/' + new URL(page.url()).hash.split('/')[1])).json();
+  const run = await (await page.request.get('/api/workspaces/personal/runs/' + new URL(page.url()).hash.split('/').at(-1))).json();
   expect(run.items.map(item => item.evaluationId)).toEqual([saved[0].id]); expect(run.settings.environment).toBe('dev'); expect(run.settings.generationModels).toEqual(['gpt-4o']);
   expect(generationCalls).toHaveLength(1); expect(generationCalls[0].url).toContain('openai-api-proxy-dev'); expect(generationCalls[0].body.model).toBe('gpt-4o');
 });
@@ -326,7 +326,7 @@ test('select-all enforces 50, filters retain selections, and failed submission p
   await expect(page.locator('#create-selected-count')).toContainText('22 selected');
   let attempts = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
-  await page.route('**/api/runs', async route => {
+  await page.route('**/api/workspaces/personal/runs', async route => {
     if (route.request().method() !== 'POST') return route.continue();
     attempts++; await gate; await route.fulfill({ status: 429, json: { error: 'Allowance exhausted' } });
   });

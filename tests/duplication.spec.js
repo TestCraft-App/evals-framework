@@ -4,7 +4,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/'); await expect(page.locator('#workspace')).toBeVisible();
   const session = await (await page.request.get('/api/session')).json();
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
-  const response = await page.request.post('/api/evaluations', { headers, data: { name: 'Original', type: 'ideas', html: '<button>Login</button>', method: 'contains', criteria: ['Login'] } });
+  const response = await page.request.post('/api/workspaces/personal/evaluations', { headers, data: { name: 'Original', type: 'ideas', html: '<button>Login</button>', method: 'contains', criteria: ['Login'] } });
   expect(response.ok()).toBe(true); await page.reload();
 });
 async function duplicate(page, source = 'Original') {
@@ -23,7 +23,7 @@ test('outside-click and Enter save names without opening the copy, while Escape 
   await duplicate(page); await page.locator('#duplicate-name').fill('Discard this name'); await page.locator('#duplicate-name').press('Escape');
   await expect(page.getByRole('button', { name: 'Original (copy)', exact: true })).toBeVisible();
   await expect(page.locator('#evaluation-dialog')).toBeHidden();
-  const records = (await (await page.request.get('/api/evaluations')).json()).evaluations;
+  const records = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations;
   expect(records.map(e => e.name).sort()).toEqual(['Keyboard saved', 'Original', 'Original (copy)', 'Outside saved']);
   expect(generationCalls).toHaveLength(0);
 });
@@ -33,15 +33,15 @@ test('invalid and failed name saves preserve the copy and typed name for retry',
   await page.getByRole('button', { name: 'Save evaluation name', exact: true }).click();
   await expect(page.locator('#duplicate-name-error')).toContainText('Enter a name');
   await expect(page.locator('#duplicate-name')).toBeFocused();
-  await page.route('**/api/evaluations/*', route => route.request().method() === 'PATCH' ? route.fulfill({ status: 503, json: { error: 'Temporary rename failure.' } }) : route.continue());
+  await page.route('**/api/workspaces/personal/evaluations/*', route => route.request().method() === 'PATCH' ? route.fulfill({ status: 503, json: { error: 'Temporary rename failure.' } }) : route.continue());
   await page.locator('#duplicate-name').fill('Retry <safe>'); await page.locator('#duplicate-name').press('Enter');
   await expect(page.locator('#duplicate-name-error')).toContainText('Temporary rename failure');
   await expect(page.locator('#duplicate-name')).toHaveValue('Retry <safe>');
   await expect(page.locator('#eval-count')).toHaveText('2');
-  await page.unroute('**/api/evaluations/*'); await page.locator('#duplicate-name').press('Enter');
+  await page.unroute('**/api/workspaces/personal/evaluations/*'); await page.locator('#duplicate-name').press('Enter');
   await expect(page.getByRole('button', { name: 'Retry <safe>', exact: true })).toBeVisible();
   await expect(page.locator('#evaluation-rows safe')).toHaveCount(0);
-  expect((await (await page.request.get('/api/evaluations')).json()).evaluations).toHaveLength(2);
+  expect((await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations).toHaveLength(2);
 });
 
 test('clicking a table action finishes the inline name before opening or duplicating', async ({ page }) => {
@@ -56,13 +56,13 @@ test('clicking a table action finishes the inline name before opening or duplica
 
 test('concurrent name changes produce a conflict and never overwrite the newer record', async ({ page }) => {
   await duplicate(page); await page.locator('#duplicate-name').fill('My draft');
-  const session = await (await page.request.get('/api/session')).json(), records = (await (await page.request.get('/api/evaluations')).json()).evaluations;
+  const session = await (await page.request.get('/api/session')).json(), records = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations;
   const copy = records.find(e => e.name === 'Original (copy)');
-  const response = await page.request.patch('/api/evaluations/' + copy.id, { headers: { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken }, data: { name: 'Other tab name', revision: copy.revision } });
+  const response = await page.request.patch('/api/workspaces/personal/evaluations/' + copy.id, { headers: { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken }, data: { name: 'Other tab name', revision: copy.revision } });
   expect(response.ok()).toBe(true); await page.locator('#duplicate-name').press('Enter');
   await expect(page.locator('#duplicate-name-error')).toContainText('Press Escape');
   await expect(page.locator('#duplicate-name')).toHaveValue('My draft');
-  expect((await (await page.request.get('/api/evaluations/' + copy.id)).json()).name).toBe('Other tab name');
+  expect((await (await page.request.get('/api/workspaces/personal/evaluations/' + copy.id)).json()).name).toBe('Other tab name');
   await page.locator('#duplicate-name').press('Escape');
   await expect(page.getByRole('button', { name: 'Other tab name', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Other tab name', exact: true }).click();
@@ -73,7 +73,7 @@ test('pending duplicate and rename requests cannot create extra copies or save t
   let releaseCopy, copyStarted, releaseName, nameStarted, copies = 0, renames = 0;
   const copyGate = new Promise(resolve => { releaseCopy = resolve; }), copyRequest = new Promise(resolve => { copyStarted = resolve; });
   const nameGate = new Promise(resolve => { releaseName = resolve; }), nameRequest = new Promise(resolve => { nameStarted = resolve; });
-  await page.route('**/api/evaluations/**', async route => {
+  await page.route('**/api/workspaces/personal/evaluations/**', async route => {
     if (route.request().url().endsWith('/duplicate')) { copies++; copyStarted(); await copyGate; }
     if (route.request().method() === 'PATCH') { renames++; nameStarted(); await nameGate; }
     await route.continue();
@@ -88,10 +88,10 @@ test('pending duplicate and rename requests cannot create extra copies or save t
 });
 
 test('a failed duplication adds no row and retry creates one inline copy', async ({ page }) => {
-  await page.route('**/api/evaluations/*/duplicate', route => route.fulfill({ status: 503, json: { error: 'Temporary copy failure.' } }));
+  await page.route('**/api/workspaces/personal/evaluations/*/duplicate', route => route.fulfill({ status: 503, json: { error: 'Temporary copy failure.' } }));
   await page.getByRole('button', { name: 'Duplicate Original', exact: true }).click();
   await expect(page.locator('#app-error')).toHaveText('Temporary copy failure.'); await expect(page.locator('#eval-count')).toHaveText('1');
-  await expect(page.locator('#duplicate-name')).toHaveCount(0); await page.unroute('**/api/evaluations/*/duplicate');
+  await expect(page.locator('#duplicate-name')).toHaveCount(0); await page.unroute('**/api/workspaces/personal/evaluations/*/duplicate');
   await duplicate(page); await expect(page.locator('#eval-count')).toHaveText('2');
 });
 

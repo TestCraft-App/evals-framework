@@ -1,126 +1,152 @@
-# Despliegue de TestCraft Evals en Endava
+# Deploying TestCraft Evals to AWS
 
-## Estado y alcance
+This guide describes the deployment implemented in this repository. Use the [workshop runbook](aws-workshop-runbook.md) for operator commands, acceptance checks, and teardown. Reviewed against the source and provider documentation on October 6, 2026; this is not a verification of live AWS resources or GitHub settings.
 
-La preparación reproducible y el procedimiento de retirada para el taller están en [AWS workshop runbook](aws-workshop-runbook.md). La plantilla recibe un secreto creado por el operador y conserva el volumen de datos al borrar el stack: ambos necesitan retirada explícita para evitar cargos residuales.
+The app runs as one Node.js container with persistent SQLite storage. Anyone can sign in with GitHub as a collaborator; numeric GitHub IDs designate administrators. Collaborators can view TestCraft and run its evaluations privately, or manage their personal workspace. They supply their own OpenAI key. Administrators use server credentials. There is no application-wide model-call budget; configure spending controls with the providers.
 
-El proyecto incluye una imagen Docker, lectura de Secrets Manager, controles de reinicio, tests y un workflow de GitHub Actions. **Eso no significa que esté online:** todavía hay que aprobar/provisionar la infraestructura, configurar los permisos/variables y ejecutar el primer despliegue.
+## 1. Prerequisites and scope
 
-Esta guía mantiene la arquitectura actual: un proceso Node con SQLite y siete participantes con sesiones anónimas. No agrega cuentas de usuario, réplicas, PostgreSQL ni cambios al evaluador. El enlace público no exige login; cualquiera que lo obtenga puede entrar y consumir el cupo compartido. El cupo de llamadas no es un límite monetario.
+- Local tooling: Node.js 22.13 or newer, PowerShell, and AWS CLI v2. CI and the container use Node.js 24.
+- The provisioner targets Endava account `419466290453`, profile `endava`, region `us-east-1`, and stack `testcraft-evals-workshop`. It is not a generic multi-account script. Do not use the unrelated `default` profile. The SSO region can differ from the resource region.
+- Review costs, resource ownership, quotas, retention, and teardown date before creating resources. Do not reuse another project's network or addresses to bypass quotas.
+- An approved GitHub Actions OIDC provider must already exist in AWS with audience `sts.amazonaws.com`. The provisioner checks it; it does not create or modify this shared provider.
+- Create or identify the application runtime secret before provisioning. Its exact ARN is a template input. Keep values out of source control, terminal commands, chat, GitHub variables, and artifacts.
+- Verify administration access to `TestCraft-App/evals-framework`. Working Git SSH access alone does not grant repository-settings/API permissions.
 
-El acceso humano usa el perfil SSO `endava`; no cambiar ni reutilizar `default`, que pertenece a otra organización. `eu-central-1` es la región del SSO, mientras que `us-east-1` es la región de trabajo acordada. El pipeline no usa una sesión SSO personal.
+For an existing stack, inspect its resources and outputs and proceed to configuration/release. `provision.ps1` refuses to update or overwrite an existing stack. Infrastructure changes need a separately reviewed CloudFormation update; the workflow only updates the application.
 
-## 1. Aprobar la red y el costo antes de crear recursos
+Use [AWS Pricing Calculator](https://calculator.aws/) with current [EC2](https://aws.amazon.com/ec2/pricing/on-demand/), [VPC](https://aws.amazon.com/vpc/pricing/), and [EBS](https://aws.amazon.com/ebs/pricing/) prices. Include NAT hours/traffic, public IPv4, EC2, both disks, CloudFront, ECR/S3, Secrets Manager, backups, and model calls. Stopping EC2 does not stop all those charges. Budget alerts do not automatically cap spending. Previous workshop estimates are not current quotes.
 
-En la cuenta revisada hay una subred privada de la VPC Default sin ruta de salida a Internet. No sirve tal cual para llamar TestCraft, Secrets Manager, ECR y los LLM. Las redes privadas con salida pertenecen a otros proyectos; su existencia no autoriza reutilizarlas.
+## 2. Infrastructure created by the template
 
-Opciones a resolver con Endava: una subred privada aprobada con salida ya disponible, o una red exclusiva de este proyecto. No modificar rutas ni grupos de seguridad compartidos para habilitar la app sin autorización. Si se crea una salida NAT exclusiva, tiene costo por hora y datos incluso sin asistentes conectados. Revisar una estimación en AWS Pricing Calculator y configurar alertas de presupuesto; las alertas no cortan automáticamente el gasto.
+Use [infrastructure.mjs](../scripts/aws/infrastructure.mjs) through [provision.ps1](../scripts/aws/provision.ps1), rather than manually creating duplicate resources.
 
-Como referencia, el catálogo de AWS consultado el 8 de septiembre de 2026 indica USD 0,0208/h para `t3.small` Linux y USD 0,045/h para un NAT Gateway en `us-east-1`: alrededor de USD 15,18 y USD 32,85 por 730 horas. Sumando IPv4 de la salida NAT, discos y almacenamiento pequeño, reservar aproximadamente **USD 55–65 por mes** para una instalación exclusiva encendida todo el mes, antes de modelos, tráfico, impuestos y consumos adicionales. Es una estimación, no un tope ni una cotización corporativa; verificar descuentos y créditos con Endava. [EC2 On-Demand](https://aws.amazon.com/ec2/pricing/on-demand/), [VPC e IPv4](https://aws.amazon.com/vpc/pricing/), [EBS](https://aws.amazon.com/ebs/pricing/).
+| Component | Implemented configuration |
+| --- | --- |
+| Network | Dedicated VPC, public subnet for one NAT Gateway/Elastic IP, private subnet for EC2, internet gateway. No public IP on EC2. |
+| Host | Amazon Linux 2023 x86_64, `t3.small`, Standard CPU credits, encrypted 16 GiB root disk. IMDSv2 required, hop limit 2. |
+| Data | Separate encrypted 20 GiB gp3 volume, retained on stack deletion or volume replacement. |
+| Administration | Systems Manager, no SSH ingress. Bootstrap installs Docker, AWS CLI and `jq`, and enables Docker/SSM. |
+| Origin access | TCP 3000 only from the CloudFront origin-facing prefix list. Outbound TCP 443 for AWS, GitHub, TestCraft, and OpenAI. |
+| ECR | Generated repository name, immutable tags, AES-256 encryption, removal of contents on stack deletion. No explicit scanning or lifecycle policy in the template. |
+| S3 | Generated private artifact bucket, encryption, versioning, public-access blocking, HTTPS-only policy. Scripts/non-secret manifests use `releases/`. |
+| HTTPS | CloudFront default `cloudfront.net` certificate and private EC2 VPC origin on HTTP port 3000. |
+| IAM | Dedicated instance and deployment roles; deployment trust references the existing GitHub OIDC provider. |
 
-La opción prevista es EC2 privada con CloudFront VPC origin. La VPC debe tener internet gateway, una subred privada con IPv4 disponible, DNS y salida HTTPS. En `us-east-1`, evitar la zona cuyo ID físico es `use1-az3`; la letra visible de la zona no basta para identificarla. No crear un balanceador ni NAT redundante solo para este taller. [Requisitos de CloudFront](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html), [costos de red](https://aws.amazon.com/vpc/pricing/).
+Bootstrap identifies the data disk by EBS volume ID, rejects unexpected layouts, and only formats a blank disk. It mounts ext4 by UUID at `/var/lib/testcraft-evals`. The `data/` directory belongs to UID/GID 1000 with mode 700; `backups/` belongs to root with mode 700. Deployment refuses to run without the mount.
 
-## 2. Crear los recursos exclusivos de la app
+The instance role can use SSM, pull this ECR repository, read this bucket's `releases/*`, and read this secret. A customer-managed secret encryption key may need additional scoped `kms:Decrypt` permissions; these are not included. Do not attach AdministratorAccess. The metadata hop limit allows container access to instance-role credentials; do not run unrelated containers on this host. See [EC2 metadata options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html).
 
-Una vez aprobada la red, crear y etiquetar los recursos con proyecto, responsable y centro de costo requeridos por Endava:
+The template does not create an ALB, RDS, WAF, custom domain, backup schedule, cost alerts, retention policies, or automatic teardown.
 
-- **ECR privado:** repositorio `testcraft-evals`, escaneo de imágenes y tags inmutables. Cada ejecución publica un tag diferente y despliega por digest, nunca por `latest`. No borrar imágenes vigentes ni la versión anterior en las políticas de retención.
-- **S3 privado:** bucket de artefactos con bloqueo de acceso público, cifrado, versionado y política que rechace HTTP. El prefijo `releases/` contiene únicamente scripts y configuración no secreta, no SQLite ni claves. Limitar quién puede escribir allí: sus scripts se ejecutan con permisos de administrador en la instancia.
-- **Secrets Manager:** un secreto JSON, creado desde la consola, con `OPENAI_API_KEY` y opcionalmente `TESTCRAFT_OPENAI_API_KEY`. Son credenciales distintas: la segunda se envía explícitamente a TestCraft; la primera solamente al proveedor del grader. No poner URLs ni instrucciones en el secreto. No enviarlo por chat. El arranque solo verifica acceso/formato del secreto, no saldo ni compatibilidad real del modelo. [SDK oficial](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets-javascript.html).
-- **EC2:** Amazon Linux 2023 x86_64, inicialmente `t3.small`, una sola instancia sin IP pública. No usar Spot para el taller. Disco raíz cifrado de al menos 16 GiB y volumen de datos gp3 cifrado separado de 20 GiB, en la misma zona. Conservar el volumen de datos al terminar/reemplazar la instancia. Revisar permisos corporativos y la capacidad antes de confirmar la compra.
-- **Volumen de datos:** identificar y montar exclusivamente el nuevo volumen en `/var/lib/testcraft-evals`, con montaje persistente por UUID. Nunca formatear por suposición un dispositivo `/dev/nvme…`: comprobar ID de volumen y ausencia de filesystem. El deploy se niega a funcionar si esa ruta no es un punto de montaje. Dentro se crearán `data/` (UID/GID 1000, permisos 700) y `backups/` (root, 700).
-- **Administración:** Systems Manager, sin abrir SSH. Instalar Docker, AWS CLI v2 y `jq`; habilitar Docker al arrancar. El agente SSM debe aparecer Online antes de continuar. Usar IMDSv2 obligatorio y hop limit 2 para que el contenedor pueda obtener el rol de la instancia. No alojar contenedores ajenos en esa instancia. [Opciones de metadata](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html).
+## 3. Network and CloudFront checks
 
-El rol de EC2 debe poder usar SSM (`AmazonSSMManagedInstanceCore`), descargar las imágenes de **ese** repositorio ECR, leer `releases/*` de **ese** bucket y hacer `secretsmanager:GetSecretValue` de **ese** secreto. `ecr:GetAuthorizationToken` requiere recurso `*`; las operaciones de descarga se limitan al ARN del repositorio. Agregar `kms:Decrypt` de la clave concreta solo si se usa cifrado KMS personalizado. No asignar AdministratorAccess al servidor.
+CloudFront VPC origins require an attached internet gateway and available private-subnet IPv4 addresses for service-managed interfaces. NAT supplies the application's outbound connectivity independently. In `us-east-1`, avoid physical zone ID `use1-az3`. The provisioner specifically checks `us-east-1a` and rejects it if it maps to that zone; it does not automatically choose another. Changing the selection requires a reviewed script change. Also check security-group quota capacity for the CloudFront prefix list's rule weight. See [VPC origin requirements](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html).
 
-## 3. Publicar HTTPS sin comprar dominio
+The template redirects HTTP to HTTPS, allows all seven HTTP methods, applies **CachingDisabled** and **AllViewer**, and sets error-cache TTLs for 500/502/503/504 to zero. Forwarding cookies, query strings, `Origin`, and `X-CSRF-Token` is essential for OAuth, sessions, and mutations. Do not add API caching or convert API errors into `index.html` responses. See [cache policies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html) and [origin request policies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html).
 
-Crear un grupo de seguridad propio que admita TCP 3000 únicamente desde la lista administrada de orígenes CloudFront. No abrir 22 ni 3000 a `0.0.0.0/0`. La lista de CloudFront consume una parte importante de la cuota de reglas; si no cabe, revisar la cuota, no ampliar el acceso. Permitir salida HTTPS a los proveedores/servicios aprobados.
+Use the exact `AppOrigin` stack output without a trailing slash for `APP_ORIGIN`. Do not use an instance address. CloudFormation completion does not mean bootstrap has finished or the app is installed. CloudFront errors are expected until the first healthy application release.
 
-En CloudFront:
+## 4. Runtime secret and GitHub sign-in
 
-1. Crear un **VPC origin** apuntando al ARN de esta EC2, puerto HTTP 3000. Esperar a que termine de desplegarse.
-2. Crear la distribución usando ese origen y el DNS privado de EC2. Usar el certificado predeterminado para el hostname `…cloudfront.net`.
-3. Redirigir HTTP a HTTPS y permitir GET, HEAD, OPTIONS, PUT, PATCH, POST y DELETE.
-4. Elegir **CachingDisabled** y una política de solicitud de origen **AllViewer** que reenvíe cookies, `Origin`, `X-CSRF-Token` y query strings. Aplicarlo a toda la app; no cachear respuestas privadas.
-5. Configurar el TTL de caché de errores 500/502/503/504 en 0. No devolver `index.html` con 200 ante errores de API.
-6. Copiar el origen exacto `https://…cloudfront.net`, sin slash final, como `APP_ORIGIN`. No usar una IP privada ni el hostname local del contenedor.
+GitHub sign-in uses an **OAuth App**. Actions deployment uses **OIDC to AWS**. These are separate integrations.
 
-Después puede limitarse el ingreso del servidor al grupo creado por CloudFront para esta cuenta; no editar el grupo administrado por AWS. La distribución no responderá correctamente hasta instalar la app. [VPC origins](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html), [políticas de caché](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html), [reenvío al origen](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html).
+For a new installation, create the runtime secret with administrator model credentials first. Provision the stack to obtain `AppOrigin`, then register the production OAuth App and add its client secret before the first release. This avoids needing the CloudFront hostname before it exists.
 
-## 4. Dar a GitHub acceso temporal, limitado a este proyecto
+| OAuth App setting | Production value |
+| --- | --- |
+| Homepage URL | Exact `AppOrigin` output |
+| Authorization callback URL | `AppOrigin` followed by `/api/auth/github/callback` |
+| Client ID | Actions variable `GITHUB_CLIENT_ID` |
+| Client secret | Field `GITHUB_CLIENT_SECRET` in the AWS runtime secret |
 
-Revisar si la cuenta ya tiene un proveedor OIDC para `https://token.actions.githubusercontent.com`; reutilizarlo si está aprobado, sin alterar configuraciones compartidas. Si falta, crearlo con audiencia `sts.amazonaws.com`.
+Use a separate OAuth App for local development. For `APP_ORIGIN=http://127.0.0.1:3000`, use callback `http://127.0.0.1:3000/api/auth/github/callback` and open that same hostname. See [GitHub OAuth App registration](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app).
 
-Crear un rol de despliegue cuya confianza permita `sts:AssumeRoleWithWebIdentity` exclusivamente con:
+The app does not request email or repository access. It uses state, PKCE, and a temporary HttpOnly SameSite=Lax correlation cookie; normal production sessions remain HttpOnly, Secure, and SameSite=Strict. Allow outbound HTTPS to `github.com` and `api.github.com`.
+
+The secret must be a JSON object containing only these supported fields. Enter real values privately in Secrets Manager; these placeholders are not credentials:
 
 ```json
 {
-  "StringEquals": {
-    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:sub": "repo:TestCraft-App@139815958/evals-framework@1360313670:ref:refs/heads/main"
-  }
+  "GITHUB_CLIENT_SECRET": "PRODUCTION_OAUTH_CLIENT_SECRET",
+  "OPENAI_API_KEY": "ADMIN_OPENAI_GRADING_KEY",
+  "TESTCRAFT_OPENAI_API_KEY": "OPTIONAL_ADMIN_TESTCRAFT_GENERATION_KEY"
 }
 ```
 
-Esas son las condiciones, no una política de confianza completa: también hacen falta el Principal Federated del proveedor y la acción indicada. No usar `repo:*`, permitir forks ni dar credenciales al job de PR. Este workflow no usa un GitHub Environment: agregar uno cambia el `sub` y requiere actualizar/restringir la confianza correspondientemente. [Guía OIDC de GitHub](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).
+`OPENAI_API_KEY` is the administrator's OpenAI grading credential. `TESTCRAFT_OPENAI_API_KEY` goes to TestCraft for administrator generation; omit it if TestCraft should use its own generation credentials. `GITHUB_CLIENT_SECRET` is only for the OAuth exchange. Do not add URLs or settings to this JSON. Unknown fields or invalid values fail startup.
 
-Este repositorio usa el formato inmutable de GitHub, obligatorio para repositorios nuevos desde el 15 de julio de 2026. Los IDs de organización y repositorio fueron verificados con la API de GitHub. No usar el formato antiguo sin IDs ni un comodín para resolver un error de autenticación. Verificar `actions/oidc/customization/sub` y el prefijo informado antes de recrear el despliegue. [Cambio oficial](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/).
+Collaborators enter a separate OpenAI key in the dashboard, explicitly forwarded to TestCraft for generation and OpenAI for grading. It stays in tab memory and the accepted job's isolated server memory, not SQLite or Secrets Manager. Refresh/logout clears the browser key; already accepted jobs continue. Collaborator runs never fall back to administrator credentials.
 
-Permisos del rol de despliegue:
+The app reads `AWSCURRENT` using the instance role at startup. Redeploy/restart to apply secret changes. Missing fields become empty values: readable JSON and healthy startup do **not** verify OAuth configuration or provider access. Missing OAuth configuration disables sign-in rather than enabling anonymous access. See [Secrets Manager retrieval](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets-javascript.html).
 
-| Acciones | Recursos |
+## 5. GitHub Actions identity and permissions
+
+The generated role restricts `sts:AssumeRoleWithWebIdentity` to the existing provider, audience `sts.amazonaws.com`, and this exact subject:
+
+```text
+repo:TestCraft-App@139815958/evals-framework@1360313670:ref:refs/heads/main
+```
+
+This is the template configuration, not a fresh live verification. Verify owner/repository IDs and the emitted OIDC subject before provisioning. GitHub's immutable format includes IDs; older repositories may use another format. Do not resolve mismatches with wildcards. The workflow has no GitHub Environment; adding one changes the subject and needs a trust-policy review. See [immutable subjects](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/) and [OIDC with AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).
+
+| Deployment permission | Resource scope |
 | --- | --- |
-| `ecr:GetAuthorizationToken` | `*` (el servicio lo requiere) |
-| `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`, `ecr:DescribeImages` | Solo el repositorio ECR de la app |
-| `s3:PutObject` | Solo `arn:aws:s3:::BUCKET/releases/*` |
-| `ssm:SendCommand` | Solo el ARN de esta instancia y `arn:aws:ssm:us-east-1::document/AWS-RunShellScript` |
-| `ssm:GetCommandInvocation` | `*` (sin recurso individual compatible) |
+| `ecr:GetAuthorizationToken` | `*`, required by ECR |
+| Layer upload, `ecr:PutImage`, `ecr:DescribeImages` | App repository only |
+| `s3:PutObject` | App bucket's `releases/*` only |
+| `ssm:SendCommand` | App instance and `AWS-RunShellScript` document only |
+| `ssm:GetCommandInvocation` | `*`, without individual supported resource scope |
 
-No necesita leer el secreto desde GitHub, administrar redes, crear instancias ni permisos de administrador sobre la cuenta. Aun así, quien despliega código o ejecuta Run Command controla el servidor y potencialmente sus datos: proteger el repositorio, revisar PRs y restringir acceso al rol.
+The role does not need secret-read or infrastructure-provisioning access. However, deploying code or running root commands grants practical control of application data. Review workflow changes and restrict repository access. Require PR review, the `test` check, and protection against direct pushes where the plan permits. The workflow also triggers on direct pushes to `main`; PR convention alone does not enforce review.
 
-## 5. Configurar las variables y activar el primer despliegue
+## 6. Configure and release
 
-En GitHub → Settings → Secrets and variables → Actions → Variables, cargar:
+In **GitHub → Settings → Secrets and variables → Actions → Variables**, configure:
 
-| Variable | Valor |
+| Variable | Source/value |
 | --- | --- |
-| `AWS_ACCOUNT_ID` | ID verificado de la cuenta Endava |
+| `AWS_ACCOUNT_ID` | Verified account `419466290453` |
 | `AWS_REGION` | `us-east-1` |
-| `AWS_ROLE_ARN` | ARN del rol OIDC de despliegue, no el rol SSO personal |
-| `AWS_INSTANCE_ID` | ID de la EC2 exclusiva de la app |
-| `AWS_ARTIFACT_BUCKET` | Nombre del bucket privado de releases |
-| `ECR_REPOSITORY_URI` | URI del repositorio ECR sin tag |
-| `AWS_SECRET_ARN` | ARN del secreto; no su contenido |
-| `APP_ORIGIN` | Origen HTTPS exacto de CloudFront |
-| `WORKSHOP_ID` | `workshop`, estable durante las actualizaciones |
-| `AWS_DEPLOY_ENABLED` | Mantener ausente/`false` hasta completar todos los pasos; después `true` |
+| `AWS_ROLE_ARN` | Output `DeployRoleArn` |
+| `AWS_INSTANCE_ID` | Output `InstanceId` |
+| `AWS_ARTIFACT_BUCKET` | Output `ArtifactBucket` |
+| `ECR_REPOSITORY_URI` | Output `EcrRepositoryUri`, no tag |
+| `AWS_SECRET_ARN` | Output `SecretArn`, never its contents |
+| `APP_ORIGIN` | Output `AppOrigin`, no trailing slash |
+| `GITHUB_CLIENT_ID` | Production OAuth App client ID |
+| `ADMIN_GITHUB_IDS` | Numeric GitHub user IDs, comma-separated without spaces; release validation requires at least one |
+| `WORKSHOP_ID` | `workshop`, or the existing installation's stable scope |
+| `AWS_DEPLOY_ENABLED` | Absent/`false` until ready; `true` enables releases |
 
-Subir estos cambios mediante un PR, exigir el job `test` en la protección de `main`, bloquear pushes directos y revisar los cambios del workflow. Un push a `main` también activa el workflow; la regla de protección es lo que obliga a pasar por un PR.
+Get an administrator's numeric ID with `gh api users/USERNAME --jq .id`. Do not use a username as the ID. Keep `WORKSHOP_ID` stable: changing it selects another storage scope rather than moving existing workspaces.
 
-Con la infraestructura lista y `AWS_DEPLOY_ENABLED=true`, ejecutar **Actions → Test and deploy → Run workflow → main** para el primer despliegue. Luego cada merge a `main` ejecutará tests y deploy automáticamente. Ningún paso usa `default`, instala tu clave SSH personal o persiste claves AWS permanentes.
+Once infrastructure, SSM, the mount, OAuth, secrets, and variables are ready, merge the reviewed change. Enable releases and select **Actions → Test and deploy → Run workflow → main**. Subsequent pushes/merges to `main` test and deploy while the flag is `true`. PRs test without deploying. CI uses no personal SSO session or permanent AWS keys.
 
-## 6. Qué hace cada actualización
+## 7. Release sequence and recovery limits
 
-Los tests de backend y navegador usan datos temporales y proveedores simulados. El workflow construye y prueba una imagen sin claves, y solo si todo pasa publica la versión para AWS. El job de deploy verifica cuenta, región, repositorio y commit antes de publicar; la instancia descarga una imagen fijada por digest mediante SSM, sin SSH ni checkout de GitHub en el servidor.
+The [workflow](../.github/workflows/ci-deploy.yml) runs Node tests, Bash syntax checks, mocked browser tests, and a Docker build/health smoke test without secrets. Deployment validates configuration/account identity, publishes a unique commit/run tag, resolves an immutable image digest, uploads non-secret artifacts, and invokes SSM. The host verifies artifact hashes and locks against concurrent releases.
 
-Se comprueban los hashes del script y del manifiesto descargados. Un bloqueo impide despliegues concurrentes. El nuevo contenedor se prueba primero con una base temporal: valida arranque y lectura del secreto sin tocar los datos del taller ni llamar un LLM.
+[deploy-host.sh](../scripts/aws/deploy-host.sh) then:
 
-Después la app deja de aceptar nuevas runs, pero termina las aceptadas. Si no queda libre en diez minutos, se cancela el deploy y se reabre la admisión. Cuando termina, se detiene el contenedor, se guarda un backup consistente de `data/`, se inicia el nuevo y se comprueba `/healthz`. Si falla, se intenta volver al contenedor anterior **sin restaurar la base**, para no perder datos ni devolver llamadas consumidas. La persona operadora debe verificar cualquier rollback fallido. Las migraciones futuras deben ser compatibles con la versión anterior.
+1. Tests the image with an empty in-memory database and the runtime secret, without touching participant data or calling models.
+2. Stops admission of new runs and waits up to ten minutes for accepted runs. On timeout it aborts and attempts to reopen admission.
+3. Stops the old container and archives the entire `data/` directory to `backups/predeploy-...tar.gz` on the data volume.
+4. Starts the new container against persistent data and checks local health/release identity.
+5. Removes the previous container after local success. The workflow separately checks public `/healthz`, `Cache-Control: no-store`, and the expected commit SHA.
 
-Hay una breve interrupción al cambiar el único servidor. El workflow no cancela un deploy activo para empezar otro. Una invocación SSM con resultado desconocido no se reenvía automáticamente; revisar su ID antes de reintentar. Una caída brusca/reinicio forzado marca las runs incompletas como Interrupted al arrancar, sin repetirlas ni inventar resultados.
+There is a brief single-instance outage. A failed host cutover attempts to restart the previous container **without restoring SQLite**; verify health after failure. The previous container is not retained after success. A later public CloudFront health failure does not automatically roll back the host. Inspect the SSM command and running release before retrying an uncertain outcome.
 
-## 7. Ensayo obligatorio antes del taller
+There is no general one-command rollback or database restore. Review schema and authentication compatibility before releasing a code rollback through the normal protected process. An old anonymous-session build may restore old access behavior even if its schema remains readable. A database restore is a deliberate recovery operation: it excludes later writes and must never replay paid calls.
 
-1. Abrir el enlace HTTPS en dos perfiles de navegador: guardar casos diferentes y verificar que no se vean entre sí.
-2. Probar Load example → guardar → ejecutar → borrar run, sin créditos LLM.
-3. Configurar límites del proveedor y ejecutar una generación real TestCraft y una evaluación real con model grader, con entrada sintética de SauceDemo. Esta prueba sí consume llamadas/créditos; un catálogo de modelos disponible no la reemplaza.
-4. Mantener una run en curso durante un deploy controlado; comprobar que termina, que sobreviven las sesiones/datos y que no se repiten llamadas.
-5. Verificar desde fuera de AWS que solo se puede entrar por HTTPS de CloudFront, no por el puerto del servidor, y que las respuestas de API no se cachean entre navegadores.
-6. Configurar monitoreo de salud, disco y costos. Probar reinicio de la instancia, acceso SSM y recuperación en un volumen nuevo.
+Forced restart marks unfinished runs Interrupted without replay. Account sessions persist with default 24-hour expiry; pending OAuth transactions and collaborator job credentials are memory-only. Retry sign-in if a release interrupts the callback.
 
-El backup previo al deploy en el mismo EBS no protege contra pérdida del volumen. Configurar AWS Backup/snapshots cifrados con retención y probar restauración antes del curso. Vigilar/definir retención de backups e imágenes; los scripts no borran automáticamente respaldos ni datos de participantes. Los snapshots, imágenes, discos, secretos y NAT pueden seguir cobrando aunque la EC2 esté detenida. Preparar el apagado/eliminación de recursos exclusivos cuando termine el uso, con autorización y conservación de los datos necesarios.
+## 8. Migration and acceptance
 
-Quedan fuera de este primer despliegue: criterios híbridos, Pass/Fail ponderado, suites/carpetas, edición/duplicación/borrado de evaluaciones, entornos TestCraft y modificaciones al prompt de Dev. Se mantienen como la siguiente etapa, no como funcionalidades ya implementadas.
+Before upgrading an anonymous installation, verify the consistent pre-release backup and keep a recoverable copy outside the data volume. Additive migrations preserve legacy records/snapshots without assigning them to new accounts. Old cookies no longer authenticate. New TestCraft and personal workspaces start empty; an administrator can populate TestCraft through Actions. No anonymous-workspace recovery or evaluation-promotion UI is provided.
 
-Los presupuestos se controlan mediante las API keys y los proveedores. `WORKSHOP_MAX_MODEL_CALLS` ya no se configura ni limita las ejecuciones.
+`ADMIN_GITHUB_IDS` changes require a new process with updated configuration. Roles synchronize at startup and login, including authorization for existing sessions. Editing an Actions variable alone does not change a running container. Removing an ID demotes that account on synchronization.
+
+Complete the runbook acceptance checks before inviting users. Automated tests mock OAuth/models; health checks do not verify their live configuration. Loading, saving, and inspecting examples needs no model calls. **Executing a run generates content and can consume credits even with rule-only grading.**
+
+Configure external health/disk/cost monitoring, encrypted off-volume backups, and retention. Test restoration on an isolated volume without replaying jobs. Local backups do not protect against losing EBS. During teardown inventory images, artifact versions, snapshots, volumes, and secrets: the data volume is retained and the external secret survives stack deletion.

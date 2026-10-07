@@ -73,7 +73,7 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await expect(page.locator('#run-detail-page')).toBeHidden();
   await expect(page.locator('.result-score')).toHaveCount(0);
   await page.goto(savedRunUrl);
-  await expect(page).toHaveURL(/#runs$/);
+  await expect(page).toHaveURL(/#personal\/runs$/);
   await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here.');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
@@ -94,7 +94,7 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
   await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
   await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('1.00');
-  await page.route('**/api/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
+  await page.route('**/api/workspaces/personal/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
   await page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true }).click();
   const confirmation = page.getByRole('alertdialog');
   await confirmation.getByRole('button', { name: 'Delete run', exact: true }).click();
@@ -110,8 +110,8 @@ test('batch selection grades each case independently and preserves HTML as inert
   const base = { name: 'Batch good', type: 'code', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains', input: 'Test login', html: '<button onclick="alert(1)">Login</button><script>throw new Error("must not run")</script>', actualOutput: 'expect(page.getByRole("button")).toBeVisible()', criteria: ['valid credentials', 'invalid email'], model: '', judgeModel: '', pageUrl: 'https://example.com/login' };
   const session = await (await page.request.get('/api/session')).json();
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
-  expect((await page.request.post('/api/evaluations', { headers, data: base })).status()).toBe(201);
-  expect((await page.request.post('/api/evaluations', { headers, data: { ...base, name: 'Batch weak', criteria: ['valid credentials', 'getByRole'], actualOutput: 'expect(true)' } })).status()).toBe(201);
+  expect((await page.request.post('/api/workspaces/personal/evaluations', { headers, data: base })).status()).toBe(201);
+  expect((await page.request.post('/api/workspaces/personal/evaluations', { headers, data: { ...base, name: 'Batch weak', criteria: ['valid credentials', 'getByRole'], actualOutput: 'expect(true)' } })).status()).toBe(201);
   await page.goto('/');
   await page.getByRole('searchbox').fill('Batch');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
@@ -181,7 +181,7 @@ test('wizard validates each step, preserves edits on Back, and saves typed crite
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByLabel('Criterion 1', { exact: true })).toHaveValue('Uses only controls from the HTML.');
   await expect(page.locator('#judge-model')).toHaveCount(0);
-  const savedResponse = page.waitForResponse(res => res.url().endsWith('/api/evaluations') && res.request().method() === 'POST');
+  const savedResponse = page.waitForResponse(res => res.url().endsWith('/api/workspaces/personal/evaluations') && res.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   const response = await savedResponse, payload = response.request().postDataJSON(), saved = await response.json();
   expect(payload.criteria).toEqual([{ text: 'Uses only controls from the HTML.', method: 'model_grade', weight: 1 }]);

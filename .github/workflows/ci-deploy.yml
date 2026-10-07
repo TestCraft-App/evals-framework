@@ -61,6 +61,8 @@ jobs:
       ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
       APP_ORIGIN: ${{ vars.APP_ORIGIN }}
       WORKSHOP_ID: ${{ vars.WORKSHOP_ID || 'workshop' }}
+      GITHUB_CLIENT_ID: ${{ vars.GITHUB_CLIENT_ID }}
+      ADMIN_GITHUB_IDS: ${{ vars.ADMIN_GITHUB_IDS }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

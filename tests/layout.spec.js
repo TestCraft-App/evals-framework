@@ -1,11 +1,13 @@
 import { test, expect } from './browser-fixtures.mjs';
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 780 }]) {
-  test(`header and footer stay concise without session details at ${viewport.width}px`, async ({ page }) => {
+  test(`header shows account identity while keeping session internals private at ${viewport.width}px`, async ({ page }) => {
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.clock.install();
     await page.setViewportSize(viewport); await page.goto('/');
     await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.locator('#private-badge')).toBeVisible();
+    await expect(page.locator('#private-badge')).toContainText('user-1 · admin');
     await expect(page.getByRole('heading', { name: 'Workspace', exact: true })).toHaveCount(0);
     await expect(page.locator('.stats')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Evaluation library' })).toBeVisible();

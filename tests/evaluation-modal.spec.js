@@ -13,7 +13,7 @@ async function add(page, method, text) {
   await page.locator('#criterion-draft').fill(text); await page.locator('#add-criterion').click();
 }
 async function save(page, button = 'save-evaluation', verb = 'POST') {
-  const pending = page.waitForResponse(r => /\/api\/evaluations(?:\/[^/]+)?$/.test(r.url()) && r.request().method() === verb);
+  const pending = page.waitForResponse(r => /\/api\/workspaces\/personal\/evaluations(?:\/[^/]+)?$/.test(r.url()) && r.request().method() === verb);
   await page.locator('#' + button).click(); const response = await pending;
   expect(response.ok()).toBe(true); await expect(page.locator('#evaluation-dialog')).toBeHidden();
   return { saved: await response.json(), payload: response.request().postDataJSON() };
@@ -78,7 +78,7 @@ test('suite actions preserve drafts, save immediately, and prevent nonempty dele
   await suiteAction(page, 'delete'); await page.locator('#save-suite').click();
   await expect(page.locator('#suite-editor')).toBeHidden(); await expect(page.locator('#evaluation-suite')).toHaveValue('');
   await page.locator('#cancel-dialog').click();
-  const records = (await (await page.request.get('/api/suites')).json()).suites;
+  const records = (await (await page.request.get('/api/workspaces/personal/suites')).json()).suites;
   expect(records.map(s => s.name)).toEqual(['Renamed suite']);
 });
 
@@ -86,16 +86,16 @@ test('suite failures, in-flight saves, and stale deletion keep the evaluation dr
   await newEvaluation(page); await suiteAction(page, 'create'); await page.locator('#save-suite').click();
   await expect(page.locator('#suite-error')).toContainText('Enter a suite name');
   await page.locator('#suite-name').fill('Retry suite');
-  await page.route('**/api/suites', route => route.request().method() === 'POST' ? route.fulfill({ status: 503, json: { error: 'Temporary suite failure.' } }) : route.continue());
+  await page.route('**/api/workspaces/personal/suites', route => route.request().method() === 'POST' ? route.fulfill({ status: 503, json: { error: 'Temporary suite failure.' } }) : route.continue());
   await page.locator('#save-suite').click(); await expect(page.locator('#suite-error')).toContainText('Temporary suite failure');
-  await expect(page.locator('#suite-name')).toHaveValue('Retry suite'); await page.unroute('**/api/suites');
+  await expect(page.locator('#suite-name')).toHaveValue('Retry suite'); await page.unroute('**/api/workspaces/personal/suites');
   let release, started;
   const gate = new Promise(resolve => { release = resolve; }), request = new Promise(resolve => { started = resolve; });
-  await page.route('**/api/suites', async route => { if (route.request().method() === 'POST') { started(); await gate; } await route.continue(); });
+  await page.route('**/api/workspaces/personal/suites', async route => { if (route.request().method() === 'POST') { started(); await gate; } await route.continue(); });
   await page.locator('#save-suite').click(); await request;
   await expect(page.locator('#save-suite')).toBeDisabled(); await expect(page.locator('#save-evaluation')).toBeDisabled();
   await page.keyboard.press('Escape'); await expect(page.locator('#evaluation-dialog')).toBeVisible();
-  release(); await expect(page.locator('#suite-editor')).toBeHidden(); await page.unroute('**/api/suites');
+  release(); await expect(page.locator('#suite-editor')).toBeHidden(); await page.unroute('**/api/workspaces/personal/suites');
   const suiteId = await page.locator('#evaluation-suite').inputValue();
   await suiteAction(page, 'delete');
   const session = await (await page.request.get('/api/session')).json();
@@ -120,7 +120,7 @@ test('criteria classify by family and reset weights on edit', async ({ page }) =
   await expect(page.locator('.detail-eval-row')).toContainText('rule-based');
   await page.locator('#detail-filter-method').selectOption('rule-based'); await expect(page.locator('.detail-eval-row')).toHaveCount(1);
   const session = await (await page.request.get('/api/session')).json();
-  const response = await page.request.put('/api/evaluations/' + saved.id, { headers: { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken }, data: { ...saved, criteria: saved.criteria.map(c => ({ ...c, weight: 9 })) } });
+  const response = await page.request.put('/api/workspaces/personal/evaluations/' + saved.id, { headers: { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken }, data: { ...saved, criteria: saved.criteria.map(c => ({ ...c, weight: 9 })) } });
   expect(response.ok()).toBe(true); await page.goto('/');
   await page.getByRole('button', { name: saved.name, exact: true }).click(); await page.locator('#save-evaluation').click();
   await add(page, 'model_grade', 'Covers the login flow.');

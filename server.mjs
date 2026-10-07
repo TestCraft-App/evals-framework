@@ -18,7 +18,7 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB || join(root, 'data', 'evals.sqlite'), fetchImpl = fetch } = {}) {
   const store = new Store(dbPath);
   let sessions;
-  try { sessions = createSessions(store, env); } catch (error) { store.close(); throw error; }
+  try { sessions = createSessions(store, env, fetchImpl); } catch (error) { store.close(); throw error; }
   const engine = new Engine(store, env, fetchImpl);
   const catalogs = Object.fromEntries(Object.entries(environments).map(([id, base]) => [id, createModelCatalog({ ...env, TESTCRAFT_BASE_URL: base }, fetchImpl)]));
   let stopping = false, shutdownPromise;
@@ -44,7 +44,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
     try {
       const url = new URL(req.url, 'http://localhost');
       // External links may open the public dashboard; API requests remain protected.
-      sessions.checkOrigin(req, req.method === 'POST', url.pathname === '/');
+      sessions.checkOrigin(req, req.method === 'POST', ['/', '/api/auth/github/callback'].includes(url.pathname));
       if (env.APP_ORIGIN?.startsWith('https://')) res.setHeader('strict-transport-security', 'max-age=31536000');
       if (req.method === 'GET' && url.pathname === '/healthz') {
         store.db.prepare('SELECT 1').get();
@@ -62,11 +62,26 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       if (jsonRequest && !/^application\/json\s*(?:;|$)/i.test(req.headers['content-type'] || '')) throw new AppError('Use application/json.', 415);
       if (url.pathname === '/api/session') {
         if (req.method === 'GET') return json(res, 200, sessions.describe(sessions.read(req)));
-        if (req.method === 'POST') return json(res, 200, sessions.ensure(req, res, await readBody(req, 2048)));
       }
-      const scope = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
+      if (req.method === 'POST' && url.pathname === '/api/auth/github/start') return json(res, 200, sessions.start(req, res, await readBody(req, 2048)));
+      if (req.method === 'GET' && url.pathname === '/api/auth/github/callback') {
+        try { await sessions.callback(req, res, url.searchParams); }
+        catch (error) {
+          if (!(error instanceof AppError)) throw error;
+          res.writeHead(303, { location: '/?login=failed', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); res.end(); return;
+        }
+        res.writeHead(303, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); res.end(); return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/auth/logout') return json(res, 200, sessions.logout(req, res));
+      const account = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
+      if (req.method === 'GET' && url.pathname === '/api/workspaces') return json(res, 200, { workspaces: sessions.workspaces(account) });
+      const workspaceMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)(\/.*)$/);
+      const scope = account ? sessions.resolveWorkspace(account, workspaceMatch?.[1] || 'personal') : null;
+      if (workspaceMatch) url.pathname = '/api' + workspaceMatch[2];
+      const canWrite = account?.user.role === 'admin' || scope?.alias === 'personal';
+      if (account && !['GET', 'HEAD'].includes(req.method) && !canWrite && !(url.pathname === '/api/runs' && req.method === 'POST')) throw new AppError('The TestCraft workspace is read-only for collaborators.', 403);
       const allowLocal = localAvailable(env, server.address());
-      if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { ...publicConfig(env), environments: Object.keys(environments).map(id => ({ id, label: { prod: 'Prod', dev: 'Dev', local: 'Local' }[id], enabled: id !== 'local' || allowLocal })) });
+      if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { ...publicConfig(env), credentialMode: account.user.role === 'admin' ? 'server' : 'personal', environments: Object.keys(environments).map(id => ({ id, label: { prod: 'Prod', dev: 'Dev', local: 'Local' }[id], enabled: id !== 'local' || allowLocal })) });
       if (req.method === 'GET' && url.pathname === '/api/models') {
         const environment = url.searchParams.get('environment') || 'prod';
         resolveEnvironment(environment, allowLocal);
@@ -125,13 +140,17 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       if (url.pathname === '/api/runs') {
         if (req.method === 'POST') {
           const body = await readBody(req), settings = validateRunRequest(body, allowLocal);
+          const collaborator = account.user.role !== 'admin';
+          if (collaborator && (typeof body.openAiApiKey !== 'string' || !body.openAiApiKey.trim() || body.openAiApiKey.length > 4096 || /[\s\x00-\x1f\x7f]/.test(body.openAiApiKey))) throw new AppError('Enter your OpenAI API key before creating a run.');
+          const credentials = collaborator ? { OPENAI_API_KEY: body.openAiApiKey, TESTCRAFT_OPENAI_API_KEY: body.openAiApiKey } : { OPENAI_API_KEY: env.OPENAI_API_KEY, TESTCRAFT_OPENAI_API_KEY: env.TESTCRAFT_OPENAI_API_KEY };
           engine.evaluationsForRun(body.evaluationIds, scope);
           const catalog = await catalogs[settings.environment]();
           // Re-read after the asynchronous catalog lookup: edits/deletions may have completed meanwhile.
           const normalized = validateRunModels(settings, engine.evaluationsForRun(body.evaluationIds, scope), catalog);
-          return json(res, 202, engine.start(body.evaluationIds, scope, normalized));
+          const destination = collaborator ? sessions.resolveWorkspace(account, 'personal') : scope;
+          return json(res, 202, engine.start(body.evaluationIds, scope, normalized, { destination, credentials, user: account.user }));
         }
-        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).map(summarizeRun) });
+        if (req.method === 'GET') return json(res, 200, { runs: store.runs(scope).map(run => ({ ...summarizeRun(run), canDelete: canWrite && summarizeRun(run).canDelete })) });
       }
       const runMatch = url.pathname.match(/^\/api\/runs\/([a-z0-9-]+)$/i);
       if (runMatch && req.method === 'DELETE') return json(res, 200, store.deleteRun(runMatch[1], scope));

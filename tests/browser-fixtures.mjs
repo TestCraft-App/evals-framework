@@ -1,10 +1,22 @@
 import { test as base, expect } from '@playwright/test';
 import { once } from 'node:events';
-import { createApp } from '../server.mjs';
+import { createOAuthApp as createApp } from './helpers.mjs';
 
 // Each test gets real HTTP/session/database behavior with its own app instance.
 // This avoids sharing rate-limit state or weakening production's session limits.
 export const test = base.extend({
+  signedIn: [true, { option: true }],
+  githubId: [1, { option: true }],
+  initialWorkspace: ['personal', { option: true }],
+  context: async ({ context, baseURL, signedIn, githubId, initialWorkspace }, use) => {
+    if (signedIn) {
+      const started = await context.request.post(baseURL + '/api/auth/github/start', { data: {}, headers: { origin: baseURL } });
+      const authorization = new URL((await started.json()).authorizeUrl);
+      await context.request.get(baseURL + '/api/auth/github/callback?' + new URLSearchParams({ state: authorization.searchParams.get('state'), code: String(githubId) }));
+    }
+    await context.addInitScript(workspace => { if (!location.hash) history.replaceState(null, '', '#' + workspace + '/evaluations'); }, initialWorkspace);
+    await use(context);
+  },
   generationOutput: ['Generated ideas: valid credentials; invalid email; empty password.', { option: true }],
   generationCalls: async ({}, use) => { await use([]); },
   judgeCount: [3, { option: true }],

@@ -12,7 +12,7 @@ test('Basic and Full actions load separate collections without generating output
     await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
     expect((await ids.allTextContents()).sort()).toEqual(expectedIds(12));
   }
-  const suites = (await (await page.request.get('/api/suites')).json()).suites;
+  const suites = (await (await page.request.get('/api/workspaces/personal/suites')).json()).suites;
   expect(suites).toHaveLength(6);
   await page.locator('#filter-suite').selectOption(suites[0].id);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
@@ -21,7 +21,7 @@ test('Basic and Full actions load separate collections without generating output
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount + 12);
   expect((await ids.allTextContents()).sort()).toEqual(expectedIds(workshopCount + 12));
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
-  const reloaded = page.waitForResponse(response => response.url().endsWith('/api/workshop-suite') && response.request().method() === 'POST');
+  const reloaded = page.waitForResponse(response => response.url().endsWith('/api/workspaces/personal/workshop-suite') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   expect((await reloaded).status()).toBe(200);
   await page.reload();
@@ -31,7 +31,7 @@ test('Basic and Full actions load separate collections without generating output
   expect((await page.locator('#create-eval-rows .evaluation-id').allTextContents()).sort()).toEqual(expectedIds(workshopCount + 12));
   await page.locator('#cancel-create-run').click();
   expect(generationCalls).toHaveLength(0);
-  expect((await (await page.request.get('/api/runs')).json()).runs).toHaveLength(0);
+  expect((await (await page.request.get('/api/workspaces/personal/runs')).json()).runs).toHaveLength(0);
 });
 
 test.beforeEach(async ({ page }) => {
@@ -55,7 +55,7 @@ async function auth(page) {
 
 test('Save updates a definition and preserves the earlier run snapshot', async ({ page }) => {
   await example(page, 'Editable login');
-  const original = (await (await page.request.get('/api/evaluations')).json()).evaluations[0];
+  const original = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations[0];
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Editable login', exact: true }).check();
   await createSelectedRun(page);
@@ -73,7 +73,7 @@ test('Save updates a definition and preserves the earlier run snapshot', async (
   await expect(page.locator('#evaluation-rows')).toContainText('Updated login');
   await page.locator('#filter-status').selectOption('not_run');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
-  const updated = (await (await page.request.get('/api/evaluations/' + original.id)).json());
+  const updated = (await (await page.request.get('/api/workspaces/personal/evaluations/' + original.id)).json());
   expect(updated.revision).toBe(2); expect(updated.createdAt).toBe(original.createdAt);
   await page.goto(runUrl);
   await expect(page.locator('.detail-eval-row')).toContainText('Editable login');
@@ -84,7 +84,7 @@ test('Save updates a definition and preserves the earlier run snapshot', async (
 
 test('Duplicate creates an inline name editor and opens only after renaming', async ({ page }) => {
   await example(page, 'Original');
-  const original = (await (await page.request.get('/api/evaluations')).json()).evaluations[0];
+  const original = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations[0];
   await page.getByRole('button', { name: 'Duplicate Original', exact: true }).click();
   await expect(page.locator('#evaluation-dialog')).toBeHidden();
   await expect(page.locator('#duplicate-name')).toHaveValue('Original (copy)');
@@ -104,7 +104,7 @@ test('Duplicate creates an inline name editor and opens only after renaming', as
   await expect(page.getByRole('alertdialog', { name: 'Delete evaluation?' })).toBeVisible();
   await page.locator('#cancel-delete-library').click();
   await page.locator('#cancel-dialog').click();
-  const { evaluations } = await (await page.request.get('/api/evaluations')).json();
+  const { evaluations } = await (await page.request.get('/api/workspaces/personal/evaluations')).json();
   expect(evaluations).toHaveLength(2);
   expect(evaluations.find(e => e.id === original.id)).toEqual(original);
   const copy = evaluations.find(e => e.id !== original.id);
@@ -113,10 +113,10 @@ test('Duplicate creates an inline name editor and opens only after renaming', as
 
 test('stale Save preserves the draft without offering Save as new', async ({ page }) => {
   await example(page, 'Concurrent edits');
-  const original = (await (await page.request.get('/api/evaluations')).json()).evaluations[0];
+  const original = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations[0];
   await page.getByRole('button', { name: 'Concurrent edits', exact: true }).click();
   await page.getByLabel('Eval name', { exact: true }).fill('My draft');
-  expect((await page.request.put('/api/evaluations/' + original.id, { headers: await auth(page), data: { ...original, name: 'Other tab change', revision: 1 } })).status()).toBe(200);
+  expect((await page.request.put('/api/workspaces/personal/evaluations/' + original.id, { headers: await auth(page), data: { ...original, name: 'Other tab change', revision: 1 } })).status()).toBe(200);
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#form-error')).toContainText('Your draft is preserved');
@@ -129,7 +129,7 @@ test('stale Save preserves the draft without offering Save as new', async ({ pag
 });
 
 test('suite filter sits beside search and assignment stays in the evaluation form', async ({ page }) => {
-  const response = await page.request.post('/api/suites', { headers: await auth(page), data: { name: 'Login rules' } });
+  const response = await page.request.post('/api/workspaces/personal/suites', { headers: await auth(page), data: { name: 'Login rules' } });
   expect(response.ok()).toBe(true);
   await page.reload();
   await page.locator('#filter-suite').selectOption({ label: 'Login rules' });
@@ -211,7 +211,7 @@ test('workshop collection loads once, filters by suite, and makes no provider ca
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
-  const imported = (await (await page.request.get('/api/suites')).json()).suites;
+  const imported = (await (await page.request.get('/api/workspaces/personal/suites')).json()).suites;
   expect(imported).toHaveLength(workshopSuites.length);
   await page.locator('#filter-suite').selectOption(imported.find(suite => suite.seedKey === workshopSuites[3].seedKey).id);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopSuites[3].evaluations.length);
@@ -219,7 +219,7 @@ test('workshop collection loads once, filters by suite, and makes no provider ca
   await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
   expect(generationCalls).toHaveLength(0);
-  expect((await (await page.request.get('/api/runs')).json()).runs).toHaveLength(0);
+  expect((await (await page.request.get('/api/workspaces/personal/runs')).json()).runs).toHaveLength(0);
   const session = await (await page.request.get('/api/session')).json();
   expect(session).not.toHaveProperty('budget');
   await page.reload();
@@ -257,8 +257,8 @@ test('evaluation columns sort displayed values in both directions with icon-only
     { id: 'b', name: 'Beta', suiteId: 'a', type: 'code', method: 'model_grade', createdAt: '2026-01-02T00:00:00Z' },
     { id: 'c', name: 'Gamma', suiteId: null, type: 'ideas', method: 'hybrid', createdAt: '2026-01-03T00:00:00Z' },
   ];
-  await page.route('**/api/evaluations', route => route.fulfill({ json: { evaluations } }));
-  await page.route('**/api/suites', route => route.fulfill({ json: { suites: [{ id: 'z', name: 'Zulu' }, { id: 'a', name: 'Alpha' }] } }));
+  await page.route('**/api/workspaces/personal/evaluations', route => route.fulfill({ json: { evaluations } }));
+  await page.route('**/api/workspaces/personal/suites', route => route.fulfill({ json: { suites: [{ id: 'z', name: 'Zulu' }, { id: 'a', name: 'Alpha' }] } }));
   await page.reload();
   const table = page.getByRole('table', { name: 'Evaluations', exact: true });
   await expect(table.locator('th')).toHaveText(['Eval ID', 'Eval name', 'Suite', 'Endpoint', 'Method', 'Created', 'Actions']);

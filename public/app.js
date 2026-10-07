@@ -14,6 +14,42 @@ let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
 let workspaceReview = null, clearingWorkspace = false;
 let session = null, sessionTimer, sessionSetup;
+let activeWorkspace = 'main', personalKey = '', acceptedHash = '', runSourceWorkspace = null;
+let runEvaluations = [], runSuites = [];
+const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('testcraft-account') : null;
+const routeHash = () => location.hash.replace(/^#(?:main|personal)\//, '#');
+const navigate = value => { location.hash = activeWorkspace + '/' + value.replace(/^#/, ''); };
+const canWriteWorkspace = () => activeWorkspace === 'personal' || session?.user.role === 'admin';
+const resourcePath = (path, workspace = activeWorkspace) => '/api/workspaces/' + workspace + path.slice(4);
+function updateKey(value) {
+  personalKey = value; $('personal-api-key').value = value; $('run-api-key').value = value;
+  $('key-status').textContent = value ? '· set for this tab' : '· not set';
+}
+function applyWorkspaceControls() {
+  $('workspace-switcher').value = activeWorkspace;
+  document.body.classList.toggle('readonly-workspace', !canWriteWorkspace());
+  $('workspace-access').textContent = canWriteWorkspace() ? 'You can manage this workspace.' : 'Read-only library · your runs are saved in My workspace.';
+  $('private-badge').textContent = session.user.login + ' · ' + session.user.role;
+  $('logout').hidden = false; $('github-login').hidden = true;
+  $('key-settings').hidden = session.user.role === 'admin';
+  for (const [id, label] of [['example-button', 'Load example'], ['basic-workshop-button', 'Load Basic Suite'], ['workshop-button', 'Load Full Suite']]) $(id).textContent = label + (canWriteWorkspace() ? '' : ' into My workspace');
+  document.querySelector('.brand').href = '#' + activeWorkspace + '/evaluations';
+  document.querySelector('.back-to-runs').href = '#' + activeWorkspace + '/runs';
+}
+function hasDraft() { return !!inlineName || !!suiteDraft || $('evaluation-dialog').open || $('create-run-dialog').open; }
+async function changeWorkspace(alias) {
+  const account = session;
+  showConnecting(); activeWorkspace = alias; session = { ...account };
+  applyWorkspaceControls(); await openWorkspace();
+}
+async function personalLoader(action) {
+  if (!canWriteWorkspace()) {
+    history.replaceState(null, '', '#personal/evaluations');
+    await changeWorkspace('personal');
+  }
+  action();
+}
+
 let suiteDraft = null, savingSuite = false;
 let inlineName = null, duplicatingEvaluation = false, renderingLibrary = false;
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
@@ -21,7 +57,7 @@ let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
 let runSelection = new Set(), runCatalogs = new Map(), catalogLoads = new Map(), runCatalog = null, runModelsLoading = false, creatingRun = false, runDraftRevision = 0, catalogRequest = 0;
 let runModelDefaults = null, rerunRequest = 0;
-const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'counted', 'error'].includes(item.status));
+const canDeleteRun = run => canWriteWorkspace() && (typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'counted', 'error'].includes(item.status)));
 const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
@@ -37,6 +73,7 @@ function error(message) { $('app-error').textContent = message; $('app-error').h
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3000); }
 async function api(path, options) {
   const requestSession = session;
+  if (/^\/api\/(?:evaluations|suites|runs|workspace|workshop-suite|basic-workshop-suite)(?:[/?]|$)/.test(path)) path = resourcePath(path);
   const mutation = options?.method && !['GET', 'HEAD'].includes(options.method);
   const res = await fetch(path, { ...options, credentials: 'same-origin', headers: { ...(options ? { 'content-type': 'application/json' } : {}), ...(session && mutation ? { 'x-csrf-token': session.csrfToken } : {}) } });
   let body;
@@ -56,13 +93,13 @@ function showConnecting() {
   suiteDraft = null; savingSuite = false; closeSuiteEditor(false);
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   closeRunDraft(); $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
-  $('delete-library-dialog').close();
+  $('delete-library-dialog').close(); $('inspect-evaluation').close();
   libraryDeleteTarget = null; savingEvaluation = false; deletingLibrary = false;
   $('filter-suite').value = ''; evalSort = 'createdAt'; evalSortDirection = -1; renderSuites();
   $('run-search').value = ''; $('run-status').value = ''; $('run-model').value = ''; runSort = 'createdAt'; runSortDirection = -1; lastRunRows = null;
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
   $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
-  $('session-message').textContent = 'Opening your private workspace…';
+  $('session-message').textContent = 'Opening your workspace…'; $('logout').hidden = true;
   $('session-error').textContent = ''; $('retry-session').hidden = true;
 }
 function scheduleSessionCheck() {
@@ -73,7 +110,7 @@ async function refreshSession() {
   clearTimeout(sessionTimer);
   if (!session) return;
   const current = await api('/api/session');
-  if (!current.authenticated || current.workspaceId !== session?.workspaceId) return connectWorkspace();
+  if (!current.authenticated || current.workspaceId !== session?.workspaceId || current.user.role !== session.user.role) return connectWorkspace();
   // Preserve object identity so parallel responses from this workspace remain valid.
   Object.assign(session, current);
   scheduleSessionCheck();
@@ -214,6 +251,7 @@ function validateStep(step) {
 }
 function openForm(example = false, existing) {
   if (!session || !config) return;
+  if (!canWriteWorkspace()) { if (existing) inspectEvaluation(existing); return; }
   $('evaluation-form').reset(); $('form-error').textContent = '';
   closeSuiteEditor(false);
   editing = existing ? structuredClone(existing) : null;
@@ -489,11 +527,11 @@ function closeRunDraft() {
   $('create-run-dialog').close();
 }
 function selectedNeedsGrader() {
-  return evaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => isModelMethod(c.method)));
+  return runEvaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => isModelMethod(c.method)));
 }
 function visibleRunEvaluations() {
   const query = $('create-eval-search').value.trim().toLowerCase(), suite = $('create-eval-suite').value, type = $('create-eval-type').value, method = $('create-eval-method').value;
-  return evaluations.filter(e => (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name).toLowerCase().includes(query))
+  return runEvaluations.filter(e => (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name).toLowerCase().includes(query))
     && (!suite || (suite === '__unfiled' ? !e.suiteId : e.suiteId === suite))
     && (!type || endpoint(e) === type)
     && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
@@ -526,13 +564,13 @@ function updateRunSubmit() {
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
-  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td class="evaluation-id">' + escape(e.reference || '—') + '</td><td>' + escape(e.name) + '</td><td>' + escape(evaluationSuite(e)) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
+  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td class="evaluation-id">' + escape(e.reference || '—') + '</td><td>' + escape(e.name) + '</td><td>' + escape(runSuites.find(s => s.id === e.suiteId)?.name || 'None') + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
   $('create-eval-rows').querySelectorAll('td:not(:first-child)').forEach(cell => { cell.title = cell.textContent; });
   $('create-select-all').checked = !!visible.length && visible.every(e => runSelection.has(e.id));
   $('create-select-all').indeterminate = visible.some(e => runSelection.has(e.id)) && !$('create-select-all').checked;
   $('create-select-all').disabled = creatingRun || !visible.length;
   $('create-eval-empty').hidden = !!visible.length;
-  $('create-eval-empty').textContent = evaluations.length ? 'No evaluations match these filters.' : 'No evaluations yet. Add an evaluation in Evaluations first.';
+  $('create-eval-empty').textContent = runEvaluations.length ? 'No evaluations match these filters.' : 'No evaluations yet. Add an evaluation in Evaluations first.';
   if (focusedId) [...$('create-eval-rows').querySelectorAll('[data-run-select]')].find(input => input.dataset.runSelect === focusedId)?.focus({ preventScroll: true });
   updateRunSubmit();
 }
@@ -575,7 +613,12 @@ async function loadRunModels(useDefaults = false, force = false) {
 async function openCreateRun(sourceRun = null) {
   if (!session || !config || creatingRun) return;
   const draft = ++runDraftRevision;
-  runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
+  runEvaluations = []; runSuites = [];
+  runSourceWorkspace = sourceRun?.sourceWorkspace?.alias || activeWorkspace;
+  $('run-key-field').hidden = session.user.role === 'admin';
+  $('run-api-key').value = personalKey;
+  $('run-destination').textContent = 'Evaluations from ' + (runSourceWorkspace === 'main' ? 'TestCraft' : 'My workspace') + '. Results saved in ' + (session.user.role !== 'admin' || runSourceWorkspace === 'personal' ? 'My workspace (private)' : 'TestCraft (visible to everyone)') + '. ' + (session.user.role === 'admin' ? 'Uses server credentials.' : 'Uses your OpenAI key.');
+  runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('run-api-key').value = personalKey; $('create-run-error').textContent = '';
   $('generation-model-options').hidePopover();
   $('generation-model-options').replaceChildren();
   runModelDefaults = { generationModels: sourceRun?.settings?.generationModels || (sourceRun?.settings?.generationModel ? [sourceRun.settings.generationModel] : undefined), graderModel: sourceRun?.settings?.graderModel };
@@ -587,11 +630,15 @@ async function openCreateRun(sourceRun = null) {
   setCreatingRun(false); $('create-run-dialog').showModal(); lockBody(); renderRunEvaluations(); $('create-environment').focus();
   if ($('create-environment').value) void loadRunModels(true);
   try {
-    await loadLibrary();
+    const sourceAlias = runSourceWorkspace;
+    const [sourceEvaluations, sourceSuites] = await Promise.all([api(resourcePath('/api/evaluations', sourceAlias)), api(resourcePath('/api/suites', sourceAlias))]);
+    if (draft !== runDraftRevision) return;
+    runEvaluations = sourceEvaluations.evaluations; runSuites = sourceSuites.suites;
+    $('create-eval-suite').innerHTML = '<option value="">All suites</option><option value="__unfiled">None</option>' + runSuites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if (draft !== runDraftRevision) return;
     if (sourceRun) {
       const ids = new Set(sourceRun.items.map(item => item.evaluationId || item.evaluation?.id).filter(Boolean));
-      runSelection = new Set([...ids].filter(id => evaluations.some(e => e.id === id)).slice(0, 50));
+      runSelection = new Set([...ids].filter(id => runEvaluations.some(e => e.id === id)).slice(0, 50));
       $('create-run-error').textContent = runSelection.size < ids.size ? 'Some evaluations are no longer available or exceed the 50-evaluation limit. Review the selection before creating the run.' : '';
     }
     renderRunEvaluations();
@@ -599,13 +646,13 @@ async function openCreateRun(sourceRun = null) {
   catch (e) { if (draft === runDraftRevision) $('create-run-error').textContent = e.message; }
 }
 async function rerun(id) {
-  const workspace = session, draft = runDraftRevision, request = ++rerunRequest, route = location.hash;
+  const workspace = session, draft = runDraftRevision, request = ++rerunRequest, route = routeHash();
   error('');
   try {
     const run = await api('/api/runs/' + encodeURIComponent(id));
-    if (workspace !== session || draft !== runDraftRevision || request !== rerunRequest || route !== location.hash) return;
+    if (workspace !== session || draft !== runDraftRevision || request !== rerunRequest || route !== routeHash()) return;
     await openCreateRun(run);
-  } catch (e) { if (workspace === session && draft === runDraftRevision && request === rerunRequest && route === location.hash) error(e.message); }
+  } catch (e) { if (workspace === session && draft === runDraftRevision && request === rerunRequest && route === routeHash()) error(e.message); }
 }
 function setCreatingRun(busy) {
   creatingRun = busy;
@@ -619,9 +666,10 @@ async function submitRun(event) {
   const body = { evaluationIds: [...runSelection], description: $('run-description').value, environment: $('create-environment').value, generationModels: selectedGenerationModels(), graderModel: selectedNeedsGrader() ? $('create-grader-model').value : '' };
   setCreatingRun(true); $('create-run-error').textContent = '';
   try {
-    const run = await api('/api/runs', { method: 'POST', body: JSON.stringify(body) });
+    if (session.user.role !== 'admin') { updateKey($('run-api-key').value.trim()); body.openAiApiKey = personalKey; }
+    const run = await api(resourcePath('/api/runs', runSourceWorkspace), { method: 'POST', body: JSON.stringify(body) });
     if (workspace !== session || draft !== runDraftRevision) return;
-    setCreatingRun(false); $('create-run-dialog').close(); location.hash = 'runs/' + run.id;
+    setCreatingRun(false); $('create-run-dialog').close(); location.hash = (run.resultWorkspace?.alias || activeWorkspace) + '/runs/' + run.id;
     toast('Run created. Generation and grading continue in the backend.');
   } catch (e) {
     if (workspace === session && draft === runDraftRevision) $('create-run-error').textContent = e.message;
@@ -651,7 +699,7 @@ function renderRunList() {
   const visible = visibleRuns(), focused = document.activeElement;
   const focusId = $('run-list').contains(focused) ? focused.closest('[data-run-row]')?.dataset.runRow : null;
   const focusAction = focused?.hasAttribute('data-delete-run') ? '[data-delete-run]' : focused?.hasAttribute('data-rerun') ? '[data-rerun]' : 'a';
-  const rows = visible.map(run => '<tr data-run-row="' + escape(run.id) + '"><td><a class="eval-name" data-run-link="' + escape(run.id) + '" href="#runs/' + escape(run.id) + '">' + escape(runName(run)) + '</a></td>'
+  const rows = visible.map(run => '<tr data-run-row="' + escape(run.id) + '"><td><a class="eval-name" data-run-link="' + escape(run.id) + '" href="#' + activeWorkspace + '/runs/' + escape(run.id) + '">' + escape(runName(run)) + '</a></td>'
     + '<td><time datetime="' + escape(run.createdAt) + '">' + escape(new Date(run.createdAt).toLocaleString()) + '</time></td>'
     + '<td>' + (run.models.length ? run.models.map(escape).join('<br>') : '—') + '</td><td>' + run.total + '</td>'
     + '<td><span class="badge ' + escape(run.status) + '">' + escape(runStatus(run)) + '</span>' + (run.errors ? '<span class="row-meta">' + run.errors + ' error' + (run.errors === 1 ? '' : 's') + '</span>' : '') + '</td>'
@@ -701,9 +749,9 @@ async function deleteRun(event) {
   }
   if (target.session !== session) return;
   deletingRun = false; target.deleted = true; $('delete-run-dialog').close(); error('');
-  const viewingDeleted = location.hash === '#runs/' + target.id;
+  const viewingDeleted = routeHash() === '#runs/' + target.id;
   if (viewingDeleted) {
-    history.replaceState(null, '', '#runs'); runViewRevision++; clearTimeout(polling);
+    history.replaceState(null, '', '#' + activeWorkspace + '/runs'); runViewRevision++; clearTimeout(polling);
     $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
   }
   runDetail.forget(target.id);
@@ -715,28 +763,28 @@ async function deleteRun(event) {
   toast(alreadyDeleted ? 'This run was already removed.' : 'Run deleted. Your evaluations are still saved.');
   try {
     await Promise.all([loadRuns(), loadLibrary()]);
-    if (target.session === session && viewingDeleted && location.hash === '#runs') { await route(); $('runs-title').focus(); }
-    else if (target.session === session && location.hash === '#runs') $('runs-title').focus();
+    if (target.session === session && viewingDeleted && routeHash() === '#runs') { await route(); $('runs-title').focus(); }
+    else if (target.session === session && routeHash() === '#runs') $('runs-title').focus();
   } catch {
     if (target.session === session) error('The run was removed, but the history could not refresh. Reload the page.');
   }
 }
 async function pollRun(id, revision = runViewRevision) {
-  if (!session || revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+  if (!session || revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
   try {
     const run = await api('/api/runs/' + id);
-    if (revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+    if (revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
     pollFailures = 0; currentRun = run;
     const serialized = JSON.stringify(run);
     if (serialized !== lastRunJson) { lastRunJson = serialized; renderRunDetail(); await loadRuns(); }
-    if (revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+    if (revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
     if (activeStatuses.includes(run.status)) polling = setTimeout(() => pollRun(id, revision), 900);
     else { await loadLibrary(); }
   } catch (e) {
-    if (!session || revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+    if (!session || revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
     if (e.status === 404) {
       currentRun = null; renderRunDetail();
-      history.replaceState(null, '', '#runs'); toast('This run is no longer available.');
+      history.replaceState(null, '', '#' + activeWorkspace + '/runs'); toast('This run is no longer available.');
       $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
       try { await loadLibrary(); if (revision === runViewRevision) await route(); }
       catch (refreshError) { if (session && revision === runViewRevision) error(refreshError.message); }
@@ -747,29 +795,38 @@ async function pollRun(id, revision = runViewRevision) {
   }
 }
 async function pollRunList(revision = runViewRevision) {
-  if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
+  if (!session || revision !== runViewRevision || routeHash() !== '#runs') return;
   try {
     await loadRuns();
-    if (revision !== runViewRevision || location.hash !== '#runs') return;
+    if (revision !== runViewRevision || routeHash() !== '#runs') return;
     pollFailures = 0;
     if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
     else { await loadLibrary(); }
   } catch (e) {
-    if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
+    if (!session || revision !== runViewRevision || routeHash() !== '#runs') return;
     error(e.message);
     if (++pollFailures < 3) polling = setTimeout(() => pollRunList(revision), 1500);
   }
 }
 async function route() {
+  const requested = location.hash.match(/^#(main|personal)\//)?.[1] || activeWorkspace;
+  if (session && requested !== activeWorkspace) {
+    if ((creatingRun || savingEvaluation || savingSuite || clearingWorkspace) || (hasDraft() && !confirm('Discard unsaved changes and switch workspaces?'))) {
+      history.replaceState(null, '', acceptedHash); $('workspace-switcher').value = activeWorkspace; return;
+    }
+    acceptedHash = location.hash; await changeWorkspace(requested); return;
+  }
+  if (session && !/^#(?:main|personal)\//.test(location.hash)) history.replaceState(null, '', '#' + activeWorkspace + '/' + (routeHash().slice(1) || 'evaluations'));
+  acceptedHash = location.hash;
   const revision = ++runViewRevision;
   clearTimeout(polling); runsRequest++; lastRunJson = null; pollFailures = 0;
   if (!session) return;
-  const isRuns = location.hash.startsWith('#runs');
+  const isRuns = routeHash().startsWith('#runs');
   $('evaluations-panel').hidden = isRuns; $('runs-panel').hidden = !isRuns;
   $('evaluations-tab').setAttribute('aria-selected', String(!isRuns)); $('runs-tab').setAttribute('aria-selected', String(isRuns));
   $('evaluations-tab').tabIndex = isRuns ? -1 : 0; $('runs-tab').tabIndex = isRuns ? 0 : -1;
   if (isRuns) {
-    const id = location.hash.split('/')[1];
+    const id = routeHash().split('/')[1];
     $('runs-list-page').hidden = !!id; $('run-detail-page').hidden = !id;
     if (currentRun?.id !== id || !id) { currentRun = null; renderRunDetail(); }
     await loadRuns();
@@ -799,9 +856,9 @@ document.addEventListener('keydown', event => {
 document.querySelector('.library-actions').addEventListener('focusout', event => {
   if (!event.currentTarget.contains(event.relatedTarget)) closeLibraryActions();
 });
-$('example-button').addEventListener('click', () => { closeLibraryActions(); openForm(true); });
-$('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(true); });
-$('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(); });
+$('example-button').addEventListener('click', () => { closeLibraryActions(); void personalLoader(() => openForm(true)).catch(e => error(e.message)); });
+$('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void personalLoader(() => void loadWorkshop(true)).catch(e => error(e.message)); });
+$('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void personalLoader(() => void loadWorkshop()).catch(e => error(e.message)); });
 $('clear-workspace-button').addEventListener('click', reviewWorkspace);
 $('clear-workspace-form').addEventListener('submit', clearWorkspace);
 $('cancel-clear-workspace').addEventListener('click', () => { if (!clearingWorkspace) $('clear-workspace-dialog').close(); });
@@ -821,7 +878,7 @@ $('delete-run-dialog').addEventListener('cancel', event => { if (deletingRun) ev
 $('delete-run-dialog').addEventListener('close', () => {
   const target = deleteTarget; deleteTarget = null; lockBody();
   if (!target || target.deleted || target.session !== session) return;
-  const container = location.hash === '#runs' ? $('run-list') : $('run-detail');
+  const container = routeHash() === '#runs' ? $('run-list') : $('run-detail');
   [...container.querySelectorAll('[data-delete-run]')].find(button => button.dataset.deleteRun === target.id)?.focus();
 });
 $('back-step').addEventListener('click', () => setStep(1));
@@ -913,7 +970,7 @@ document.addEventListener('click', async event => {
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
   if (el.dataset.rerun) void rerun(el.dataset.rerun);
 });
-$('evaluations-tab').addEventListener('click', () => { location.hash = 'evaluations'; });
+$('evaluations-tab').addEventListener('click', () => { navigate('evaluations'); });
 $('create-run').addEventListener('click', () => openCreateRun());
 $('create-run-form').addEventListener('submit', submitRun);
 ['cancel-create-run', 'close-create-run'].forEach(id => $(id).addEventListener('click', () => { if (!creatingRun) $('create-run-dialog').close(); }));
@@ -944,7 +1001,7 @@ $('create-select-all').addEventListener('change', () => {
   } else visible.forEach(e => runSelection.delete(e.id));
   $('create-run-error').textContent = ''; renderRunEvaluations();
 });
-$('runs-tab').addEventListener('click', () => { location.hash = 'runs'; });
+$('runs-tab').addEventListener('click', () => { navigate('runs'); });
 document.querySelector('.tabs').addEventListener('keydown', event => {
   if (['ArrowRight','ArrowLeft','Home','End'].includes(event.key)) {
     event.preventDefault(); const target = event.key === 'Home' ? $('evaluations-tab') : event.key === 'End' ? $('runs-tab') : event.target === $('runs-tab') ? $('evaluations-tab') : $('runs-tab'); target.click(); target.focus();
@@ -964,42 +1021,49 @@ document.querySelectorAll('[data-run-sort]').forEach(button => button.addEventLi
 $('run-list').addEventListener('click', event => {
   if (event.target.closest('a, button') || window.getSelection()?.toString()) return;
   const row = event.target.closest('[data-run-row]');
-  if (row) location.hash = 'runs/' + row.dataset.runRow;
+  if (row) navigate('runs/' + row.dataset.runRow);
 });
 window.addEventListener('hashchange', () => route().catch(e => error(e.message)));
 async function openWorkspace() {
   config = await api('/api/config');
-  if (config.version !== 9 || !config.evaluationMethods?.hybrid) throw new Error('This page needs the updated backend. Restart the local server or refresh after deployment.');
+  if (config.version !== 10 || !config.evaluationMethods?.hybrid) throw new Error('This page needs the updated backend. Restart the local server or refresh after deployment.');
   $('connection').textContent = '● Backend connected';
   $('setup-notice').hidden = true; error('');
-  if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
+  if (!config.llmReady && session.user.role === 'admin') { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
   await Promise.all([loadLibrary(), loadRuns(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
   if (!session) return;
   $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;
   scheduleSessionCheck();
 }
-async function ensureBrowserSession() {
-  let current = await api('/api/session');
-  if (!current.authenticated) {
-    await api('/api/session', { method: 'POST', body: '{}' });
-    // Verify that the browser kept the HttpOnly cookie; do not loop when cookies are blocked.
-    current = await api('/api/session');
-    if (!current.authenticated) throw new Error('Allow cookies for this site, then retry. Your browser needs a cookie to keep its private workspace.');
+function inspectEvaluation(evaluation) {
+  $('inspect-title').textContent = evaluation.name;
+  $('inspect-content').replaceChildren();
+  const fields = [['Evaluation', (evaluation.reference || '') + ' · TestCraft'], ['Suite', evaluationSuite(evaluation)], ['Endpoint', names[endpoint(evaluation)]], ['HTML', evaluation.html], ['Input', evaluation.input], ['Page URL', evaluation.pageUrl], ['Framework', evaluation.framework], ['Language', evaluation.language], ['Page object model', evaluation.type === 'code' ? (evaluation.pom ? 'Enabled' : 'Disabled') : ''], ['Ideas', evaluation.ideas], ['Criteria', criterionObjects(evaluation).map(c => c.method + ' (weight ' + (c.weight ?? 1) + '): ' + c.text + (c.description ? '\n' + c.description : '')).join('\n\n')]];
+  for (const [label, value] of fields) {
+    if (!value) continue;
+    const heading = document.createElement('h3'), text = document.createElement('pre'); heading.textContent = label; text.textContent = value;
+    $('inspect-content').append(heading, text);
   }
-  return current;
+  $('inspect-evaluation').showModal(); lockBody();
 }
 function connectWorkspace() {
   if (sessionSetup) return sessionSetup;
-  const previousWorkspace = session?.workspaceId;
-  showConnecting();
+  updateKey(''); showConnecting();
   sessionSetup = (async () => {
     try {
-      // Serialize first visits across tabs in browsers supporting Web Locks.
-      session = navigator.locks ? await navigator.locks.request('testcraft-session-bootstrap', ensureBrowserSession) : await ensureBrowserSession();
-      const renewed = previousWorkspace && previousWorkspace !== session.workspaceId;
-      if (renewed) history.replaceState(null, '', '#evaluations');
-      await openWorkspace();
-      if (renewed) toast('A new browser session was created. Previous evaluations remain in the previous workspace.');
+      const current = await api('/api/session');
+      if (!current.authenticated) {
+        $('session-message').textContent = 'Sign in to explore TestCraft and create evaluations in your personal workspace.';
+        $('github-login').hidden = !current.loginAvailable;
+        $('session-error').textContent = new URLSearchParams(location.search).has('login') ? 'GitHub login could not be completed. Please try again.' : current.loginAvailable ? '' : 'GitHub login is not configured. Contact the app administrator.';
+        return;
+      }
+      session = current;
+      const pendingRoute = sessionStorage.getItem('testcraft-login-route'); sessionStorage.removeItem('testcraft-login-route');
+      if (pendingRoute !== null) accountChannel?.postMessage('changed');
+      if (!location.hash && /^#(main|personal)\/(evaluations|runs(?:\/[a-z0-9-]+)?)$/.test(pendingRoute || '')) history.replaceState(null, '', pendingRoute);
+      activeWorkspace = location.hash.match(/^#(main|personal)\//)?.[1] || (location.hash ? 'personal' : 'main');
+      applyWorkspaceControls(); await openWorkspace();
     } catch (e) {
       showConnecting(); $('session-message').textContent = 'Could not open your workspace.';
       $('session-error').textContent = e.message; $('retry-session').hidden = false;
@@ -1007,5 +1071,26 @@ function connectWorkspace() {
   })();
   return sessionSetup;
 }
+$('github-login').addEventListener('click', async () => {
+  $('github-login').disabled = true;
+  try {
+    const result = await api('/api/auth/github/start', { method: 'POST', body: '{}' });
+    sessionStorage.setItem('testcraft-login-route', location.hash);
+    location.assign(result.authorizeUrl);
+  } catch (e) { $('session-error').textContent = e.message; $('github-login').disabled = false; }
+});
+$('logout').addEventListener('click', async () => {
+  if (hasDraft() && !confirm('Discard unsaved changes and sign out?')) return;
+  try { await api('/api/auth/logout', { method: 'POST', body: '{}' }); updateKey(''); accountChannel?.postMessage('changed'); await connectWorkspace(); }
+  catch (e) { error(e.message); }
+});
+$('workspace-switcher').addEventListener('change', () => { location.hash = $('workspace-switcher').value + '/evaluations'; });
+$('personal-api-key').addEventListener('input', () => updateKey($('personal-api-key').value));
+$('run-api-key').addEventListener('input', () => updateKey($('run-api-key').value));
+$('clear-api-key').addEventListener('click', () => updateKey(''));
+$('close-inspect').addEventListener('click', () => $('inspect-evaluation').close());
+$('inspect-evaluation').addEventListener('close', lockBody);
+if (accountChannel) accountChannel.onmessage = () => { updateKey(''); void connectWorkspace(); };
+window.addEventListener('focus', () => { if (session) void refreshSession().catch(e => error(e.message)); });
 $('retry-session').addEventListener('click', connectWorkspace);
 void connectWorkspace();

@@ -1,5 +1,11 @@
 # TestCraft evaluation collection: design and workshop guide
 
+## Accounts and workspace selection
+
+Sign in with GitHub, then select **My workspace** to edit exercises. The **TestCraft** workspace is read-only for collaborators, including its official history. Running those definitions creates private results in My workspace without copying the definitions. Reruns use the current source definitions and preserve earlier evidence.
+
+Collaborators enter one OpenAI key in the UI for TestCraft generation and OpenAI grading. The key is never saved and must be entered again after refresh. Admins use configured server credentials and can maintain the main library. Existing Actions loaders remain available; in the collaborator's TestCraft view they explicitly target My workspace. Personal references and TestCraft references are separate namespaces. Live-suite copying and promotion requests are deferred.
+
 The Full collection in `src/evals/workshop.mjs` contains **156 evaluations in six suites**, each with **13–19 criteria that each check one property**. It is an input-only design: importing the module or using **Load Full Suite** creates no generated responses, grades, or runs. No live API calls were needed to develop these fixtures; endpoint contracts were inspected in the local API source and adapter.
 
 ## Basic collection

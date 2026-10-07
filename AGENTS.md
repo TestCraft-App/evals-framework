@@ -55,9 +55,9 @@ There is no configured lint, format, type-check, or compile command. Do not clai
 
 - Browser workspaces must remain isolated by server-issued, HttpOnly, SameSite=Strict session cookies. Do not accept caller-selected owner/workshop identifiers.
 - Preserve exact-origin and session-bound CSRF enforcement on authenticated mutations. Never place API keys or session tokens in URLs or browser-visible configuration.
-- Keep generator and grader credentials separate. `TESTCRAFT_OPENAI_API_KEY` may go only to TestCraft; `OPENAI_API_KEY` may go only to `OPENAI_BASE_URL` and server-side AWS secret loading.
+- Keep admin generator and grader credentials separate. `TESTCRAFT_OPENAI_API_KEY` may go only to TestCraft; `OPENAI_API_KEY` may go only to `OPENAI_BASE_URL` and server-side AWS secret loading. Collaborators explicitly supply one per-run key for both destinations; keep that key only in tab/job memory, never persisted or mixed into shared environment configuration.
 - Generation must not receive expected outputs, grading criteria, or judge-only context.
-- Charge and reserve the shared model-call allowance around actual attempts exactly as documented. Do not add hidden retries, fallback grades, or unmetered provider calls.
+- Preserve the documented provider-attempt behavior and queue limits. The obsolete model-call allowance is not enforced; do not add hidden retries or fallback grades.
 - Generated test code is data: this application does not execute it. Do not introduce code execution without an explicit design and security review.
 - Use synthetic test data. Automated tests must mock TestCraft/OpenAI requests and must never consume live model credits.
 

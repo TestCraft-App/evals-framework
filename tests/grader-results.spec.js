@@ -1,7 +1,7 @@
 import { openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect } from './browser-fixtures.mjs';
 import { once } from 'node:events';
-import { createApp } from '../server.mjs';
+import { createOAuthApp as createApp } from './helpers.mjs';
 import { workshopSuite } from './fixtures/pasted-grader-cases.mjs';
 
 const evidence = 'The code has no field entry or submission for any of the requested login scenarios.';
@@ -34,7 +34,7 @@ async function runExample(page, caseNumber = '04') {
   const session = await (await page.request.get('/api/session')).json();
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
   const example = workshopSuite.evaluations.find(item => item.name.startsWith(caseNumber));
-  const created = await page.request.post('/api/evaluations', { headers, data: example });
+  const created = await page.request.post('/api/workspaces/personal/evaluations', { headers, data: example });
   expect(created.status()).toBe(201);
   await page.reload();
   await openRunCreator(page);
@@ -55,8 +55,8 @@ test('a justified model Fail displays its concise reason and remains distinct fr
   await page.reload();
   await page.locator('.detail-expand').click();
   await expect(page.locator('.criterion-reason')).toHaveText(reason);
-  const runId = new URL(page.url()).hash.split('/')[1];
-  const run = await (await page.request.get('/api/runs/' + runId)).json();
+  const runId = new URL(page.url()).hash.split('/').at(-1);
+  const run = await (await page.request.get('/api/workspaces/personal/runs/' + runId)).json();
   expect(run.items[0].checks[0].evidence).toBe(evidence);
   const session = await (await page.request.get('/api/session')).json();
   expect(session).not.toHaveProperty('budget');
@@ -95,8 +95,8 @@ test.describe('passing source-line citations', () => {
     await page.reload();
     await page.locator('.detail-expand').click();
     await expect(page.locator('.criterion-reason').last()).toHaveText('Mocked positive verdict for source-extraction UI coverage.');
-    const runId = new URL(page.url()).hash.split('/')[1];
-    const run = await (await page.request.get('/api/runs/' + runId)).json();
+    const runId = new URL(page.url()).hash.split('/').at(-1);
+    const run = await (await page.request.get('/api/workspaces/personal/runs/' + runId)).json();
     expect(run.items[0].checks[2].evidenceLines).toEqual([line]);
     expect(run.items[0].checks[2].evidenceSource).toBe('output_lines');
     expect(run.items[0].checks[2].evidence).toBe(`L${line}: ${outputLines[line - 1]}`);

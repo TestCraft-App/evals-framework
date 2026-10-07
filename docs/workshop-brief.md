@@ -6,7 +6,7 @@ TestCraft's browser extension is the application being evaluated. This project s
 
 ## Participant flow
 
-Open the workshop URL directly or follow a shared link from another site or phone app in your browser. External links can load the public dashboard, which then creates or restores the browser's private session. Cross-site API access remains blocked.
+Open the workshop URL directly or follow a shared link from another site or phone app in your browser. External links can load the public dashboard, where users sign in with GitHub and choose TestCraft or My workspace. Cross-site API access remains blocked.
 
 For a ready-made starting point, use **Actions → Load Basic Suite**: 12 evaluations, two per Full suite, with concise atomic model criteria and local rules. **Load Full Suite** loads the existing 156-evaluation collection. Both loads preserve edits on repeat use and make no provider calls. Run the Basic collection together to check endpoint output quality with 12 generation and 11 judge attempts.
 
@@ -49,8 +49,8 @@ Choose criteria for the generation type. The judge is not ground truth: compare 
 
 Use synthetic HTML fixtures, clear criteria, a working TestCraft API, and separate grader credentials supporting strict JSON-schema output. The dropdown loads TestCraft's public catalog through the backend; this does not verify access with your grader account. Verify a live generation and grader run with the workshop accounts before presenting; automated tests use mocks and cannot verify quota or availability. All new runs use a shared 0.80 displayed passing threshold (80 internally), hidden from the form, to keep the exercise focused on the evaluation criteria.
 
-Participants open the URL and automatically receive a private browser session, without accounts or an access code. Keep the same browser and hostname throughout the workshop; clearing cookies, changing devices or session expiry automatically starts a new empty workspace. The backend enforces ownership, and session cookies expire after 24 hours by default. Anyone with the URL can enter and make provider requests, but cannot read another browser's evaluations or runs through the app.
+Participants sign in with GitHub. Any GitHub account can join as a collaborator and view TestCraft's shared library and official runs. Collaborators manage their own My workspace and enter their OpenAI key in the UI for generation and grading. Runs of the shared library are also saved privately. Keys stay in tab/job memory and must be entered again after refreshing. Signing in on another device restores the same personal workspace. Sessions expire after 24 hours by default; re-login preserves data. Admins are configured through numeric GitHub IDs and use server credentials.
 
-No workshop access secret is required. Manage spending through API keys and provider-side budgets; the app does not enforce a call limit. Every new run generates through TestCraft, including legacy pasted definitions; historical evidence remains unchanged.
+Configure GitHub OAuth client credentials and an admin allowlist before the workshop. Manage spending through API keys and provider-side budgets; the app does not enforce a call limit. Every new run generates through TestCraft, including legacy pasted definitions; historical evidence remains unchanged.
 
-AWS hosting still needs HTTPS, APP_ORIGIN, runtime secrets, one Node process and durable SQLite storage. Rehearse with two independent browser profiles and real provider credentials before the event. Generated-code execution, sandboxed browsers, extension UI automation, automatic DOM extraction, participant accounts/cross-device recovery, and hosting are not included in the current implementation.
+AWS hosting still needs HTTPS, APP_ORIGIN, runtime secrets, one Node process and durable SQLite storage. Rehearse with two independent browser profiles and real provider credentials before the event. Generated-code execution, sandboxed browsers, extension UI automation, automatic DOM extraction, live-suite copying, promotion requests, and infrastructure provisioning are not included in the current implementation.

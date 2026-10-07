@@ -18,6 +18,9 @@ test('AWS credentials are loaded only when configured, validated atomically, and
   });
   assert.equal(env.OPENAI_API_KEY, 'server-only');
   assert.equal(env.TESTCRAFT_OPENAI_API_KEY, '');
+  assert.equal(env.GITHUB_CLIENT_SECRET, '');
+  await loadRuntimeSecrets(env, async () => '{"OPENAI_API_KEY":"server-only","GITHUB_CLIENT_SECRET":"oauth-only"}');
+  assert.equal(env.GITHUB_CLIENT_SECRET, 'oauth-only');
   await assert.rejects(loadRuntimeSecrets(env, async () => '{"OPENAI_API_KEY":"changed","APP_ORIGIN":"https://wrong.test"}'));
   assert.equal(env.OPENAI_API_KEY, 'server-only');
 });

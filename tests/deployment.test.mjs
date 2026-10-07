@@ -8,19 +8,21 @@ const env = {
   AWS_ACCOUNT_ID: '123456789012', AWS_REGION: 'us-east-1', AWS_INSTANCE_ID: 'i-0123456789abcdef0', AWS_ARTIFACT_BUCKET: 'evals-releases-example',
   ECR_REPOSITORY_URI: '123456789012.dkr.ecr.us-east-1.amazonaws.com/testcraft-evals', AWS_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:evals/keys-abcdef',
   APP_ORIGIN: 'https://example.cloudfront.net', WORKSHOP_ID: 'workshop',
+  GITHUB_CLIENT_ID: 'synthetic-client', ADMIN_GITHUB_IDS: '123,456',
 };
 
 test('deploy config binds account, region, repository, main and immutable release identities', () => {
   const config = releaseConfig(env);
   const manifest = manifestFor(config, 'sha256:' + 'b'.repeat(64));
   assert.equal(manifest.image, env.ECR_REPOSITORY_URI + '@sha256:' + 'b'.repeat(64));
-  assert.deepEqual(Object.keys(manifest).sort(), ['account', 'region', 'origin', 'secretArn', 'workshop', 'release', 'image'].sort());
+  assert.deepEqual(Object.keys(manifest).sort(), ['account', 'region', 'origin', 'secretArn', 'workshop', 'release', 'image', 'githubClientId', 'adminGithubIds'].sort());
   assert.equal(JSON.stringify(manifestFor(releaseConfig({ ...env, OPENAI_API_KEY: 'never-copy', AWS_SECRET_ACCESS_KEY: 'never-copy' }), 'sha256:' + 'b'.repeat(64))).includes('never-copy'), false);
   assert.throws(() => manifestFor(config, 'latest'));
 });
 
 test('wrong accounts, PRs, malformed identifiers and shell payloads fail before deployment', () => {
   const invalid = {
+    GITHUB_CLIENT_ID: 'client\nOPENAI_API_KEY=bad', ADMIN_GITHUB_IDS: '1,admin',
     GITHUB_REPOSITORY: 'someone/fork', GITHUB_REF: 'refs/pull/1/merge', GITHUB_SHA: 'main', GITHUB_RUN_ID: '123;command', GITHUB_RUN_ATTEMPT: '1\n2',
     AWS_ACCOUNT_ID: '999999999999', AWS_REGION: 'eu-central-1', AWS_INSTANCE_ID: 'i-123;command', AWS_ARTIFACT_BUCKET: 'bucket/../target',
     ECR_REPOSITORY_URI: '999999999999.dkr.ecr.us-east-1.amazonaws.com/evals', AWS_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:999999999999:secret:other',

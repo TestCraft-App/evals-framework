@@ -19,7 +19,7 @@ async function seed(page, app, status = 'completed') {
     checks: score === null ? [] : ['login', 'logout'].map((criterion, i) => ({ id: 'c' + i, criterion, method: extra.method === 'model_grade' ? 'model_grade' : extra.method === 'hybrid' && i === 1 ? 'model_grade' : extra.method || 'contains', passed: index === 3 || index === 0 || (index !== 4 && i === 0), reason: 'The response includes the required behavior. ' + 'A long historical explanation. '.repeat(15), evidence: 'PRIVATE EVIDENCE', weight: 2 })),
     ...(score === null && status !== 'running' ? { error: 'Synthetic grading failure.' } : {}), events: [],
   })) };
-  app.store.saveRun(run, scope); await page.goto('/#runs/' + run.id);
+  app.store.saveRun(run, scope); await page.goto('/#personal/runs/' + run.id);
   await expect(page.locator('.detail-eval-row')).toHaveCount(6);
   return { run, scope };
 }
