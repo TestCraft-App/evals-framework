@@ -39,7 +39,7 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await page.reload();
   await expect(page.locator('.result-score')).toContainText('1.00');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
-  await page.locator('#filter-status').selectOption('passed');
+  await expect(page.locator('#evaluations-panel').getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await expect(page.locator('#run-list .score')).toHaveText('1.00');
@@ -77,7 +77,7 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here.');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
-  await page.locator('#filter-status').selectOption('not_run');
+  await expect(page.locator('#evaluations-panel').getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
@@ -124,6 +124,17 @@ test('batch selection grades each case independently and preserves HTML as inert
   await weak.locator('.detail-expand').click();
   await expect(weak.locator('.result-score')).toHaveText('0.50');
   await expect(page.getByText('Contains: “getByRole” — Not met', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: /^Evaluations/ }).click();
+  await expect(page.locator('#evaluations-panel .filters select')).toHaveCount(3);
+  await expect(page.locator('#evaluations-panel').getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
+  await expect(page.locator('#evaluation-rows')).toContainText('Batch good');
+  await expect(page.locator('#evaluation-rows')).toContainText('Batch weak');
+  await page.getByRole('tab', { name: /^Runs/ }).click();
+  await page.locator('#run-status').selectOption('completed');
+  await expect(page.locator('#run-list tr')).toHaveCount(1);
+  await page.locator('#run-status').selectOption('interrupted');
+  await expect(page.locator('#run-list tr')).toHaveCount(0);
 });
 
 test('LLM as a judge has quality criteria and reports missing configuration honestly', async ({ page }) => {

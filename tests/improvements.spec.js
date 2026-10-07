@@ -71,8 +71,6 @@ test('Save updates a definition and preserves the earlier run snapshot', async (
   await expect(page.locator('#evaluation-dialog')).not.toBeVisible();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await expect(page.locator('#evaluation-rows')).toContainText('Updated login');
-  await page.locator('#filter-status').selectOption('not_run');
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   const updated = (await (await page.request.get('/api/workspaces/personal/evaluations/' + original.id)).json());
   expect(updated.revision).toBe(2); expect(updated.createdAt).toBe(original.createdAt);
   await page.goto(runUrl);

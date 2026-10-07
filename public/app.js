@@ -132,12 +132,10 @@ function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
   const value = e => evalSort === 'reference' ? Number(e.reference?.slice(5) || 0) : evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
   return evaluations.filter(e => {
-    const status = e.latest?.status || 'not_run';
     return (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
       && (!$('filter-type').value || endpoint(e) === $('filter-type').value)
       && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
-      && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value)
-      && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
+      && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value);
   }).sort((a, b) => (evalSort === 'reference' ? value(a) - value(b) : String(value(a)).localeCompare(String(value(b)))) * evalSortDirection || a.id.localeCompare(b.id));
 }
 function renderLibrary() {
@@ -506,7 +504,7 @@ async function clearWorkspace(event) {
     clearTimeout(polling); runViewRevision++; libraryRequest++; runsRequest++;
     currentRun = null; lastRunJson = null; evaluations = []; suites = []; runs = []; lastRunRows = null; inlineName = null; editing = null;
     closeRunDraft(); runDetail.reset(); $('run-detail').replaceChildren();
-    for (const id of ['search', 'filter-suite', 'filter-type', 'filter-method', 'filter-status', 'run-search', 'run-status', 'run-model']) $(id).value = '';
+    for (const id of ['search', 'filter-suite', 'filter-type', 'filter-method', 'run-search', 'run-status', 'run-model']) $(id).value = '';
     renderSuites(); renderLibrary(); renderRunList(); $('runs-count').textContent = '0';
     $('clear-workspace-dialog').close(); toast('Workspace cleared. You can load the workshop templates again.');
   } catch (e) { if (review.session === session) $('clear-workspace-error').textContent = e.message; }
@@ -958,7 +956,7 @@ $('evaluation-rows').addEventListener('keydown', event => {
 $('evaluation-form').addEventListener('input', resizeTextareas);
 new ResizeObserver(resizeTextareas).observe($('wizard-body'));
 $('framework').addEventListener('change', () => setLanguages());
-['search','filter-type','filter-method','filter-status'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
+['search','filter-type','filter-method'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
 $('filter-suite').addEventListener('change', () => { renderSuites(); renderLibrary(); });
 document.addEventListener('click', async event => {
   const el = event.target.closest('button');
