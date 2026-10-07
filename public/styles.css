@@ -158,7 +158,7 @@ html { scrollbar-gutter: stable; }
 .model-checklist .model-option{display:flex;align-items:center;gap:8px;margin:0;padding:7px 8px;font-weight:400;cursor:pointer}
 .model-option:hover{background:#f4f8f6}.model-option input{flex:none;margin:0}.model-option span{min-width:0;overflow-wrap:anywhere}
 .model-checklist>.muted{display:block;padding:8px;font-size:.8125rem}
-#create-combination-count{display:block;margin-top:4px}
+#create-combination-count{display:block;margin:0}
 
 /* Run results share one score scale, independent of the saved 0–100 values. */
 .score-low{color:#bd2525}.score-medium{color:#916300}.score-high{color:#087c67}.score-missing{color:var(--muted)}
@@ -300,8 +300,10 @@ html { scrollbar-gutter: stable; }
 .count-evidence{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8125rem;color:var(--muted)}
 .badge.test_count,.badge.counted{background:#edf0fa;color:#425481}
 
-.workspace-controls { display:flex; gap:20px; align-items:center; margin-bottom:16px; }
-.workspace-controls label { min-width:180px; }
+.workspace-controls { display:grid; grid-template-columns:180px minmax(0,1fr); gap:7px 20px; align-items:center; margin-bottom:16px; }
+.workspace-controls label { grid-column:1; }
+#workspace-switcher { grid-column:1; grid-row:2; margin-top:0; }
+#workspace-access { grid-column:2; grid-row:2; }
 .user-menu { position:relative; min-width:0; }
 #user-menu-toggle { display:flex; align-items:center; gap:8px; max-width:180px; }
 #user-menu-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -320,7 +322,7 @@ html { scrollbar-gutter: stable; }
 .readonly-workspace #new-button, .readonly-workspace #empty-create, .readonly-workspace #clear-workspace-button,
 .readonly-workspace [data-duplicate-evaluation], .readonly-workspace [data-delete-evaluation],
 .readonly-workspace .run-delete, .readonly-workspace .eval-action[data-inspect] { display:none; }
-@media(max-width:700px) { .workspace-controls { align-items:flex-start; flex-direction:column; gap:8px; } .header-right { flex-wrap:wrap; } }
+@media(max-width:700px) { .workspace-controls { grid-template-columns:minmax(0,1fr); gap:8px; } #workspace-access { grid-column:1; grid-row:3; } .header-right { flex-wrap:wrap; } }
 @media(max-width:700px) {
   .app-header { height:auto; min-height:64px; gap:12px; padding-block:12px; }
   .app-header .header-right { min-width:0; flex-wrap:nowrap; }

@@ -56,3 +56,28 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 780 
     expect(errors).toEqual([]);
   });
 }
+
+for (const githubId of [1, 1001]) test.describe(`workspace controls for ${githubId === 1 ? 'admins' : 'collaborators'}`, () => {
+  test.use({ githubId, initialWorkspace: 'main' });
+  for (const width of [1280, 390]) test(`access text aligns with the dropdown at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 780 }); await page.goto('/');
+    for (const workspace of ['main', 'personal']) {
+      await page.getByLabel('Workspace', { exact: true }).selectOption(workspace);
+      await expect(page.locator('#workspace')).toBeVisible();
+      const readonly = githubId === 1001 && workspace === 'main';
+      await expect(page.locator('#workspace-access')).toHaveText(readonly ? 'Read-only library · your runs are saved in My workspace.' : 'You can manage this workspace.');
+      if (readonly) await expect(page.locator('.library-actions')).toBeHidden();
+      else await expect(page.locator('.library-actions')).toBeVisible();
+      const select = await page.locator('#workspace-switcher').boundingBox(), message = await page.locator('#workspace-access').boundingBox();
+      if (width > 700) {
+        expect(Math.abs(select.y + select.height / 2 - message.y - message.height / 2)).toBeLessThan(1);
+        expect(message.x).toBeGreaterThan(select.x + select.width);
+      } else {
+        expect(message.y).toBeGreaterThan(select.y + select.height);
+        expect(message.x).toBe(select.x);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(2);
+      await page.screenshot({ path: test.info().outputPath(workspace + '-workspace-controls.png'), fullPage: true });
+    }
+  });
+});

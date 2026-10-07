@@ -15,24 +15,30 @@ async function openKeySettings(page) {
   await expect(page.getByRole('dialog', { name: 'OpenAI API key', exact: true })).toBeVisible();
 }
 
-test('collaborators inspect the main library and load examples only into their personal space', async ({ page, browserApp }) => {
+test('collaborators inspect the main library without Actions and load examples in their personal space', async ({ page, browserApp }) => {
   await seedMain(browserApp);
   await page.goto('/');
   await expect(page.locator('#workspace-switcher')).toHaveValue('main');
   await expect(page.locator('#new-button')).toBeHidden();
+  await expect(page.locator('.library-actions')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Actions', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: definition.name, exact: true }).click();
   await expect(page.locator('#inspect-evaluation')).toContainText('<button>Login</button>');
   await expect(page.locator('#inspect-evaluation')).toContainText('contains (weight 1): valid credentials');
   await expect(page.locator('#inspect-evaluation')).toContainText('Look for a successful login.');
   await expect(page.locator('#inspect-evaluation input')).toHaveCount(0);
   await page.locator('#close-inspect').click();
+  await page.locator('#workspace-switcher').selectOption('personal');
+  await expect(page.locator('.library-actions')).toBeVisible();
   await page.locator('#library-actions-toggle').click();
-  await expect(page.locator('#clear-workspace-button')).toBeHidden();
-  await page.getByRole('button', { name: 'Load Basic Suite into My workspace' }).click();
+  await expect(page.locator('#clear-workspace-button')).toBeVisible();
+  await page.getByRole('button', { name: 'Load Basic Suite', exact: true }).click();
   await expect(page.locator('#workspace-switcher')).toHaveValue('personal');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
   await page.locator('#workspace-switcher').selectOption('main');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
+  await expect(page.locator('.library-actions')).toBeHidden();
+  await expect(page.locator('#library-actions-menu')).toBeHidden();
 });
 
 test('main runs and reruns save privately, preserve their source, and never store collaborator keys', async ({ page, browserApp, generationCalls }) => {

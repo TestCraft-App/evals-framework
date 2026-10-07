@@ -28,6 +28,7 @@ function updateKey(value) {
 function applyWorkspaceControls() {
   $('workspace-switcher').value = activeWorkspace;
   document.body.classList.toggle('readonly-workspace', !canWriteWorkspace());
+  document.querySelector('.library-actions').hidden = !canWriteWorkspace();
   $('workspace-access').textContent = canWriteWorkspace() ? 'You can manage this workspace.' : 'Read-only library · your runs are saved in My workspace.';
   $('private-badge').textContent = session.user.login + ' · ' + session.user.role;
   $('user-menu-name').textContent = session.user.login;
@@ -563,8 +564,7 @@ function updateRunSubmit() {
   $('generation-model-toggle').title = modelLabels.join(', ');
   $('submit-create-run').disabled = creatingRun || missingKey || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !modelCount || combinations > 100 || (needsGrader && !$('create-grader-model').value);
   $('submit-create-run').textContent = creatingRun ? 'Creating…' : 'Create Run';
-  $('create-selected-count').textContent = runSelection.size + ' selected · maximum 50';
-  $('create-combination-count').textContent = runSelection.size + ' evals × ' + modelCount + ' models = ' + combinations + ' results · maximum 100';
+  $('create-combination-count').textContent = runSelection.size + ' evals × ' + modelCount + ' models = ' + combinations + ' results';
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
