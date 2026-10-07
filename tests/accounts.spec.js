@@ -15,7 +15,7 @@ async function openKeySettings(page) {
   await expect(page.getByRole('dialog', { name: 'OpenAI API key', exact: true })).toBeVisible();
 }
 
-test('collaborators inspect the main library without Actions and load examples in their personal space', async ({ page, browserApp }) => {
+test('collaborators inspect the main library without Actions and load its current suite privately', async ({ page, browserApp, generationCalls }) => {
   await seedMain(browserApp);
   await page.goto('/');
   await expect(page.locator('#workspace-switcher')).toHaveValue('main');
@@ -31,14 +31,46 @@ test('collaborators inspect the main library without Actions and load examples i
   await page.locator('#workspace-switcher').selectOption('personal');
   await expect(page.locator('.library-actions')).toBeVisible();
   await page.locator('#library-actions-toggle').click();
-  await expect(page.locator('#clear-workspace-button')).toBeVisible();
-  await page.getByRole('button', { name: 'Load Basic Suite', exact: true }).click();
+  await expect(page.locator('#library-actions-menu button:visible')).toHaveText(['Load TestCraft suite', 'Clear workspace']);
+  await page.getByRole('button', { name: 'Load TestCraft suite', exact: true }).click();
   await expect(page.locator('#workspace-switcher')).toHaveValue('personal');
-  await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
+  await expect(page.locator('#evaluation-rows .eval-name')).toHaveText(definition.name);
+  const privateCase = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations[0];
+  expect(privateCase.name).toBe(definition.name);
+  expect(privateCase.sourceEvaluationId).not.toBe(privateCase.id);
+  expect(generationCalls).toHaveLength(0);
   await page.locator('#workspace-switcher').selectOption('main');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await expect(page.locator('.library-actions')).toBeHidden();
   await expect(page.locator('#library-actions-menu')).toBeHidden();
+});
+
+for (const width of [1280, 390]) test('private Actions supports keyboard use and empty TestCraft errors at ' + width + 'px', async ({ page, browserApp, generationCalls }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto('/#personal/evaluations');
+  const toggle = page.locator('#library-actions-toggle');
+  await expect(toggle).toBeVisible();
+  await toggle.focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#library-actions-menu button:visible')).toHaveText(['Load TestCraft suite', 'Clear workspace']);
+  const box = await page.locator('#library-actions-menu').boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(width);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#testcraft-suite-button')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#library-actions-menu')).toBeHidden();
+  await expect(page.locator('#app-error')).toHaveText('The TestCraft workspace has no suites or evaluations to load.');
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+  await seedMain(browserApp);
+  await toggle.click();
+  await page.getByRole('button', { name: 'Load TestCraft suite', exact: true }).click();
+  await expect(page.locator('#app-error')).toBeHidden();
+  await expect(page.locator('#evaluation-rows .eval-name')).toHaveText(definition.name);
+  await page.reload();
+  await expect(page.locator('#evaluation-rows .eval-name')).toHaveText(definition.name);
+  expect(generationCalls).toHaveLength(0);
 });
 
 test('main runs and reruns save privately, preserve their source, and never store collaborator keys', async ({ page, browserApp, generationCalls }) => {
@@ -99,12 +131,12 @@ test('tabs retain independent workspaces and switching protects drafts and clear
   await other.goto('/#main/evaluations');
   await expect(other.locator('#evaluation-rows tr')).toHaveCount(1);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
-  await expect(other.locator('#workspace-name')).toHaveText('TestCraft');
+  await expect(other.locator('#workspace-name')).toHaveText('TestCraft workspace');
   await expect(other.locator('#workspace-visibility')).toHaveText('Shared');
   await expect(page.locator('#workspace-name')).toHaveText('My workspace');
   await expect(page.locator('#workspace-visibility')).toHaveText('Private');
   await other.reload();
-  await expect(other.locator('#workspace-name')).toHaveText('TestCraft');
+  await expect(other.locator('#workspace-name')).toHaveText('TestCraft workspace');
   await expect(other.locator('#workspace-visibility')).toHaveText('Shared');
   await page.locator('#new-button').click();
   await page.locator('#name').fill('Unsaved personal case');
@@ -120,7 +152,7 @@ test('tabs retain independent workspaces and switching protects drafts and clear
   await page.evaluate(() => { location.hash = 'main/evaluations'; });
   await expect(page.locator('#evaluation-dialog')).toBeHidden();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
-  await expect(page.locator('#workspace-name')).toHaveText('TestCraft');
+  await expect(page.locator('#workspace-name')).toHaveText('TestCraft workspace');
   await expect(page.locator('#workspace-visibility')).toHaveText('Shared');
   await other.close();
 });
@@ -292,7 +324,7 @@ test('cancelled validation cannot overwrite a newer saved key and checking preve
 
 test.describe('admin', () => {
   test.use({ githubId: 1 });
-  test('admins manage TestCraft and their personal space separately', async ({ page }) => {
+  test('admins manage TestCraft and load its current suite privately with only two Actions', async ({ page, generationCalls }) => {
     await page.goto('/');
     await expect(page.locator('#new-button')).toBeVisible();
     await page.locator('#library-actions-toggle').click();
@@ -305,6 +337,25 @@ test.describe('admin', () => {
     await page.locator('#workspace-switcher').selectOption('personal');
     await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
     await expect(page.locator('#new-button')).toBeVisible();
+    await page.locator('#library-actions-toggle').click();
+    await expect(page.locator('#library-actions-menu button:visible')).toHaveText(['Load TestCraft suite', 'Clear workspace']);
+    await page.getByRole('button', { name: 'Load TestCraft suite', exact: true }).click();
+    await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
+    await page.locator('#library-actions-toggle').click();
+    await page.getByRole('button', { name: 'Load TestCraft suite', exact: true }).click();
+    await expect(page.locator('#toast')).toContainText('Existing private edits are preserved');
+    await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
+    await page.locator('#library-actions-toggle').click();
+    await page.getByRole('button', { name: 'Clear workspace', exact: true }).click();
+    await expect(page.locator('#clear-workspace-dialog')).toBeVisible();
+    await page.locator('#confirm-clear-workspace').click();
+    await expect(page.locator('#evaluation-rows tr')).toHaveCount(0);
+    await page.locator('#library-actions-toggle').click();
+    await page.getByRole('button', { name: 'Load TestCraft suite', exact: true }).click();
+    await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
+    await page.locator('#workspace-switcher').selectOption('main');
+    await expect(page.locator('#evaluation-rows tr')).toHaveCount(12);
+    expect(generationCalls).toHaveLength(0);
   });
 });
 

@@ -4,15 +4,15 @@
 
 Sign in with GitHub, then select **My workspace** to edit exercises. The **TestCraft** workspace is read-only for collaborators, including its official history. Running those definitions creates private results in My workspace without copying the definitions. Reruns use the current source definitions and preserve earlier evidence.
 
-Check the workspace bar above the tabs before making changes: teal **TestCraft · Shared** identifies the shared library; blue **My workspace · Private** identifies your personal space. The permission text explains your access separately. Switch with the Workspace dropdown; when a collaborator creates a run from TestCraft, the bar changes to My workspace as the private results open.
+Check the workspace bar above the tabs before making changes: teal **TestCraft workspace · Shared** identifies the shared library; blue **My workspace · Private** identifies your personal space. The permission text explains your access separately. Switch with the Workspace dropdown; when a collaborator creates a run from TestCraft, the bar changes to My workspace as the private results open.
 
-Collaborators enter one OpenAI key in the UI for TestCraft generation and OpenAI grading. The key is never saved and must be entered again after refresh. Admins use configured server credentials and can maintain the main library. Actions loaders are available to collaborators in My workspace; the Actions menu is hidden in their TestCraft view. Admins retain Actions in both workspaces. Personal references and TestCraft references are separate namespaces. Live-suite copying and promotion requests are deferred.
+Collaborators enter one OpenAI key in the UI for TestCraft generation and OpenAI grading. The key is never saved and must be entered again after refresh. Admins use configured server credentials and can maintain the main library. In My workspace, both roles see only **Load TestCraft suite** and **Clear workspace** in Actions. Loading copies the current shared suites and evaluations, including empty suites and unfiled cases, without provider calls or run history. Repeat loads preserve private edits and add newly published cases; shared edits and deletions do not change existing copies. An empty shared library shows an error. The Actions menu is hidden in collaborators' TestCraft view; admins retain its template loaders. Personal references and TestCraft references are separate namespaces. Promotion requests are deferred.
 
 The Full collection in `src/evals/workshop.mjs` contains **156 evaluations in six suites**, each with **13–19 criteria that each check one property**. It is an input-only design: importing the module or using **Load Full Suite** creates no generated responses, grades, or runs. No live API calls were needed to develop these fixtures; endpoint contracts were inspected in the local API source and adapter.
 
 ## Basic collection
 
-Choose **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, each with 2–9 criteria and no rubric splitting. Choose **Load Full Suite** for the existing comprehensive collection. Both can coexist, and repeated loads preserve participant edits.
+An admin selects TestCraft and chooses **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, each with 2–9 criteria and no rubric splitting. Choose **Load Full Suite** for the existing comprehensive collection. Both can coexist. Participants select My workspace and choose **Actions → Load TestCraft suite** to copy the published collection; repeated loads preserve their edits.
 
 | Suite | Basic cases |
 | --- | --- |
@@ -45,7 +45,7 @@ You can create another run while earlier runs are active, including the same eva
 
 The Model summary below the run header compares model-graded, rule-based, hybrid, and total evaluation counts plus each model’s average score. Method counts refer to evaluations, not individual criteria. A hybrid evaluation counts only in Hybrid. Scores use 0.00–1.00 and show scored/total coverage; pending work and errors without scores are excluded. The summary stays across the whole run when filtering the results below it.
 
-To start over, choose **Actions → Clear workspace** in the evaluation library. Review the named suites, all evaluation counts (including unfiled items), and run history, then confirm. This permanently clears the current private workspace, including items hidden by filters. Active runs must finish first; changes made after review require a fresh confirmation. Cancel preserves everything. Load the workshop suite again to restore the original templates; previous edits and run evidence cannot be recovered.
+To start over, choose **Actions → Clear workspace** in the evaluation library. Review the named suites, all evaluation counts (including unfiled items), and run history, then confirm. This permanently clears the current private workspace, including items hidden by filters. Active runs must finish first; changes made after review require a fresh confirmation. Cancel preserves everything. Choose **Load TestCraft suite** again to copy the current shared library; previous private edits and run evidence cannot be recovered.
 
 | Suite | Evaluations | Focus | Attempts if every case is explicitly run |
 | --- | ---: | --- | ---: |

@@ -1,4 +1,5 @@
 import { test, expect } from './browser-fixtures.mjs';
+import { client } from './helpers.mjs';
 
 async function review(page) {
   await page.locator('#library-actions-toggle').click();
@@ -9,6 +10,8 @@ for (const width of [1280, 390]) test(`clear workspace reviews all contents and 
   await page.setViewportSize({ width, height: 850 });
   await page.goto('/');
   await expect(page.locator('#workspace')).toBeVisible();
+  const admin = await client(browserApp, { githubId: 1 });
+  expect((await admin.post('/api/workspaces/main/workshop-suite', {})).status).toBe(201);
   const info = await (await page.request.get('/api/session')).json();
   const scope = { ownerId: info.workspaceId, workshopId: 'browser-tests' };
   browserApp.store.createSuite({ name: '<img src=x onerror=alert(1)> Empty suite' }, scope);
@@ -37,7 +40,7 @@ for (const width of [1280, 390]) test(`clear workspace reviews all contents and 
   await expect(page.locator('#confirm-clear-workspace')).toBeDisabled();
   await page.locator('#cancel-clear-workspace').click();
   await page.locator('#library-actions-toggle').click();
-  await page.locator('#workshop-button').click();
+  await page.locator('#testcraft-suite-button').click();
   await expect(page.locator('#eval-count')).toHaveText('156');
   expect(generationCalls).toHaveLength(0);
 });

@@ -97,6 +97,13 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       if (req.method === 'GET' && url.pathname === '/api/workspace') return json(res, 200, store.workspaceSummary(scope));
       if (req.method === 'DELETE' && url.pathname === '/api/workspace') return json(res, 200, store.clearWorkspace(await readBody(req, 2048), scope));
+      if (req.method === 'POST' && url.pathname === '/api/testcraft-suite') {
+        const body = await readBody(req, 2048);
+        if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('TestCraft import expects an empty JSON object.');
+        if (scope.alias !== 'personal') throw new AppError('Load the TestCraft suite from My workspace.', 400);
+        const { created, ...result } = store.importTestcraft(sessions.resolveWorkspace(account, 'main'), scope);
+        return json(res, created ? 201 : 200, result);
+      }
       if (req.method === 'POST' && ['/api/workshop-suite', '/api/basic-workshop-suite'].includes(url.pathname)) {
         const body = await readBody(req, 2048);
         if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw new AppError('Workshop import expects an empty JSON object.');
@@ -127,6 +134,7 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
           return json(res, 200, { evaluations });
         }
         if (req.method === 'POST') return json(res, 201, store.create(validateEvaluationBody(await readBody(req)), scope));
+        if (req.method === 'DELETE') return json(res, 200, store.deleteEvaluations(await readBody(req), scope));
       }
       const evaluationMatch = url.pathname.match(/^\/api\/evaluations\/([a-z0-9-]+)$/i);
       if (evaluationMatch) {

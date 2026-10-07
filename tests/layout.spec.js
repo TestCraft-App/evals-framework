@@ -78,7 +78,7 @@ for (const githubId of [1, 1001]) test.describe(`workspace controls for ${github
       await expect(page.locator('#workspace')).toBeVisible();
       const personal = workspace === 'personal';
       await expect(page.locator('.workspace-controls')).toHaveAttribute('data-workspace', workspace);
-      await expect(page.locator('#workspace-name')).toHaveText(personal ? 'My workspace' : 'TestCraft');
+      await expect(page.locator('#workspace-name')).toHaveText(personal ? 'My workspace' : 'TestCraft workspace');
       await expect(page.locator('#workspace-visibility')).toHaveText(personal ? 'Private' : 'Shared');
       await expect(page.locator('.workspace-controls')).toHaveCSS('background-color', personal ? 'rgb(239, 245, 255)' : 'rgb(237, 248, 245)');
       await expect(page.locator('.workspace-controls')).toHaveCSS('border-left-color', personal ? 'rgb(49, 94, 168)' : 'rgb(20, 125, 115)');
@@ -87,7 +87,7 @@ for (const githubId of [1, 1001]) test.describe(`workspace controls for ${github
       await expect(page.locator(personal ? '#workspace-shared-icon' : '#workspace-personal-icon')).toBeHidden();
       await expect(page.locator('#workspace-announcement')).toHaveAttribute('aria-live', 'polite');
       await expect(page.locator('#workspace-announcement')).toHaveAttribute('aria-atomic', 'true');
-      await expect(page.locator('#workspace-announcement')).toHaveText(personal ? 'My workspace · Private' : 'TestCraft · Shared');
+      await expect(page.locator('#workspace-announcement')).toHaveText(personal ? 'My workspace · Private' : 'TestCraft workspace · Shared');
       const contrasts = await page.locator('.workspace-controls').evaluate(bar => {
         const luminance = color => {
           const channels = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
@@ -124,7 +124,7 @@ for (const githubId of [1, 1001]) test.describe(`workspace controls for ${github
       await expect(page.locator('#evaluations-tab')).toBeFocused();
       await page.getByRole('tab', { name: /^Runs/ }).click();
       await expect(page.locator('.workspace-controls')).toBeVisible();
-      await expect(page.locator('#workspace-name')).toHaveText(personal ? 'My workspace' : 'TestCraft');
+      await expect(page.locator('#workspace-name')).toHaveText(personal ? 'My workspace' : 'TestCraft workspace');
       await page.getByRole('tab', { name: /^Evaluations/ }).click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(2);
       await page.screenshot({ path: test.info().outputPath(workspace + '-workspace-controls.png'), fullPage: true });

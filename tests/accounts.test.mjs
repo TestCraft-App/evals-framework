@@ -102,6 +102,7 @@ test('workspace permissions cover every mutation and never grant admins access t
     for (const [method, path, body] of [
       ['POST', '/evaluations', definition], ['PUT', '/evaluations/' + evaluation.id, { ...evaluation, revision: 1 }],
       ['PATCH', '/evaluations/' + evaluation.id, { name: 'changed', revision: 1 }], ['DELETE', '/evaluations/' + evaluation.id, {}],
+      ['DELETE', '/evaluations', { evaluationIds: [evaluation.id] }],
       ['POST', '/evaluations/' + evaluation.id + '/duplicate', {}], ['POST', '/suites', { name: 'blocked' }],
       ['PUT', '/suites/' + suite.id, { name: 'changed', revision: 1 }], ['DELETE', '/suites/' + suite.id, {}],
       ['POST', '/workshop-suite', {}], ['POST', '/basic-workshop-suite', {}], ['DELETE', '/workspace', {}], ['DELETE', '/runs/unknown', {}],
@@ -112,6 +113,96 @@ test('workspace permissions cover every mutation and never grant admins access t
     assert.equal((await collaborator.post('/api/evaluations', { ...definition, suiteId: suite.id })).status, 404);
     assert.equal((await collaborator.post(main + '/runs', { ...runConfig, evaluationIds: [evaluation.id] })).status, 400);
     assert.equal((await collaborator.post(main + '/runs', { ...runConfig, evaluationIds: [own.id], openAiApiKey: 'personal' })).status, 404);
+  } finally { await app.shutdown(); }
+});
+
+test('loading TestCraft copies current suites and unfiled definitions privately without history or provider calls', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', env: { ADMIN_GITHUB_IDS: '1' }, fetchImpl: async () => { throw new Error('Import must not call providers.'); } }));
+  try {
+    const admin = await client(app, { githubId: 1 }), collaborator = await client(app, { githubId: 1001 }), other = await client(app, { githubId: 1002 });
+    const suite = await (await admin.post(main + '/suites', { name: 'Current published suite' })).json();
+    const empty = await (await admin.post(main + '/suites', { name: 'Empty published suite' })).json();
+    const source = await (await admin.post(main + '/evaluations', { ...definition, name: 'Current published case', suiteId: suite.id })).json();
+    const unfiled = await (await admin.post(main + '/evaluations', { ...definition, name: 'Unfiled published case' })).json();
+    const mainScope = { ownerId: app.store.db.prepare("SELECT id FROM workspaces WHERE kind='main'").get().id, workshopId: 'workshop' };
+    app.store.saveRun({ id: 'official-history', status: 'completed', createdAt: '2025-01-01T00:00:00Z', items: [{ evaluationId: source.id, evaluation: source, status: 'passed', score: 1, events: [] }] }, mainScope);
+    const mainBefore = app.store.workspaceSummary(mainScope);
+    const own = await (await collaborator.post('/api/evaluations', { ...definition, name: 'Private original' })).json();
+    for (const user of [admin, collaborator]) {
+      const response = await user.post('/api/workspaces/personal/testcraft-suite', {});
+      assert.equal(response.status, 201);
+      const imported = await response.json();
+      assert.equal(imported.suites.length, 2);
+      assert.equal(imported.evaluations.length, 2);
+      const copy = imported.evaluations.find(item => item.sourceEvaluationId === source.id);
+      const copiedSuite = imported.suites.find(item => item.sourceSuiteId === suite.id);
+      assert.notEqual(copy.id, source.id);
+      assert.notEqual(copiedSuite.id, suite.id);
+      assert.equal(copy.suiteId, copiedSuite.id);
+      assert.equal(copy.name, source.name);
+      assert.equal(copy.revision, 1);
+      assert.deepEqual(copy.criteria, source.criteria);
+      assert.equal(imported.evaluations.find(item => item.sourceEvaluationId === unfiled.id).suiteId, '');
+      assert.ok(imported.suites.some(item => item.sourceSuiteId === empty.id));
+      assert.deepEqual((await user.get('/api/runs')).runs, []);
+      assert.equal((await user.request(main + '/evaluations/' + copy.id)).status, 404);
+    }
+    assert.deepEqual(app.store.workspaceSummary(mainScope), mainBefore);
+    assert.equal((await collaborator.get('/api/evaluations')).evaluations.find(item => item.id === own.id).name, own.name);
+    assert.deepEqual((await other.get('/api/evaluations')).evaluations, []);
+    assert.deepEqual((await other.get('/api/suites')).suites, []);
+  } finally { await app.shutdown(); }
+});
+
+test('TestCraft reloads preserve private edits, add published cases, and restore deleted copies', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', env: { ADMIN_GITHUB_IDS: '1' } }));
+  try {
+    const admin = await client(app, { githubId: 1 }), user = await client(app, { githubId: 1001 });
+    const suite = await (await admin.post(main + '/suites', { name: 'Published' })).json();
+    const source = await (await admin.post(main + '/evaluations', { ...definition, suiteId: suite.id })).json();
+    const first = await (await user.post('/api/testcraft-suite', {})).json();
+    const copy = first.evaluations[0], copiedSuite = first.suites[0];
+    const edited = await (await user.request('/api/evaluations/' + copy.id, { method: 'PUT', body: JSON.stringify({ ...copy, name: 'Private edit' }) })).json();
+    assert.equal(edited.name, 'Private edit');
+    assert.equal((await user.request('/api/suites/' + copiedSuite.id, { method: 'PUT', body: JSON.stringify({ name: 'Private suite', revision: 1 }) })).status, 200);
+    assert.equal((await admin.request(main + '/evaluations/' + source.id, { method: 'PUT', body: JSON.stringify({ ...source, name: 'Updated published case' }) })).status, 200);
+    const repeat = await user.post('/api/testcraft-suite', {});
+    assert.equal(repeat.status, 200);
+    assert.deepEqual((await repeat.json()).evaluations, [edited]);
+    assert.equal((await user.get('/api/suites')).suites[0].name, 'Private suite');
+    const duplicate = await (await user.post('/api/evaluations/' + copy.id + '/duplicate', { name: 'Private variant' })).json();
+    assert.equal(duplicate.sourceEvaluationId, undefined);
+    const newCase = await (await admin.post(main + '/evaluations', { ...definition, name: 'New published case', suiteId: suite.id })).json();
+    assert.equal((await user.post('/api/testcraft-suite', {})).status, 201);
+    const cases = (await user.get('/api/evaluations')).evaluations;
+    assert.equal(cases.length, 3);
+    assert.equal(cases.find(item => item.sourceEvaluationId === newCase.id).suiteId, copiedSuite.id);
+    assert.equal((await user.request('/api/evaluations/' + copy.id, { method: 'DELETE' })).status, 200);
+    const restored = (await (await user.post('/api/testcraft-suite', {})).json()).evaluations.find(item => item.sourceEvaluationId === source.id);
+    assert.equal(restored.name, 'Updated published case');
+    assert.notEqual(restored.id, copy.id);
+    assert.notEqual(restored.reference, copy.reference);
+    assert.equal((await user.get('/api/evaluations')).evaluations.length, 3);
+  } finally { await app.shutdown(); }
+});
+
+test('TestCraft loading rejects empty sources, caller scopes, shared targets and invalid CSRF/origins', async () => {
+  const app = await listen(createApp({ dbPath: ':memory:', env: { ADMIN_GITHUB_IDS: '1' } }));
+  try {
+    const admin = await client(app, { githubId: 1 }), user = await client(app, { githubId: 1001 });
+    const empty = await user.post('/api/testcraft-suite', {});
+    assert.equal(empty.status, 409);
+    assert.deepEqual(await empty.json(), { error: 'The TestCraft workspace has no suites or evaluations to load.' });
+    for (const body of [null, [], { ownerId: admin.scope.ownerId }, { workshopId: 'another' }, { sourceWorkspace: 'personal' }]) assert.equal((await user.post('/api/testcraft-suite', body)).status, 400);
+    assert.equal((await admin.post(main + '/testcraft-suite', {})).status, 400);
+    assert.equal((await user.post(main + '/testcraft-suite', {})).status, 403);
+    assert.equal((await user.request('/api/workspaces/' + admin.scope.ownerId + '/testcraft-suite', { method: 'POST', body: '{}' })).status, 404);
+    for (const headers of [{ 'x-csrf-token': '' }, { 'x-csrf-token': admin.info.csrfToken }, { origin: 'https://untrusted.example' }]) {
+      assert.equal((await user.request('/api/testcraft-suite', { method: 'POST', body: '{}', headers })).status, 403);
+    }
+    assert.equal((await fetch(user.url + '/api/testcraft-suite', { method: 'POST', headers: { origin: user.url, 'content-type': 'application/json' }, body: '{}' })).status, 401);
+    assert.deepEqual((await user.get('/api/evaluations')).evaluations, []);
+    assert.deepEqual((await user.get('/api/suites')).suites, []);
   } finally { await app.shutdown(); }
 });
 

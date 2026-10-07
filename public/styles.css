@@ -204,6 +204,12 @@ html { scrollbar-gutter: stable; }
 @media(max-width:520px){#run-detail .run-top{padding:16px}.model-summary{margin:0 16px 8px;padding:12px}.detail-filters{padding:16px 16px 0}.detail-count{padding:12px 16px}.detail-table-scroll{margin:0 16px 16px}.criterion-panel{max-width:calc(100vw - 100px);padding:14px}.detail-table .detail-expansion>td{background:#f8faf9}}
 
 .eval-action{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:36px}.evaluations-table{min-width:1040px;table-layout:fixed}.evaluations-table tbody tr:focus-within{background:#f0f7f4}
+.evaluations-table .eval-select-column{width:44px}.evaluations-table .eval-select-cell{padding-inline:12px;text-align:center}
+.evaluations-table .eval-select-cell input{width:16px;height:16px;margin:0;vertical-align:middle}
+.evaluations-table tbody tr.selected{background:#edf7f4}
+.library-footer{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.library-footer #library-selected-count{margin-left:auto}
+#delete-library-items{max-height:200px;overflow-y:auto;padding-left:20px;overflow-wrap:anywhere}
+.table-card .section-heading{flex-wrap:wrap}.table-card .section-heading>.actions{flex-wrap:wrap}
 
 /* Leave room for the full text line inside fixed-height filter controls. */
 .filters select{padding-block:0;line-height:normal}

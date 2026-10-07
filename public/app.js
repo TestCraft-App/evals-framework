@@ -12,6 +12,7 @@ const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
+let librarySelection = new Set();
 let workspaceReview = null, clearingWorkspace = false;
 let session = null, sessionTimer, sessionSetup;
 let activeWorkspace = 'main', personalKey = '', acceptedHash = '', runSourceWorkspace = null;
@@ -28,7 +29,7 @@ function updateKey(value) {
 function applyWorkspaceControls() {
   const personal = activeWorkspace === 'personal';
   document.querySelector('.workspace-controls').dataset.workspace = activeWorkspace;
-  $('workspace-name').textContent = personal ? 'My workspace' : 'TestCraft';
+  $('workspace-name').textContent = personal ? 'My workspace' : 'TestCraft workspace';
   $('workspace-visibility').textContent = personal ? 'Private' : 'Shared';
   $('workspace-shared-icon').toggleAttribute('hidden', personal);
   $('workspace-personal-icon').toggleAttribute('hidden', !personal);
@@ -41,7 +42,8 @@ function applyWorkspaceControls() {
   $('user-menu-toggle').title = 'User menu: ' + session.user.login;
   $('github-login').hidden = true;
   $('open-api-key').hidden = session.user.role === 'admin';
-  for (const [id, label] of [['example-button', 'Load example'], ['basic-workshop-button', 'Load Basic Suite'], ['workshop-button', 'Load Full Suite']]) $(id).textContent = label + (canWriteWorkspace() ? '' : ' into My workspace');
+  for (const id of ['example-button', 'basic-workshop-button', 'workshop-button']) $(id).hidden = personal;
+  $('testcraft-suite-button').hidden = !personal;
   document.querySelector('.brand').href = '#' + activeWorkspace + '/evaluations';
   document.querySelector('.back-to-runs').href = '#' + activeWorkspace + '/runs';
 }
@@ -82,7 +84,7 @@ function error(message) { $('app-error').textContent = message; $('app-error').h
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3000); }
 async function api(path, options) {
   const requestSession = session;
-  if (/^\/api\/(?:evaluations|suites|runs|workspace|workshop-suite|basic-workshop-suite)(?:[/?]|$)/.test(path)) path = resourcePath(path);
+  if (/^\/api\/(?:evaluations|suites|runs|workspace|workshop-suite|basic-workshop-suite|testcraft-suite)(?:[/?]|$)/.test(path)) path = resourcePath(path);
   const mutation = options?.method && !['GET', 'HEAD'].includes(options.method);
   const res = await fetch(path, { ...options, credentials: 'same-origin', headers: { ...(options ? { 'content-type': 'application/json' } : {}), ...(session && mutation ? { 'x-csrf-token': session.csrfToken } : {}) } });
   let body;
@@ -99,6 +101,7 @@ function showConnecting() {
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
+  librarySelection.clear();
   inlineName = null; duplicatingEvaluation = false;
   suiteDraft = null; savingSuite = false; closeSuiteEditor(false);
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
@@ -152,16 +155,20 @@ function visibleEvaluations() {
 }
 function renderLibrary() {
   $('eval-count').textContent = evaluations.length;
+  const available = new Set(evaluations.map(e => e.id));
+  for (const id of librarySelection) if (!canWriteWorkspace() || !available.has(id)) librarySelection.delete(id);
+  document.querySelectorAll('.eval-select-column, .eval-select-cell').forEach(el => { el.hidden = !canWriteWorkspace(); });
   const visible = visibleEvaluations().filter(e => e.id !== inlineName?.record.id);
   if (inlineName) visible.unshift(inlineName.record);
   const focused = document.activeElement?.id === 'duplicate-name', selection = focused ? [$('duplicate-name').selectionStart, $('duplicate-name').selectionEnd] : null;
   renderingLibrary = true;
-  $('evaluation-rows').innerHTML = visible.map(e => '<tr><td class="evaluation-id">' + escape(e.reference || '—') + '</td>'
+  $('evaluation-rows').innerHTML = visible.map(e => '<tr>' + (canWriteWorkspace() ? '<td class="eval-select-cell"><input type="checkbox" data-library-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (librarySelection.has(e.id) ? ' checked' : '') + '></td>' : '') + '<td class="evaluation-id">' + escape(e.reference || '—') + '</td>'
     + '<td>' + (e.id === inlineName?.record.id ? inlineNameMarkup() : '<button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button>') + '</td>'
     + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(endpoint(e)) + '</td>'
     + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
-  $('evaluation-rows').querySelectorAll('td:not(:nth-child(2)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
+  $('evaluation-rows').querySelectorAll('td:not(.eval-select-cell):not(:has(.eval-name, .inline-eval-name)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
+  updateLibrarySelection();
   renderingLibrary = false;
   document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = duplicatingEvaluation; });
   if (focused && $('duplicate-name')) { $('duplicate-name').focus(); $('duplicate-name').setSelectionRange(...selection); }
@@ -169,6 +176,24 @@ function renderLibrary() {
   $('empty-library').hidden = visible.length > 0;
   $('empty-library').querySelector('h3').textContent = evaluations.length ? 'No evaluations match these filters.' : 'Your first evaluation starts here.';
   $('filtered-count').textContent = visible.length + ' of ' + evaluations.length + ' evaluations';
+}
+function updateLibrarySelection() {
+  const checkboxes = [...$('evaluation-rows').querySelectorAll('[data-library-select]')];
+  const selected = checkboxes.filter(el => librarySelection.has(el.dataset.librarySelect)).length;
+  $('library-select-all').checked = !!checkboxes.length && selected === checkboxes.length;
+  $('library-select-all').indeterminate = selected > 0 && selected < checkboxes.length;
+  $('library-select-all').disabled = !checkboxes.length || deletingLibrary;
+  for (const checkbox of checkboxes) {
+    checkbox.checked = librarySelection.has(checkbox.dataset.librarySelect); checkbox.disabled = deletingLibrary;
+    checkbox.closest('tr').classList.toggle('selected', checkbox.checked);
+  }
+  const count = librarySelection.size;
+  $('delete-selected-evaluations').hidden = !canWriteWorkspace() || !count;
+  $('delete-selected-evaluations').disabled = deletingLibrary;
+  $('delete-selected-evaluations').textContent = 'Delete selected (' + count + ')';
+  $('library-selected-count').textContent = count ? count + ' selected' : '';
+  $('clear-library-selection').hidden = !count;
+  $('clear-library-selection').disabled = deletingLibrary;
 }
 function setLanguages(preferred = $('language').value) {
   $('language').innerHTML = languages[$('framework').value].map(value => '<option value="' + value + '">' + names[value] + '</option>').join('');
@@ -467,26 +492,34 @@ async function duplicateEvaluation(id) {
   }
 }
 function askDeleteLibrary(kind, record) {
-  if (!record || deletingLibrary || savingEvaluation) return;
+  if (!canWriteWorkspace() || !record || deletingLibrary || savingEvaluation) return;
   libraryDeleteTarget = { kind, record, session };
-  $('delete-library-title').textContent = kind === 'suite' ? 'Delete suite?' : 'Delete evaluation?';
-  $('delete-library-name').textContent = record.name;
-  $('delete-library-description').textContent = kind === 'suite' ? 'Only this empty suite is removed; all runs remain saved.' : 'This definition will be permanently removed. Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
-  $('delete-library-error').textContent = ''; $('confirm-delete-library').textContent = kind === 'suite' ? 'Delete suite' : 'Delete evaluation';
+  const bulk = kind === 'evaluations';
+  $('delete-library-title').textContent = bulk ? 'Delete selected evaluations?' : kind === 'suite' ? 'Delete suite?' : 'Delete evaluation?';
+  $('delete-library-name').textContent = bulk ? record.length + ' selected ' + (record.length === 1 ? 'evaluation' : 'evaluations') + ', including any hidden by filters.' : record.name;
+  $('delete-library-items').hidden = !bulk;
+  $('delete-library-items').replaceChildren(...(bulk ? record.map(e => {
+    const item = document.createElement('li'); item.textContent = (e.reference ? e.reference + ' · ' : '') + e.name; return item;
+  }) : []));
+  $('delete-library-description').textContent = kind === 'suite' ? 'Only this empty suite is removed; all runs remain saved.' : (bulk ? 'These definitions will be permanently removed. If any selected evaluation has an active run or is no longer available, nothing will be deleted. ' : 'This definition will be permanently removed. ') + 'Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
+  $('delete-library-error').textContent = ''; $('confirm-delete-library').textContent = bulk ? 'Delete ' + record.length + (record.length === 1 ? ' evaluation' : ' evaluations') : kind === 'suite' ? 'Delete suite' : 'Delete evaluation';
   $('delete-library-dialog').showModal(); lockBody(); $('cancel-delete-library').focus();
 }
 async function deleteLibrary(event) {
   event.preventDefault(); const target = libraryDeleteTarget;
   if (!target || target.session !== session || deletingLibrary) return;
   deletingLibrary = true; $('confirm-delete-library').disabled = true; $('cancel-delete-library').disabled = true; $('delete-library-error').textContent = '';
+  updateLibrarySelection();
   let deleted = false;
   try {
-    await api('/api/' + (target.kind === 'suite' ? 'suites' : 'evaluations') + '/' + target.record.id, { method: 'DELETE' });
+    const bulk = target.kind === 'evaluations';
+    await api(bulk ? '/api/evaluations' : '/api/' + (target.kind === 'suite' ? 'suites' : 'evaluations') + '/' + target.record.id, { method: 'DELETE', ...(bulk ? { body: JSON.stringify({ evaluationIds: target.record.map(e => e.id) }) } : {}) });
     deleted = true; $('delete-library-dialog').close();
     if (target.kind === 'evaluation' && editing?.id === target.record.id) $('evaluation-dialog').close();
-    await loadLibrary(); toast(target.kind === 'suite' ? 'Suite deleted.' : 'Evaluation deleted. Previous runs are unchanged.');
+    if (bulk) for (const record of target.record) librarySelection.delete(record.id);
+    await loadLibrary(); toast(bulk ? target.record.length + (target.record.length === 1 ? ' evaluation deleted.' : ' evaluations deleted.') + ' Previous runs are unchanged.' : target.kind === 'suite' ? 'Suite deleted.' : 'Evaluation deleted. Previous runs are unchanged.');
   } catch (e) { if (target.session === session) { if (deleted) error('Deleted. Reload to refresh the library.'); else $('delete-library-error').textContent = e.message; } }
-  finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; } }
+  finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; updateLibrarySelection(); } }
 }
 async function reviewWorkspace() {
   closeLibraryActions(true);
@@ -518,7 +551,7 @@ async function clearWorkspace(event) {
     closeRunDraft(); runDetail.reset(); $('run-detail').replaceChildren();
     for (const id of ['search', 'filter-suite', 'filter-type', 'filter-method', 'run-search', 'run-status', 'run-model']) $(id).value = '';
     renderSuites(); renderLibrary(); renderRunList(); $('runs-count').textContent = '0';
-    $('clear-workspace-dialog').close(); toast('Workspace cleared. You can load the workshop templates again.');
+    $('clear-workspace-dialog').close(); toast(activeWorkspace === 'personal' ? 'Workspace cleared. You can load the TestCraft suite again.' : 'Workspace cleared. You can load the workshop templates again.');
   } catch (e) { if (review.session === session) $('clear-workspace-error').textContent = e.message; }
   finally { if (review.session === session) { clearingWorkspace = false; $('cancel-clear-workspace').disabled = false; $('confirm-clear-workspace').disabled = false; } }
 }
@@ -531,6 +564,19 @@ async function loadWorkshop(basic = false) {
     toast('Workshop templates ready. Open Runs and choose Create Run to generate and evaluate with TestCraft.');
   } catch (e) { if (requestSession === session) error(e.message); }
   finally { $('workshop-button').disabled = false; $('basic-workshop-button').disabled = false; }
+}
+async function loadTestcraftSuite() {
+  if (activeWorkspace !== 'personal' || $('testcraft-suite-button').disabled) return;
+  const requestSession = session; $('testcraft-suite-button').disabled = true; error('');
+  try {
+    await api('/api/testcraft-suite', { method: 'POST', body: '{}' });
+    if (requestSession !== session) return;
+    await loadLibrary();
+    if (requestSession !== session) return;
+    $('filter-suite').value = ''; renderLibrary();
+    toast('TestCraft suite loaded into My workspace. Existing private edits are preserved.');
+  } catch (e) { if (requestSession === session) error(e.message); }
+  finally { $('testcraft-suite-button').disabled = false; }
 }
 function closeRunDraft() {
   runDraftRevision++; catalogRequest++; runSelection.clear(); runCatalog = null; runCatalogs.clear(); catalogLoads.clear(); creatingRun = false;
@@ -868,6 +914,7 @@ document.querySelector('.library-actions').addEventListener('focusout', event =>
 $('example-button').addEventListener('click', () => { closeLibraryActions(); void personalLoader(() => openForm(true)).catch(e => error(e.message)); });
 $('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void personalLoader(() => void loadWorkshop(true)).catch(e => error(e.message)); });
 $('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void personalLoader(() => void loadWorkshop()).catch(e => error(e.message)); });
+$('testcraft-suite-button').addEventListener('click', () => { closeLibraryActions(true); void loadTestcraftSuite(); });
 $('clear-workspace-button').addEventListener('click', reviewWorkspace);
 $('clear-workspace-form').addEventListener('submit', clearWorkspace);
 $('cancel-clear-workspace').addEventListener('click', () => { if (!clearingWorkspace) $('clear-workspace-dialog').close(); });
@@ -947,10 +994,28 @@ $('criteria-list').addEventListener('click', event => {
 $('evaluation-rows').addEventListener('input', event => {
   if (event.target.id === 'duplicate-name' && inlineName) inlineName.text = event.target.value;
 });
+$('evaluation-rows').addEventListener('change', event => {
+  const id = event.target.dataset.librarySelect;
+  if (!id || !canWriteWorkspace() || deletingLibrary) return;
+  if (event.target.checked) librarySelection.add(id); else librarySelection.delete(id);
+  updateLibrarySelection();
+});
+$('library-select-all').addEventListener('change', () => {
+  if (!canWriteWorkspace() || deletingLibrary) return;
+  for (const checkbox of $('evaluation-rows').querySelectorAll('[data-library-select]')) {
+    if ($('library-select-all').checked) librarySelection.add(checkbox.dataset.librarySelect); else librarySelection.delete(checkbox.dataset.librarySelect);
+  }
+  updateLibrarySelection();
+});
+$('clear-library-selection').addEventListener('click', () => { if (!deletingLibrary) { librarySelection.clear(); updateLibrarySelection(); $('library-select-all').focus(); } });
+$('delete-selected-evaluations').addEventListener('click', async () => {
+  if (!canWriteWorkspace() || deletingLibrary || !librarySelection.size || !await saveDuplicateName()) return;
+  askDeleteLibrary('evaluations', evaluations.filter(e => librarySelection.has(e.id)));
+});
 $('evaluation-rows').addEventListener('focusout', event => {
   // Table actions save the name in their click handler before using the row.
   // Replacing the row during pointer-down would discard that pending click.
-  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation]')) return;
+  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation], [data-library-select], #library-select-all, #delete-selected-evaluations, #clear-library-selection')) return;
   if (!renderingLibrary && event.target.id === 'duplicate-name' && !event.target.parentElement.contains(event.relatedTarget)) void saveDuplicateName();
 });
 $('evaluation-rows').addEventListener('click', event => {
