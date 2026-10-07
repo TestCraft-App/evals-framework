@@ -24,7 +24,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 780 
     await page.keyboard.press('ArrowDown');
     await expect(page.locator('#user-menu-toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('#private-badge')).toContainText('user-1 · admin');
-    await expect(page.locator('#extension-link')).toBeFocused();
+    await expect(page.locator('#open-requests')).toBeFocused();
+    await expect(page.locator('#request-menu-label')).toHaveText('Evaluation requests');
     await expect(page.locator('#logout')).toBeVisible();
     await expect(page.locator('#open-api-key')).toBeHidden();
     await expect(page.getByRole('heading', { name: 'Workspace', exact: true })).toHaveCount(0);
@@ -41,6 +42,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 780 
     await expect(page.locator('#user-menu-panel')).toBeHidden();
     await expect(page.locator('#user-menu-toggle')).toBeFocused();
     await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#open-requests')).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(page.locator('#extension-link')).toBeFocused();
     await page.keyboard.press('Tab');

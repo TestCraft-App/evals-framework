@@ -18,23 +18,28 @@ export class Engine {
     return ids.map(id => { const value = this.store.evaluation(id, scope); if (!value) throw new AppError('Evaluation not found.', 404); return { ...value, threshold: PASS_THRESHOLD }; });
   }
   start(ids, scope, settings, execution) {
+    return this.startSnapshots(this.evaluationsForRun(ids, scope), scope, settings, execution);
+  }
+  startSnapshots(snapshots, scope, settings, execution) {
+    const ids = snapshots.map(evaluation => evaluation.id);
     if (!this.accepting) throw new AppError('The server is preparing an update. Existing runs will finish; try starting a new run shortly.', 503);
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new AppError('Select between 1 and 50 distinct evaluations.');
     const generationModels = settings ? settings.generationModels || [settings.generationModel] : [];
     const itemCount = ids.length * (settings ? generationModels.length : 1);
     if (itemCount > 100) throw new AppError('Select at most 100 evaluation/model combinations per run.');
     if (this.queue.length + this.active + itemCount > 100) throw new AppError('Run queue is full. Wait for the active runs to finish.', 429);
-    let evaluations = this.evaluationsForRun(ids, scope);
+    let evaluations = snapshots.map(evaluation => ({ ...evaluation, threshold: PASS_THRESHOLD }));
     if (settings) evaluations = generationModels.flatMap(model => evaluations.map(evaluation => {
       const effective = { ...evaluation, source: 'testcraft_api', model, judgeModel: settings.graderModel, actualOutput: '' };
       try { validateEvaluation({ ...effective, criteria: normalizeCriteria(effective) }); }
       catch (error) { if (error instanceof AppError) throw new AppError(`Edit "${evaluation.name}": ${error.message}`); throw error; }
       return effective;
     }));
-    evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None' }));
+    evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteName ?? (evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None') }));
     const run = { id: randomUUID(), gradingVersion: GRADING_VERSION, status: 'queued', createdAt: new Date().toISOString(), items: evaluations.map(evaluation => ({ id: randomUUID(), gradingVersion: GRADING_VERSION, evaluationId: evaluation.id, evaluation, status: 'queued', score: null, output: null, checks: [], events: [] })) };
     if (settings) { const { description, ...configuration } = settings; run.description = description; run.settings = configuration; }
     const destination = execution?.destination || scope;
+    if (execution?.request) run.request = execution.request;
     if (execution) {
       run.sourceWorkspace = { id: scope.ownerId, alias: scope.alias, name: scope.name };
       run.resultWorkspace = { id: destination.ownerId, alias: destination.alias, name: destination.name };

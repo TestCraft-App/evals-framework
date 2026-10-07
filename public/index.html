@@ -16,6 +16,7 @@
         <button id="user-menu-toggle" type="button" class="button" aria-expanded="false" aria-controls="user-menu-panel" aria-label="User menu"><span id="user-menu-name"></span><svg class="actions-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
         <div id="user-menu-panel" class="user-menu-panel" hidden>
           <p id="private-badge" class="user-menu-identity"></p>
+          <button id="open-requests" type="button"><span id="request-menu-label">Evaluation requests</span> <span id="request-menu-badge" class="request-count" hidden></span></button>
           <button id="open-api-key" type="button" hidden>API key</button>
           <a id="extension-link" href="https://home.testcraft.app/" target="_blank" rel="noreferrer" title="Open TestCraft in a new tab">Extension ↗</a>
           <button id="logout" type="button">Sign out</button>
@@ -87,6 +88,7 @@
       </section>
       <section id="run-detail-page" hidden><a class="back-to-runs" href="#runs">← Back to runs</a><div id="run-detail" class="run-detail"></div></section>
     </section>
+    <section id="requests-panel" aria-label="Evaluation requests" hidden></section>
     <footer class="app-footer">
       <div class="footer-meta">
         <span class="connection-status" id="connection">Connecting…</span>
@@ -95,6 +97,24 @@
     </footer>
   </main>
 
+  <dialog id="request-history-dialog" class="compact-dialog" aria-labelledby="request-history-title">
+    <div class="dialog-heading"><h2 id="request-history-title">Review history</h2><button id="close-request-history" type="button" class="icon-button" aria-label="Close review history">×</button></div>
+    <div class="compact-body"><ol id="request-history-events" class="request-history"></ol></div>
+  </dialog>
+  <dialog id="request-dialog" class="compact-dialog" aria-labelledby="request-dialog-title">
+    <form id="request-submit-form">
+      <div class="dialog-heading"><h2 id="request-dialog-title">Request inclusion</h2></div>
+      <div class="compact-body"><p id="request-submit-note"></p><div id="request-submit-list" class="request-selection-list"></div><label>Description<textarea id="request-submit-description" required maxlength="2000" rows="4"></textarea></label><p id="request-submit-error" role="alert" class="session-error"></p></div>
+      <div class="dialog-footer"><button id="cancel-request" type="button" class="button">Cancel</button><button id="send-request" type="submit" class="button primary">Send request</button></div>
+    </form>
+  </dialog>
+  <dialog id="request-decision-dialog" class="compact-dialog" aria-labelledby="request-decision-title">
+    <form id="request-decision-form">
+      <div class="dialog-heading"><h2 id="request-decision-title"></h2></div>
+      <div class="compact-body"><p id="request-decision-summary"></p><label id="request-comment-label">Comment<textarea id="request-comment" maxlength="2000" rows="4"></textarea></label><p id="request-decision-error" role="alert" class="session-error"></p></div>
+      <div class="dialog-footer"><button id="cancel-request-decision" type="button" class="button">Cancel</button><button id="confirm-request-decision" type="submit" class="button primary">Confirm</button></div>
+    </form>
+  </dialog>
   <dialog id="api-key-dialog" class="compact-dialog" aria-labelledby="api-key-title" aria-describedby="api-key-description">
     <form id="api-key-form">
       <div class="dialog-heading"><h2 id="api-key-title">OpenAI API key</h2><button id="close-api-key" type="button" class="icon-button" aria-label="Close API key">×</button></div>

@@ -1,4 +1,5 @@
 import { createRunDetail, scoreMarkup, evaluationFamily } from './run-detail.js';
+import { createRequests } from './requests.js';
 const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Automate tests', code_ideas: 'Automate test ideas', model_grade: 'Model-graded', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Not Contains', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
@@ -18,6 +19,7 @@ let session = null, sessionTimer, sessionSetup;
 let activeWorkspace = 'main', personalKey = '', acceptedHash = '', runSourceWorkspace = null;
 let validatingKey = false, keyRequest = 0, keyReturnFocus = null;
 let runEvaluations = [], runSuites = [];
+let reviewRunContext = null;
 const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('testcraft-account') : null;
 const routeHash = () => location.hash.replace(/^#(?:main|personal)\//, '#');
 const navigate = value => { location.hash = activeWorkspace + '/' + value.replace(/^#/, ''); };
@@ -47,7 +49,7 @@ function applyWorkspaceControls() {
   document.querySelector('.brand').href = '#' + activeWorkspace + '/evaluations';
   document.querySelector('.back-to-runs').href = '#' + activeWorkspace + '/runs';
 }
-function hasDraft() { return !!inlineName || !!suiteDraft || $('evaluation-dialog').open || $('create-run-dialog').open || ($('api-key-dialog').open && $('personal-api-key').value.trim() !== personalKey); }
+function hasDraft() { return requests.hasDraft() || !!inlineName || !!suiteDraft || $('evaluation-dialog').open || $('create-run-dialog').open || ($('api-key-dialog').open && $('personal-api-key').value.trim() !== personalKey); }
 async function changeWorkspace(alias) {
   const account = session;
   showConnecting(); activeWorkspace = alias; session = { ...account };
@@ -76,6 +78,11 @@ const criterionObjects = evaluation => {
 const draftMethod = () => $('method').value === 'test_count' ? 'test_count' : $('method').value === 'model_based' ? 'model_grade' : $('criterion-rule').value;
 const endpoint = e => e.type === 'code' && e.fromIdeas ? 'code_ideas' : e.type;
 const runDetail = createRunDetail({ root: $('run-detail'), getSuites: () => suites, getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, canDelete: canDeleteRun });
+const requests = createRequests({ api, getSession: () => session, inspect: inspectEvaluation, editLink: () => '#' + activeWorkspace + '/evaluations', openRun: openCreateRun, lockBody, toast, error,
+  onSubmitted: () => { librarySelection.clear(); updateLibrarySelection(); },
+  runOptions: { getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, endpoint, endpointLabel: e => names[endpoint(e)], method: e => evaluationMethod(e) } });
+$('user-menu-toggle').insertAdjacentHTML('beforeend', '<span id="request-user-badge" class="request-count" hidden></span>');
+$('delete-selected-evaluations').insertAdjacentHTML('afterend', '<button id="request-selected-evaluations" type="button" class="button" hidden>Request inclusion (0)</button>');
 function lockBody() { document.body.classList.toggle('modal-open', !!document.querySelector('dialog[open]')); }
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const badge = status => '<span class="badge ' + escape(status) + '">' + escape(names[status] || status) + '</span>';
@@ -95,6 +102,7 @@ async function api(path, options) {
   return body;
 }
 function showConnecting() {
+  requests.reset(); reviewRunContext = null;
   workspaceReview = null; clearingWorkspace = false; $('clear-workspace-dialog').close();
   closeLibraryActions();
   closeUserMenu(); $('api-key-dialog').close(); $('personal-api-key').value = '';
@@ -128,6 +136,7 @@ async function refreshSession() {
   if (!current.authenticated || current.workspaceId !== session?.workspaceId || current.user.role !== session.user.role) return connectWorkspace();
   // Preserve object identity so parallel responses from this workspace remain valid.
   Object.assign(session, current);
+  await requests.badge();
   scheduleSessionCheck();
 }
 async function loadLibrary() {
@@ -154,6 +163,7 @@ function visibleEvaluations() {
   }).sort((a, b) => (evalSort === 'reference' ? value(a) - value(b) : String(value(a)).localeCompare(String(value(b)))) * evalSortDirection || a.id.localeCompare(b.id));
 }
 function renderLibrary() {
+  document.body.classList.toggle('contributor-workspace', activeWorkspace === 'personal' && requests.canSubmit());
   $('eval-count').textContent = evaluations.length;
   const available = new Set(evaluations.map(e => e.id));
   for (const id of librarySelection) if (!canWriteWorkspace() || !available.has(id)) librarySelection.delete(id);
@@ -169,6 +179,10 @@ function renderLibrary() {
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
   $('evaluation-rows').querySelectorAll('td:not(.eval-select-cell):not(:has(.eval-name, .inline-eval-name)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
   updateLibrarySelection();
+  if (activeWorkspace === 'personal' && requests.canSubmit()) for (const row of $('evaluation-rows').rows) {
+    const id = row.querySelector('[data-inspect]')?.dataset.inspect, evaluation = evaluations.find(e => e.id === id);
+    if (evaluation) row.querySelector('.row-actions').insertAdjacentHTML('beforeend', '<button class="text-button eval-action" data-request-inclusion="' + escape(id) + '" title="Request inclusion" aria-label="Request inclusion for ' + escape(evaluation.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m3 3 18 9-18 9 4-9-4-9zm4 9h14"/></svg></button>');
+  }
   renderingLibrary = false;
   document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = duplicatingEvaluation; });
   if (focused && $('duplicate-name')) { $('duplicate-name').focus(); $('duplicate-name').setSelectionRange(...selection); }
@@ -191,6 +205,9 @@ function updateLibrarySelection() {
   $('delete-selected-evaluations').hidden = !canWriteWorkspace() || !count;
   $('delete-selected-evaluations').disabled = deletingLibrary;
   $('delete-selected-evaluations').textContent = 'Delete selected (' + count + ')';
+  $('request-selected-evaluations').hidden = activeWorkspace !== 'personal' || !requests.canSubmit() || !count;
+  $('request-selected-evaluations').disabled = deletingLibrary;
+  $('request-selected-evaluations').textContent = 'Request inclusion (' + count + ')';
   $('library-selected-count').textContent = count ? count + ' selected' : '';
   $('clear-library-selection').hidden = !count;
   $('clear-library-selection').disabled = deletingLibrary;
@@ -667,13 +684,15 @@ async function loadRunModels(useDefaults = false, force = false) {
   $('run-models-status').textContent = catalog.warning || '';
   $('retry-run-models').hidden = !catalog.warning; updateRunSubmit();
 }
-async function openCreateRun(sourceRun = null) {
+async function openCreateRun(sourceRun = null, request = null) {
   if (!session || !config || creatingRun) return;
   const draft = ++runDraftRevision;
+  reviewRunContext = request ? { id: request.id, submission: request.submission, version: request.version } : null;
   runEvaluations = []; runSuites = [];
   runSourceWorkspace = sourceRun?.sourceWorkspace?.alias || activeWorkspace;
   $('run-destination').textContent = 'Evaluations from ' + (runSourceWorkspace === 'main' ? 'TestCraft' : 'My workspace') + '. Results saved in ' + (session.user.role !== 'admin' || runSourceWorkspace === 'personal' ? 'My workspace (private)' : 'TestCraft (visible to everyone)') + '. ' + (session.user.role === 'admin' ? 'Uses server credentials.' : 'Uses your OpenAI key.');
   runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
+  if (request) $('run-destination').textContent = 'Request from ' + request.requester.login + ' · Submission ' + request.submission + '. Results visible only to admins. Uses server credentials.';
   $('generation-model-options').hidePopover();
   $('generation-model-options').replaceChildren();
   runModelDefaults = { generationModels: sourceRun?.settings?.generationModels || (sourceRun?.settings?.generationModel ? [sourceRun.settings.generationModel] : undefined), graderModel: sourceRun?.settings?.graderModel };
@@ -686,7 +705,8 @@ async function openCreateRun(sourceRun = null) {
   if ($('create-environment').value) void loadRunModels(true);
   try {
     const sourceAlias = runSourceWorkspace;
-    const [sourceEvaluations, sourceSuites] = await Promise.all([api(resourcePath('/api/evaluations', sourceAlias)), api(resourcePath('/api/suites', sourceAlias))]);
+    const submitted = request?.submissions.at(-1).evaluations;
+    const [sourceEvaluations, sourceSuites] = submitted ? [{ evaluations: submitted.map(entry => entry.evaluation) }, { suites: [...new Map(submitted.filter(entry => entry.suite).map(entry => [entry.suite.id, entry.suite])).values()] }] : await Promise.all([api(resourcePath('/api/evaluations', sourceAlias)), api(resourcePath('/api/suites', sourceAlias))]);
     if (draft !== runDraftRevision) return;
     runEvaluations = sourceEvaluations.evaluations; runSuites = sourceSuites.suites;
     $('create-eval-suite').innerHTML = '<option value="">All suites</option><option value="__unfiled">None</option>' + runSuites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
@@ -696,6 +716,7 @@ async function openCreateRun(sourceRun = null) {
       runSelection = new Set([...ids].filter(id => runEvaluations.some(e => e.id === id)).slice(0, 50));
       $('create-run-error').textContent = runSelection.size < ids.size ? 'Some evaluations are no longer available or exceed the 50-evaluation limit. Review the selection before creating the run.' : '';
     }
+    if (!sourceRun && request) runSelection = new Set(runEvaluations.slice(0, 50).map(e => e.id));
     renderRunEvaluations();
   }
   catch (e) { if (draft === runDraftRevision) $('create-run-error').textContent = e.message; }
@@ -722,9 +743,11 @@ async function submitRun(event) {
   setCreatingRun(true); $('create-run-error').textContent = '';
   try {
     if (session.user.role !== 'admin') body.openAiApiKey = personalKey;
-    const run = await api(resourcePath('/api/runs', runSourceWorkspace), { method: 'POST', body: JSON.stringify(body) });
+    const review = reviewRunContext;
+    if (review) { body.version = review.version; body.submission = review.submission; }
+    const run = await api(review ? '/api/evaluation-requests/' + review.id + '/runs' : resourcePath('/api/runs', runSourceWorkspace), { method: 'POST', body: JSON.stringify(body) });
     if (workspace !== session || draft !== runDraftRevision) return;
-    setCreatingRun(false); $('create-run-dialog').close(); location.hash = (run.resultWorkspace?.alias || activeWorkspace) + '/runs/' + run.id;
+    setCreatingRun(false); $('create-run-dialog').close(); location.hash = review ? 'requests/' + review.id + '/runs/' + run.id : (run.resultWorkspace?.alias || activeWorkspace) + '/runs/' + run.id;
     toast('Run created. Generation and grading continue in the backend.');
   } catch (e) {
     if (workspace === session && draft === runDraftRevision) $('create-run-error').textContent = e.message;
@@ -864,6 +887,14 @@ async function pollRunList(revision = runViewRevision) {
   }
 }
 async function route() {
+  const isRequests = location.hash === '#requests' || location.hash.startsWith('#requests/');
+  const wasRequests = acceptedHash === '#requests' || acceptedHash.startsWith('#requests/');
+  if (session && location.hash !== acceptedHash && (isRequests || wasRequests) && (requests.busy() || creatingRun || savingEvaluation || savingSuite || clearingWorkspace || inlineName?.pending || (hasDraft() && !confirm('Discard unsaved changes and leave this page?')))) { history.replaceState(null, '', acceptedHash); return; }
+  if (session && location.hash !== acceptedHash && (isRequests || wasRequests)) {
+    if (inlineName) finishInlineName(inlineName);
+    if (suiteDraft) closeSuiteEditor(false);
+    for (const id of ['request-dialog', 'request-decision-dialog', 'evaluation-dialog', 'create-run-dialog', 'inspect-evaluation', 'api-key-dialog']) $(id).close();
+  }
   const requested = location.hash.match(/^#(main|personal)\//)?.[1] || activeWorkspace;
   if (session && requested !== activeWorkspace) {
     if ((creatingRun || savingEvaluation || savingSuite || clearingWorkspace) || (hasDraft() && !confirm('Discard unsaved changes and switch workspaces?'))) {
@@ -871,12 +902,17 @@ async function route() {
     }
     acceptedHash = location.hash; await changeWorkspace(requested); return;
   }
-  if (session && !/^#(?:main|personal)\//.test(location.hash)) history.replaceState(null, '', '#' + activeWorkspace + '/' + (routeHash().slice(1) || 'evaluations'));
+  if (session && !isRequests && !/^#(?:main|personal)\//.test(location.hash)) history.replaceState(null, '', '#' + activeWorkspace + '/' + (routeHash().slice(1) || 'evaluations'));
   acceptedHash = location.hash;
   const revision = ++runViewRevision;
   clearTimeout(polling); runsRequest++; lastRunJson = null; pollFailures = 0;
   if (!session) return;
   const isRuns = routeHash().startsWith('#runs');
+  $('requests-panel').hidden = !isRequests;
+  document.querySelector('.workspace-controls').hidden = isRequests;
+  document.querySelector('.tabs').hidden = isRequests;
+  if (isRequests) { $('evaluations-panel').hidden = true; $('runs-panel').hidden = true; await requests.route(location.hash); return; }
+  void requests.route('');
   $('evaluations-panel').hidden = isRuns; $('runs-panel').hidden = !isRuns;
   $('evaluations-tab').setAttribute('aria-selected', String(!isRuns)); $('runs-tab').setAttribute('aria-selected', String(isRuns));
   $('evaluations-tab').tabIndex = isRuns ? -1 : 0; $('runs-tab').tabIndex = isRuns ? 0 : -1;
@@ -888,7 +924,11 @@ async function route() {
     if (revision !== runViewRevision) return;
     if (id) { await pollRun(id, revision); }
     else if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
-  } else await loadLibrary();
+  } else {
+    await loadLibrary();
+    const id = routeHash().match(/^#evaluations\/([a-z0-9-]+)$/i)?.[1];
+    if (id && revision === runViewRevision) { const evaluation = evaluations.find(e => e.id === id); if (evaluation) openForm(false, evaluation); else error('Evaluation no longer available. Remove or replace it when resubmitting.'); }
+  }
 }
 $('evaluation-form').addEventListener('submit', saveEvaluation);
 ['new-button','empty-create'].forEach(id => $(id).addEventListener('click', () => openForm()));
@@ -1015,7 +1055,7 @@ $('delete-selected-evaluations').addEventListener('click', async () => {
 $('evaluation-rows').addEventListener('focusout', event => {
   // Table actions save the name in their click handler before using the row.
   // Replacing the row during pointer-down would discard that pending click.
-  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation], [data-library-select], #library-select-all, #delete-selected-evaluations, #clear-library-selection')) return;
+  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation], [data-request-inclusion], [data-library-select], #library-select-all, #delete-selected-evaluations, #request-selected-evaluations, #clear-library-selection')) return;
   if (!renderingLibrary && event.target.id === 'duplicate-name' && !event.target.parentElement.contains(event.relatedTarget)) void saveDuplicateName();
 });
 $('evaluation-rows').addEventListener('click', event => {
@@ -1043,7 +1083,10 @@ document.addEventListener('click', async event => {
   if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
   if (el.dataset.rerun) void rerun(el.dataset.rerun);
+  if (el.dataset.requestInclusion) { if (inlineName && !await saveDuplicateName()) return; void requests.openSubmit(evaluations.filter(e => e.id === el.dataset.requestInclusion)).catch(e => error(e.message)); }
 });
+$('request-selected-evaluations').addEventListener('click', async () => { if (inlineName && !await saveDuplicateName()) return; void requests.openSubmit(evaluations.filter(e => librarySelection.has(e.id))).catch(e => error(e.message)); });
+$('open-requests').addEventListener('click', () => { closeUserMenu(); if (location.hash === '#requests') void route().catch(e => error(e.message)); else location.hash = 'requests'; });
 $('evaluations-tab').addEventListener('click', () => { navigate('evaluations'); });
 $('create-run').addEventListener('click', () => openCreateRun());
 $('create-run-form').addEventListener('submit', submitRun);
@@ -1104,16 +1147,16 @@ async function openWorkspace() {
   $('connection').textContent = '● Backend connected';
   $('setup-notice').hidden = true; error('');
   if (!config.llmReady && session.user.role === 'admin') { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
-  await Promise.all([loadLibrary(), loadRuns(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
+  await Promise.all([loadLibrary(), loadRuns(), requests.badge(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
   if (!session) return;
   $('session-status').hidden = true; $('workspace').hidden = false; $('user-menu').hidden = false;
   $('workspace-announcement').textContent = $('workspace-name').textContent + ' · ' + $('workspace-visibility').textContent;
   scheduleSessionCheck();
 }
-function inspectEvaluation(evaluation) {
+function inspectEvaluation(evaluation, suiteName = evaluationSuite(evaluation), context = 'TestCraft') {
   $('inspect-title').textContent = evaluation.name;
   $('inspect-content').replaceChildren();
-  const fields = [['Evaluation', (evaluation.reference || '') + ' · TestCraft'], ['Suite', evaluationSuite(evaluation)], ['Endpoint', names[endpoint(evaluation)]], ['HTML', evaluation.html], ['Input', evaluation.input], ['Page URL', evaluation.pageUrl], ['Framework', evaluation.framework], ['Language', evaluation.language], ['Page object model', evaluation.type === 'code' ? (evaluation.pom ? 'Enabled' : 'Disabled') : ''], ['Ideas', evaluation.ideas], ['Criteria', criterionObjects(evaluation).map(c => c.method + ' (weight ' + (c.weight ?? 1) + '): ' + c.text + (c.description ? '\n' + c.description : '')).join('\n\n')]];
+  const fields = [['Evaluation', (evaluation.reference || '') + ' · ' + context], ['Suite', suiteName], ['Endpoint', names[endpoint(evaluation)]], ['HTML', evaluation.html], ['Input', evaluation.input], ['Page URL', evaluation.pageUrl], ['Framework', evaluation.framework], ['Language', evaluation.language], ['Page object model', evaluation.type === 'code' ? (evaluation.pom ? 'Enabled' : 'Disabled') : ''], ['Ideas', evaluation.ideas], ['Criteria', criterionObjects(evaluation).map(c => c.method + ' (weight ' + (c.weight ?? 1) + '): ' + c.text + (c.description ? '\n' + c.description : '')).join('\n\n')]];
   for (const [label, value] of fields) {
     if (!value) continue;
     const heading = document.createElement('h3'), text = document.createElement('pre'); heading.textContent = label; text.textContent = value;
@@ -1136,7 +1179,7 @@ function connectWorkspace() {
       session = current;
       const pendingRoute = sessionStorage.getItem('testcraft-login-route'); sessionStorage.removeItem('testcraft-login-route');
       if (pendingRoute !== null) accountChannel?.postMessage('changed');
-      if (!location.hash && /^#(main|personal)\/(evaluations|runs(?:\/[a-z0-9-]+)?)$/.test(pendingRoute || '')) history.replaceState(null, '', pendingRoute);
+      if (!location.hash && /^#(?:(?:main|personal)\/(?:evaluations|runs)(?:\/[a-z0-9-]+)?|requests(?:\/[a-z0-9-]+(?:\/runs\/[a-z0-9-]+)?)?)$/.test(pendingRoute || '')) history.replaceState(null, '', pendingRoute);
       activeWorkspace = location.hash.match(/^#(main|personal)\//)?.[1] || (location.hash ? 'personal' : 'main');
       applyWorkspaceControls(); await openWorkspace();
     } catch (e) {
@@ -1216,5 +1259,6 @@ $('close-inspect').addEventListener('click', () => $('inspect-evaluation').close
 $('inspect-evaluation').addEventListener('close', lockBody);
 if (accountChannel) accountChannel.onmessage = () => { updateKey(''); void connectWorkspace(); };
 window.addEventListener('focus', () => { if (session) void refreshSession().catch(e => error(e.message)); });
+window.addEventListener('beforeunload', event => { if (requests.hasDraft()) { event.preventDefault(); event.returnValue = ''; } });
 $('retry-session').addEventListener('click', connectWorkspace);
 void connectWorkspace();

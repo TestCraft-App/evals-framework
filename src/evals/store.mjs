@@ -145,6 +145,11 @@ export class Store {
     return record;
   }
   create(data, scope) { return this.transaction(() => this.#insertEvaluation(data, scope)); }
+  // Trusted stored snapshot; caller owns the approval transaction.
+  insertContribution(snapshot, suiteId, scope) {
+    const { id, reference, createdAt, revision, sourceEvaluationId, suiteName, ...definition } = snapshot;
+    return this.#insertEvaluation({ ...definition, suiteId }, scope);
+  }
   updateEvaluation(id, data, revision, scope) {
     return this.transaction(() => {
       const current = this.evaluation(id, scope);

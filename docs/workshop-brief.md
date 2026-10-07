@@ -59,4 +59,8 @@ Participants sign in with GitHub. Any GitHub account can join as a collaborator 
 
 Configure GitHub OAuth client credentials and an admin allowlist before the workshop. Manage spending through API keys and provider-side budgets; the app does not enforce a call limit. Every new run generates through TestCraft, including legacy pasted definitions; historical evidence remains unchanged.
 
-AWS hosting still needs HTTPS, APP_ORIGIN, runtime secrets, one Node process and durable SQLite storage. Rehearse with two independent browser profiles and real provider credentials before the event. Generated-code execution, sandboxed browsers, extension UI automation, automatic DOM extraction, live-suite copying, promotion requests, and infrastructure provisioning are not included in the current implementation.
+AWS hosting still needs HTTPS, APP_ORIGIN, runtime secrets, one Node process and durable SQLite storage. Rehearse with two independent browser profiles and real provider credentials before the event. Generated-code execution, sandboxed browsers, extension UI automation, automatic DOM extraction, and infrastructure provisioning are not included in the current implementation.
+
+## Contribution requests
+
+Collaborators submit individual or selected personal evaluations using **Request inclusion**, enter a description, and confirm sending immutable snapshots. **My requests** in the user menu shows status and feedback; changes can be edited privately and resubmitted with a revised selection. Admins use **Evaluation requests** to inspect snapshots, optionally run them privately, and approve all, reject with a comment, or request changes with a comment. Approval adds new shared copies and preserves suite grouping; a passing run is not required. Review runs remain admin-only. In-app badges report pending requests and unread feedback. No email configuration is needed.

@@ -143,7 +143,7 @@ Forced restart marks unfinished runs Interrupted without replay. Account session
 
 ## 8. Migration and acceptance
 
-Before upgrading an anonymous installation, verify the consistent pre-release backup and keep a recoverable copy outside the data volume. Additive migrations preserve legacy records/snapshots without assigning them to new accounts. Old cookies no longer authenticate. New TestCraft and personal workspaces start empty; an administrator can populate TestCraft through Actions. No anonymous-workspace recovery or evaluation-promotion UI is provided.
+Before upgrading an anonymous installation, verify the consistent pre-release backup and keep a recoverable copy outside the data volume. Additive migrations preserve legacy records/snapshots without assigning them to new accounts. Old cookies no longer authenticate. New TestCraft and personal workspaces start empty; an administrator can populate TestCraft through Actions. Anonymous-workspace recovery is not provided. Collaborators can submit evaluation contribution requests; admins review them through the user menu. The additive request tables and admin-only review runs use the same durable SQLite database and backup process, with no additional secrets or infrastructure.
 
 `ADMIN_GITHUB_IDS` changes require a new process with updated configuration. Roles synchronize at startup and login, including authorization for existing sessions. Editing an Actions variable alone does not change a running container. Removing an ID demotes that account on synchronization.
 

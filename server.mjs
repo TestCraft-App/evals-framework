@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Store } from './src/evals/store.mjs';
+import { EvaluationRequests } from './src/evals/requests.mjs';
 import { Engine } from './src/evals/engine.mjs';
 import { summarizeRun } from './src/evals/runs.mjs';
 import { environments, localAvailable, resolveEnvironment, validateRunRequest, validateRunModels } from './src/evals/run-config.mjs';
@@ -21,10 +22,12 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
   let sessions;
   try { sessions = createSessions(store, env, fetchImpl); } catch (error) { store.close(); throw error; }
   const engine = new Engine(store, env, fetchImpl);
+  const requests = new EvaluationRequests(store);
   const catalogs = Object.fromEntries(Object.entries(environments).map(([id, base]) => [id, createModelCatalog({ ...env, TESTCRAFT_BASE_URL: base }, fetchImpl)]));
   let stopping = false, shutdownPromise;
   const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/run-detail.js': ['run-detail.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'] };
   files['/assets/testcraft-logo.png'] = ['assets/testcraft-logo.png', 'image/png'];
+  files['/requests.js'] = ['requests.js', 'text/javascript'];
   files['/assets/Sora-VariableFont_wght.ttf'] = ['assets/Sora-VariableFont_wght.ttf', 'font/ttf'];
   const json = (res, status, body) => {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -77,6 +80,37 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       }
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return json(res, 200, sessions.logout(req, res));
       const account = url.pathname.startsWith('/api/') ? sessions.requireSession(req) : null;
+      const allowLocal = localAvailable(env, server.address());
+      const requestMatch = url.pathname.match(/^\/api\/evaluation-requests(?:\/([a-z0-9-]+))?(?:\/(review|resubmit|read|runs))?(?:\/([a-z0-9-]+))?$/i);
+      if (requestMatch) {
+        const [, id, action, runId] = requestMatch;
+        if (!id && req.method === 'GET') return json(res, 200, { requests: requests.list(account) });
+        if (!id && req.method === 'POST') return json(res, 201, requests.submit(await readBody(req), account, sessions.resolveWorkspace(account, 'personal')));
+        if (id === 'summary' && !action && req.method === 'GET') return json(res, 200, requests.summary(account));
+        if (id && !action && req.method === 'GET') return json(res, 200, requests.detail(id, account));
+        if (action === 'review' && !runId && req.method === 'POST') return json(res, 200, requests.review(id, await readBody(req), account, sessions.resolveWorkspace(account, 'main')));
+        if (action === 'resubmit' && !runId && req.method === 'POST') return json(res, 200, requests.submit(await readBody(req), account, sessions.resolveWorkspace(account, 'personal'), id));
+        if (action === 'read' && !runId && req.method === 'POST') return json(res, 200, requests.read(id, await readBody(req, 2048), account));
+        if (action === 'runs') {
+          const scope = requests.runScope(id, account);
+          if (runId && req.method === 'GET') {
+            const run = store.run(runId, scope);
+            if (!run) throw new AppError('Run not found.', 404);
+            return json(res, 200, run);
+          }
+          if (runId && req.method === 'DELETE') return json(res, 200, store.deleteRun(runId, scope));
+          if (!runId && req.method === 'GET') return json(res, 200, { runs: store.runs(scope).map(run => ({ ...summarizeRun(run), request: run.request })) });
+          if (!runId && req.method === 'POST') {
+            const body = await readBody(req), settings = validateRunRequest(body, allowLocal);
+            requests.runSnapshots(id, body, account);
+            const catalog = await catalogs[settings.environment]();
+            const snapshots = requests.runSnapshots(id, body, account);
+            const normalized = validateRunModels(settings, snapshots, catalog);
+            return json(res, 202, engine.startSnapshots(snapshots, scope, normalized, { user: account.user, request: { id, submission: body.submission }, credentials: { OPENAI_API_KEY: env.OPENAI_API_KEY, TESTCRAFT_OPENAI_API_KEY: env.TESTCRAFT_OPENAI_API_KEY } }));
+          }
+        }
+        throw new AppError('Not found.', 404);
+      }
       if (req.method === 'POST' && url.pathname === '/api/api-key/validate') {
         if (account.user.role === 'admin') throw new AppError('Administrators use the configured server credentials.', 403);
         const body = await readBody(req, 8192);
@@ -88,7 +122,6 @@ export function createApp({ env = process.env, dbPath = env.TESTCRAFT_EVALS_DB |
       if (workspaceMatch) url.pathname = '/api' + workspaceMatch[2];
       const canWrite = account?.user.role === 'admin' || scope?.alias === 'personal';
       if (account && !['GET', 'HEAD'].includes(req.method) && !canWrite && !(url.pathname === '/api/runs' && req.method === 'POST')) throw new AppError('The TestCraft workspace is read-only for collaborators.', 403);
-      const allowLocal = localAvailable(env, server.address());
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { ...publicConfig(env), credentialMode: account.user.role === 'admin' ? 'server' : 'personal', environments: Object.keys(environments).map(id => ({ id, label: { prod: 'Prod', dev: 'Dev', local: 'Local' }[id], enabled: id !== 'local' || allowLocal })) });
       if (req.method === 'GET' && url.pathname === '/api/models') {
         const environment = url.searchParams.get('environment') || 'prod';
