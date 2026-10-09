@@ -7,7 +7,7 @@ export const runConfig = { environment: 'prod', generationModel: 'gpt-4o-mini', 
 export const catalogResponse = () => Response.json({ models: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].map(id => ({ id, label: id })) });
 export const syntheticStream = (output = 'valid user; invalid password') => new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: output }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
 let nextGithubId = 1;
-export const createOAuthApp = options => createRawApp({ ...options, env: { GITHUB_CLIENT_ID: 'synthetic-client', GITHUB_CLIENT_SECRET: 'synthetic-secret', ADMIN_GITHUB_IDS: Array.from({ length: 1000 }, (_, i) => String(i + 1)).join(','), ...options?.env }, fetchImpl: async (url, init) => {
+export const createOAuthApp = options => createRawApp({ ...options, env: { OAUTH_GITHUB_CLIENT_ID: 'synthetic-client', GITHUB_CLIENT_SECRET: 'synthetic-secret', ADMIN_GITHUB_IDS: Array.from({ length: 1000 }, (_, i) => String(i + 1)).join(','), ...options?.env }, fetchImpl: async (url, init) => {
   if (url === 'https://github.com/login/oauth/access_token') return Response.json({ access_token: new URLSearchParams(init.body).get('code') });
   if (url === 'https://api.github.com/user') {
     const id = Number(init.headers.authorization.slice(7));

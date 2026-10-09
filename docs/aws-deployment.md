@@ -57,7 +57,7 @@ For a new installation, create the runtime secret with administrator model crede
 | --- | --- |
 | Homepage URL | Exact `AppOrigin` output |
 | Authorization callback URL | `AppOrigin` followed by `/api/auth/github/callback` |
-| Client ID | Actions variable `GITHUB_CLIENT_ID` |
+| Client ID | Actions variable `OAUTH_GITHUB_CLIENT_ID` |
 | Client secret | Field `GITHUB_CLIENT_SECRET` in the AWS runtime secret |
 
 Use a separate OAuth App for local development. For `APP_ORIGIN=http://127.0.0.1:3000`, use callback `http://127.0.0.1:3000/api/auth/github/callback` and open that same hostname. See [GitHub OAuth App registration](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app).
@@ -114,10 +114,12 @@ In **GitHub → Settings → Secrets and variables → Actions → Variables**, 
 | `ECR_REPOSITORY_URI` | Output `EcrRepositoryUri`, no tag |
 | `AWS_SECRET_ARN` | Output `SecretArn`, never its contents |
 | `APP_ORIGIN` | Output `AppOrigin`, no trailing slash |
-| `GITHUB_CLIENT_ID` | Production OAuth App client ID |
+| `OAUTH_GITHUB_CLIENT_ID` | Production OAuth App client ID; same name in local and runtime configuration |
 | `ADMIN_GITHUB_IDS` | Numeric GitHub user IDs, comma-separated without spaces; release validation requires at least one |
 | `WORKSHOP_ID` | `workshop`, or the existing installation's stable scope |
 | `AWS_DEPLOY_ENABLED` | Absent/`false` until ready; `true` enables releases |
+
+GitHub reserves the `GITHUB_` prefix for Actions configuration variable names. `OAUTH_GITHUB_CLIENT_ID` is used consistently in Actions, local configuration, and the container environment.
 
 Get an administrator's numeric ID with `gh api users/USERNAME --jq .id`. Do not use a username as the ID. Keep `WORKSHOP_ID` stable: changing it selects another storage scope rather than moving existing workspaces.
 

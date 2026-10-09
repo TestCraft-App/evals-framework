@@ -56,13 +56,19 @@ test('OAuth expiry rejects the callback and successful re-login rotates the star
 
 test('OAuth uses browser binding and PKCE, consumes state once, and safely handles denial and provider failures', async () => {
   let verifier, profileCalls = 0;
-  const app = await listen(rawApp({ dbPath: ':memory:', env: { GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret' }, fetchImpl: async (url, init) => {
-    if (url.endsWith('/access_token')) { verifier = new URLSearchParams(init.body).get('code_verifier'); return Response.json({ access_token: 'private-token' }); }
+  const app = await listen(rawApp({ dbPath: ':memory:', env: { OAUTH_GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret' }, fetchImpl: async (url, init) => {
+    if (url.endsWith('/access_token')) {
+      const body = new URLSearchParams(init.body);
+      assert.equal(body.get('client_id'), 'client');
+      verifier = body.get('code_verifier');
+      return Response.json({ access_token: 'private-token' });
+    }
     profileCalls++; return Response.json({ id: 9, login: 'example', name: '<script>name</script>' });
   } }));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
     const login = await begin(url);
+    assert.equal(login.authorization.searchParams.get('client_id'), 'client');
     assert.equal(login.authorization.searchParams.get('scope'), '');
     assert.equal(login.authorization.searchParams.get('code_challenge_method'), 'S256');
     assert.equal(login.authorization.searchParams.get('redirect_uri'), url + '/api/auth/github/callback');
@@ -84,7 +90,7 @@ test('OAuth uses browser binding and PKCE, consumes state once, and safely handl
     assert.deepEqual(await (await fetch(base + '/api/session')).json(), { authenticated: false, loginAvailable: false });
     assert.equal((await fetch(base + '/api/auth/github/start', { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: '{}' })).status, 503);
   } finally { await close(missing); }
-  const failing = await listen(rawApp({ dbPath: ':memory:', env: { GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret' }, fetchImpl: async () => { throw new Error('private-token'); } }));
+  const failing = await listen(rawApp({ dbPath: ':memory:', env: { OAUTH_GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret' }, fetchImpl: async () => { throw new Error('private-token'); } }));
   try {
     const base = `http://127.0.0.1:${failing.server.address().port}`, response = await callback(base, await begin(base));
     assert.equal(response.headers.get('location'), '/?login=failed');

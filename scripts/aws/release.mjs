@@ -27,7 +27,7 @@ export function releaseConfig(env) {
     release: checked('GITHUB_SHA', /^[a-f0-9]{40}$/),
     run: `${checked('GITHUB_RUN_ID', /^\d+$/)}-${checked('GITHUB_RUN_ATTEMPT', /^\d+$/)}`,
     workshop: checked('WORKSHOP_ID', /^[A-Za-z0-9_-]{1,80}$/),
-    githubClientId: checked('GITHUB_CLIENT_ID', /^[A-Za-z0-9_.-]{1,100}$/),
+    githubClientId: checked('OAUTH_GITHUB_CLIENT_ID', /^[A-Za-z0-9_.-]{1,100}$/),
     adminGithubIds: checked('ADMIN_GITHUB_IDS', /^[1-9][0-9]*(?:,[1-9][0-9]*)*$/),
   };
 }

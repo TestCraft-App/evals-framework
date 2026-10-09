@@ -26,7 +26,7 @@ export function createSessions(store, env, fetchImpl = fetch) {
   const oauthCookie = secure ? '__Host-testcraft_oauth' : 'testcraft_oauth';
   const admins = new Set((env.ADMIN_GITHUB_IDS || '').split(',').map(value => value.trim()).filter(Boolean));
   if ([...admins].some(id => !/^[1-9][0-9]*$/.test(id))) throw new Error('ADMIN_GITHUB_IDS must contain comma-separated numeric GitHub IDs.');
-  const loginAvailable = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
+  const loginAvailable = Boolean(env.OAUTH_GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
   const pending = new Map();
   for (const user of store.db.prepare('SELECT id, github_id FROM users').all()) store.db.prepare('UPDATE users SET role=? WHERE id=?').run(admins.has(user.github_id) ? 'admin' : 'collaborator', user.id);
   workspace('main');
@@ -111,7 +111,7 @@ export function createSessions(store, env, fetchImpl = fetch) {
     pending.set(hash(state), { binding: hash(binding), verifier, redirectUri, expiresAt: Date.now() + 600000, previousToken: hash(cookie(req, cookieName)) });
     res.setHeader('set-cookie', serializeCookie(oauthCookie, binding, 600, 'Lax'));
     const url = new URL('https://github.com/login/oauth/authorize');
-    url.search = new URLSearchParams({ client_id: env.GITHUB_CLIENT_ID, redirect_uri: redirectUri, scope: '', state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' });
+    url.search = new URLSearchParams({ client_id: env.OAUTH_GITHUB_CLIENT_ID, redirect_uri: redirectUri, scope: '', state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' });
     return { authorizeUrl: url.href };
   }
   async function callback(req, res, params) {
@@ -124,7 +124,7 @@ export function createSessions(store, env, fetchImpl = fetch) {
     if (!code || code.length > 512) throw new AppError('GitHub login could not be verified. Sign in again.', 400);
     let identity;
     try {
-      const response = await fetchImpl('https://github.com/login/oauth/access_token', { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code, redirect_uri: transaction.redirectUri, code_verifier: transaction.verifier }).toString(), redirect: 'error', signal: AbortSignal.timeout(15000) });
+      const response = await fetchImpl('https://github.com/login/oauth/access_token', { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: env.OAUTH_GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code, redirect_uri: transaction.redirectUri, code_verifier: transaction.verifier }).toString(), redirect: 'error', signal: AbortSignal.timeout(15000) });
       const token = await response.json();
       if (!response.ok || typeof token.access_token !== 'string' || !token.access_token) throw new Error('Token unavailable');
       const profile = await fetchImpl('https://api.github.com/user', { headers: { authorization: `Bearer ${token.access_token}`, accept: 'application/vnd.github+json', 'user-agent': 'TestCraft-Evals' }, redirect: 'error', signal: AbortSignal.timeout(15000) });

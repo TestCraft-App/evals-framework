@@ -64,7 +64,7 @@ docker --config "$task_dir/docker" pull "$image" >/dev/null
 # These are identifiers/settings, never API keys or AWS access credentials.
 jq -r '"APP_ORIGIN=" + .origin, "AWS_REGION=" + .region, "AWS_SECRET_ARN=" + .secretArn,
   "WORKSHOP_ID=" + .workshop,
-  "GITHUB_CLIENT_ID=" + .githubClientId, "ADMIN_GITHUB_IDS=" + .adminGithubIds,
+  "OAUTH_GITHUB_CLIENT_ID=" + .githubClientId, "ADMIN_GITHUB_IDS=" + .adminGithubIds,
   "APP_RELEASE=" + .release, "WORKSHOP_SESSION_HOURS=24", "AWS_EC2_METADATA_V1_DISABLED=true"' "$manifest" > "$task_dir/runtime.env"
 options=(--read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 128
   --memory 768m --cpus 1 --tmpfs /tmp:rw,noexec,nosuid,size=64m --env-file "$task_dir/runtime.env"

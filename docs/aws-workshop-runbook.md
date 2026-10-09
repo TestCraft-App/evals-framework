@@ -88,7 +88,7 @@ Keep an inventory of StackId and all outputs: `AppOrigin`, `DistributionId`, `In
 
 1. Register the production OAuth App with Homepage URL equal to `AppOrigin` and callback `AppOrigin/api/auth/github/callback`. Use a separate localhost registration. Add its client secret to the AWS secret.
 2. Verify the Actions OIDC subject against the template's exact owner/repository IDs and `main` ref. OAuth credentials do not fix OIDC trust failures.
-3. Set Actions variables using the deployment guide's output-to-variable table, including `GITHUB_CLIENT_ID` and numeric `ADMIN_GITHUB_IDS`. Keep `WORKSHOP_ID` stable and `AWS_DEPLOY_ENABLED=false` until ready.
+3. Set Actions variables using the deployment guide's output-to-variable table, including `OAUTH_GITHUB_CLIENT_ID` and numeric `ADMIN_GITHUB_IDS`. GitHub reserves the `GITHUB_` prefix; `OAUTH_GITHUB_CLIENT_ID` is also the local/runtime name. Keep `WORKSHOP_ID` stable and `AWS_DEPLOY_ENABLED=false` until ready.
 4. Review and merge through a PR. Verify current branch-protection capabilities and permissions; the workflow also triggers on direct pushes to `main`.
 5. Set `AWS_DEPLOY_ENABLED=true`, then select **Actions → Test and deploy → Run workflow → main**. Follow both jobs. Record the commit SHA and SSM command ID.
 6. Check public health using the actual output:
