@@ -17,25 +17,37 @@ export class Engine {
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new AppError('Select between 1 and 50 distinct evaluations.');
     return ids.map(id => { const value = this.store.evaluation(id, scope); if (!value) throw new AppError('Evaluation not found.', 404); return { ...value, threshold: PASS_THRESHOLD }; });
   }
-  start(ids, scope, settings) {
+  start(ids, scope, settings, execution) {
+    return this.startSnapshots(this.evaluationsForRun(ids, scope), scope, settings, execution);
+  }
+  startSnapshots(snapshots, scope, settings, execution) {
+    const ids = snapshots.map(evaluation => evaluation.id);
     if (!this.accepting) throw new AppError('The server is preparing an update. Existing runs will finish; try starting a new run shortly.', 503);
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) throw new AppError('Select between 1 and 50 distinct evaluations.');
     const generationModels = settings ? settings.generationModels || [settings.generationModel] : [];
     const itemCount = ids.length * (settings ? generationModels.length : 1);
     if (itemCount > 100) throw new AppError('Select at most 100 evaluation/model combinations per run.');
     if (this.queue.length + this.active + itemCount > 100) throw new AppError('Run queue is full. Wait for the active runs to finish.', 429);
-    let evaluations = this.evaluationsForRun(ids, scope);
+    let evaluations = snapshots.map(evaluation => ({ ...evaluation, threshold: PASS_THRESHOLD }));
     if (settings) evaluations = generationModels.flatMap(model => evaluations.map(evaluation => {
       const effective = { ...evaluation, source: 'testcraft_api', model, judgeModel: settings.graderModel, actualOutput: '' };
       try { validateEvaluation({ ...effective, criteria: normalizeCriteria(effective) }); }
       catch (error) { if (error instanceof AppError) throw new AppError(`Edit "${evaluation.name}": ${error.message}`); throw error; }
       return effective;
     }));
-    evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None' }));
+    evaluations = evaluations.map(evaluation => ({ ...evaluation, suiteName: evaluation.suiteName ?? (evaluation.suiteId ? this.store.suite(evaluation.suiteId, scope)?.name || 'Unavailable suite' : 'None') }));
     const run = { id: randomUUID(), gradingVersion: GRADING_VERSION, status: 'queued', createdAt: new Date().toISOString(), items: evaluations.map(evaluation => ({ id: randomUUID(), gradingVersion: GRADING_VERSION, evaluationId: evaluation.id, evaluation, status: 'queued', score: null, output: null, checks: [], events: [] })) };
     if (settings) { const { description, ...configuration } = settings; run.description = description; run.settings = configuration; }
-    this.store.saveRun(run, scope);
-    for (const item of run.items) this.queue.push({ run, item, scope });
+    const destination = execution?.destination || scope;
+    if (execution?.request) run.request = execution.request;
+    if (execution) {
+      run.sourceWorkspace = { id: scope.ownerId, alias: scope.alias, name: scope.name };
+      run.resultWorkspace = { id: destination.ownerId, alias: destination.alias, name: destination.name };
+      run.createdBy = { id: execution.user.id, login: execution.user.login };
+    }
+    this.store.saveRun(run, destination);
+    const credentials = execution?.credentials;
+    for (const item of run.items) this.queue.push({ run, item, scope: destination, credentials });
     setImmediate(() => this.pump());
     return run;
   }
@@ -49,7 +61,8 @@ export class Engine {
       this.idleWaiters.clear();
     }
   }
-  async execute({ run, item, scope }) {
+  async execute({ run, item, scope, credentials }) {
+    const env = credentials ? { ...this.env, ...credentials } : this.env;
     const started = Date.now();
     const event = message => { item.events.push({ at: new Date().toISOString(), message }); this.store.saveRun(run, scope); };
     run.status = 'running'; item.status = 'generating'; item.startedAt = new Date().toISOString();
@@ -58,13 +71,13 @@ export class Engine {
       // Do not pay for a generation when the selected judge cannot be called.
       const criteria = normalizeCriteria(item.evaluation);
       if (needsModelGrader({ ...item.evaluation, criteria })) {
-        if (!this.env.OPENAI_API_KEY) throw new AppError('Set OPENAI_API_KEY in the backend .env and restart before running LLM as a judge.', 503);
+        if (!env.OPENAI_API_KEY) throw new AppError('Set OPENAI_API_KEY in the backend .env and restart before running LLM as a judge.', 503);
         if (typeof item.evaluation.judgeModel !== 'string' || !item.evaluation.judgeModel.trim()) throw new AppError('Choose a model grader before running model criteria.');
       }
-      const generated = await generateOutput(item.evaluation, run.settings ? { ...this.env, TESTCRAFT_BASE_URL: run.settings.testcraftBaseUrl } : this.env, this.fetchImpl);
+      const generated = await generateOutput(item.evaluation, run.settings ? { ...env, TESTCRAFT_BASE_URL: run.settings.testcraftBaseUrl } : env, this.fetchImpl);
       item.output = generated.output; item.outputSource = generated.source; item.generationModel = generated.model; item.generationUsage = generated.usage;
       item.status = 'grading'; event(`Output received. Applying ${item.evaluation.method.replaceAll('_', ' ')}`);
-      const result = await grade(item.evaluation, item.output, this.env, this.fetchImpl);
+      const result = await grade(item.evaluation, item.output, env, this.fetchImpl);
       Object.assign(item, result);
       item.status = item.score === null ? 'counted' : item.score >= item.evaluation.threshold ? 'passed' : 'failed';
       event(`Evaluation ${item.status}: ${item.score === null ? 'no quality score' : `${item.score}/100`}${item.testCount !== undefined ? `; ${item.testCount} ${item.testCountUnit.replaceAll('_', ' ')}` : ''}`);

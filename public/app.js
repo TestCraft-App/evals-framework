@@ -1,4 +1,5 @@
 import { createRunDetail, scoreMarkup, evaluationFamily } from './run-detail.js';
+import { createRequests } from './requests.js';
 const $ = id => document.getElementById(id);
 const names = { ideas: 'Generate ideas', code: 'Automate tests', code_ideas: 'Automate test ideas', model_grade: 'Model-graded', exact_match: 'Exact match', contains: 'Contains', not_contains: 'Not Contains', pasted: 'Pasted output', testcraft_api: 'TestCraft v1', llm: 'LLM adapter', playwright: 'Playwright', cypress: 'Cypress', selenium: 'Selenium', typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', java: 'Java', csharp: 'C#', not_run: 'Not run', passed: 'Passed', failed: 'Failed', error: 'Error', queued: 'Queued', generating: 'Generating', grading: 'Grading', running: 'Running', completed: 'Completed', interrupted: 'Interrupted' };
 names.hybrid = 'Hybrid';
@@ -12,8 +13,56 @@ const activeStatuses = ['queued','running','generating','grading'];
 let config, evaluations = [], runs = [], currentRun, polling, lastRunJson, pollFailures = 0, toastTimer;
 let formStep = 1, editing = null, savingEvaluation = false, criteria = [];
 let suites = [], libraryDeleteTarget = null, deletingLibrary = false;
+let librarySelection = new Set();
 let workspaceReview = null, clearingWorkspace = false;
 let session = null, sessionTimer, sessionSetup;
+let activeWorkspace = 'main', personalKey = '', acceptedHash = '', runSourceWorkspace = null;
+let validatingKey = false, keyRequest = 0, keyReturnFocus = null;
+let runEvaluations = [], runSuites = [];
+let reviewRunContext = null;
+const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('testcraft-account') : null;
+const routeHash = () => location.hash.replace(/^#(?:main|personal)\//, '#');
+const navigate = value => { location.hash = activeWorkspace + '/' + value.replace(/^#/, ''); };
+const canWriteWorkspace = () => activeWorkspace === 'personal' || session?.user.role === 'admin';
+const resourcePath = (path, workspace = activeWorkspace) => '/api/workspaces/' + workspace + path.slice(4);
+function updateKey(value) {
+  personalKey = value; updateRunSubmit();
+}
+function applyWorkspaceControls() {
+  const personal = activeWorkspace === 'personal';
+  document.querySelector('.workspace-controls').dataset.workspace = activeWorkspace;
+  $('workspace-name').textContent = personal ? 'My workspace' : 'TestCraft workspace';
+  $('workspace-visibility').textContent = personal ? 'Private' : 'Shared';
+  $('workspace-shared-icon').toggleAttribute('hidden', personal);
+  $('workspace-personal-icon').toggleAttribute('hidden', !personal);
+  $('workspace-switcher').value = activeWorkspace;
+  document.body.classList.toggle('readonly-workspace', !canWriteWorkspace());
+  document.querySelector('.library-actions').hidden = !canWriteWorkspace();
+  $('workspace-access').textContent = canWriteWorkspace() ? 'You can manage this workspace.' : 'Read-only library · your runs are saved in My workspace.';
+  $('private-badge').textContent = session.user.login + ' · ' + session.user.role;
+  $('user-menu-name').textContent = session.user.login;
+  $('user-menu-toggle').title = 'User menu: ' + session.user.login;
+  $('github-login').hidden = true;
+  $('open-api-key').hidden = session.user.role === 'admin';
+  for (const id of ['example-button', 'basic-workshop-button', 'workshop-button']) $(id).hidden = personal;
+  $('testcraft-suite-button').hidden = !personal;
+  document.querySelector('.brand').href = '#' + activeWorkspace + '/evaluations';
+  document.querySelector('.back-to-runs').href = '#' + activeWorkspace + '/runs';
+}
+function hasDraft() { return requests.hasDraft() || !!inlineName || !!suiteDraft || $('evaluation-dialog').open || $('create-run-dialog').open || ($('api-key-dialog').open && $('personal-api-key').value.trim() !== personalKey); }
+async function changeWorkspace(alias) {
+  const account = session;
+  showConnecting(); activeWorkspace = alias; session = { ...account };
+  applyWorkspaceControls(); await openWorkspace();
+}
+async function personalLoader(action) {
+  if (!canWriteWorkspace()) {
+    history.replaceState(null, '', '#personal/evaluations');
+    await changeWorkspace('personal');
+  }
+  action();
+}
+
 let suiteDraft = null, savingSuite = false;
 let inlineName = null, duplicatingEvaluation = false, renderingLibrary = false;
 let deleteTarget = null, deletingRun = false, runViewRevision = 0, runsRequest = 0, libraryRequest = 0;
@@ -21,7 +70,7 @@ let evalSort = 'createdAt', evalSortDirection = -1;
 let runSort = 'createdAt', runSortDirection = -1, lastRunRows = null;
 let runSelection = new Set(), runCatalogs = new Map(), catalogLoads = new Map(), runCatalog = null, runModelsLoading = false, creatingRun = false, runDraftRevision = 0, catalogRequest = 0;
 let runModelDefaults = null, rerunRequest = 0;
-const canDeleteRun = run => typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'counted', 'error'].includes(item.status));
+const canDeleteRun = run => canWriteWorkspace() && (typeof run.canDelete === 'boolean' ? run.canDelete : ['completed', 'interrupted'].includes(run.status) && run.items.every(item => ['passed', 'failed', 'counted', 'error'].includes(item.status)));
 const criterionObjects = evaluation => {
   const values = Array.isArray(evaluation.criteria) ? evaluation.criteria : evaluation.method === 'exact_match' ? [evaluation.expectedOutput || ''] : (['contains', 'not_contains'].includes(evaluation.method) ? evaluation.expectedOutput || '' : evaluation.criteria || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   return values.map(value => typeof value === 'string' ? { text: value, method: evaluation.method, weight: 1 } : { ...value, method: value.method || evaluation.method, weight: value.weight ?? 1 });
@@ -29,6 +78,11 @@ const criterionObjects = evaluation => {
 const draftMethod = () => $('method').value === 'test_count' ? 'test_count' : $('method').value === 'model_based' ? 'model_grade' : $('criterion-rule').value;
 const endpoint = e => e.type === 'code' && e.fromIdeas ? 'code_ideas' : e.type;
 const runDetail = createRunDetail({ root: $('run-detail'), getSuites: () => suites, getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, canDelete: canDeleteRun });
+const requests = createRequests({ api, getSession: () => session, inspect: inspectEvaluation, editLink: () => '#' + activeWorkspace + '/evaluations', openRun: openCreateRun, lockBody, toast, error,
+  onSubmitted: () => { librarySelection.clear(); updateLibrarySelection(); },
+  runOptions: { getCatalog: environment => runCatalogs.get(environment), getMethods: () => config?.evaluationMethods || {}, getCriteria: criterionObjects, runName, endpoint, endpointLabel: e => names[endpoint(e)], method: e => evaluationMethod(e) } });
+$('user-menu-toggle').insertAdjacentHTML('beforeend', '<span id="request-user-badge" class="request-count" hidden></span>');
+$('delete-selected-evaluations').insertAdjacentHTML('afterend', '<button id="request-selected-evaluations" type="button" class="button" hidden>Request inclusion (0)</button>');
 function lockBody() { document.body.classList.toggle('modal-open', !!document.querySelector('dialog[open]')); }
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const badge = status => '<span class="badge ' + escape(status) + '">' + escape(names[status] || status) + '</span>';
@@ -37,6 +91,7 @@ function error(message) { $('app-error').textContent = message; $('app-error').h
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3000); }
 async function api(path, options) {
   const requestSession = session;
+  if (/^\/api\/(?:evaluations|suites|runs|workspace|workshop-suite|basic-workshop-suite|testcraft-suite)(?:[/?]|$)/.test(path)) path = resourcePath(path);
   const mutation = options?.method && !['GET', 'HEAD'].includes(options.method);
   const res = await fetch(path, { ...options, credentials: 'same-origin', headers: { ...(options ? { 'content-type': 'application/json' } : {}), ...(session && mutation ? { 'x-csrf-token': session.csrfToken } : {}) } });
   let body;
@@ -47,22 +102,27 @@ async function api(path, options) {
   return body;
 }
 function showConnecting() {
+  requests.reset(); reviewRunContext = null;
   workspaceReview = null; clearingWorkspace = false; $('clear-workspace-dialog').close();
   closeLibraryActions();
+  closeUserMenu(); $('api-key-dialog').close(); $('personal-api-key').value = '';
   runDetail.reset();
   session = null; config = null; clearTimeout(polling); clearTimeout(sessionTimer); clearTimeout(toastTimer);
   evaluations = []; runs = []; suites = []; editing = null; currentRun = null; criteria = [];
+  librarySelection.clear();
   inlineName = null; duplicatingEvaluation = false;
   suiteDraft = null; savingSuite = false; closeSuiteEditor(false);
   runViewRevision++; runsRequest++; libraryRequest++; deleteTarget = null; deletingRun = false; $('delete-run-dialog').close();
   closeRunDraft(); $('evaluation-dialog').close(); $('evaluation-form').reset(); $('criteria-list').replaceChildren();
-  $('delete-library-dialog').close();
+  $('delete-library-dialog').close(); $('inspect-evaluation').close();
   libraryDeleteTarget = null; savingEvaluation = false; deletingLibrary = false;
   $('filter-suite').value = ''; evalSort = 'createdAt'; evalSortDirection = -1; renderSuites();
   $('run-search').value = ''; $('run-status').value = ''; $('run-model').value = ''; runSort = 'createdAt'; runSortDirection = -1; lastRunRows = null;
   $('evaluation-rows').replaceChildren(); $('run-list').replaceChildren(); $('run-detail').replaceChildren(); $('toast').hidden = true;
-  $('workspace').hidden = true; $('private-badge').hidden = true; $('session-status').hidden = false;
-  $('session-message').textContent = 'Opening your private workspace…';
+  $('workspace').hidden = true; $('user-menu').hidden = true; $('session-status').hidden = false;
+  $('workspace-announcement').textContent = '';
+  $('private-badge').textContent = ''; $('user-menu-name').textContent = ''; $('user-menu-toggle').removeAttribute('title');
+  $('session-message').textContent = 'Opening your workspace…';
   $('session-error').textContent = ''; $('retry-session').hidden = true;
 }
 function scheduleSessionCheck() {
@@ -73,9 +133,10 @@ async function refreshSession() {
   clearTimeout(sessionTimer);
   if (!session) return;
   const current = await api('/api/session');
-  if (!current.authenticated || current.workspaceId !== session?.workspaceId) return connectWorkspace();
+  if (!current.authenticated || current.workspaceId !== session?.workspaceId || current.user.role !== session.user.role) return connectWorkspace();
   // Preserve object identity so parallel responses from this workspace remain valid.
   Object.assign(session, current);
+  await requests.badge();
   scheduleSessionCheck();
 }
 async function loadLibrary() {
@@ -95,26 +156,33 @@ function visibleEvaluations() {
   const query = $('search').value.trim().toLowerCase();
   const value = e => evalSort === 'reference' ? Number(e.reference?.slice(5) || 0) : evalSort === 'suite' ? evaluationSuite(e) : evalSort === 'method' ? evaluationMethod(e) : evalSort === 'type' ? names[endpoint(e)] : e[evalSort];
   return evaluations.filter(e => {
-    const status = e.latest?.status || 'not_run';
     return (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name + ' ' + (e.input || '')).toLowerCase().includes(query))
       && (!$('filter-type').value || endpoint(e) === $('filter-type').value)
       && (!$('filter-suite').value || ($('filter-suite').value === '__unfiled' ? !e.suiteId : e.suiteId === $('filter-suite').value))
-      && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value)
-      && (!$('filter-status').value || ($('filter-status').value === 'active' ? activeStatuses.includes(status) : status === $('filter-status').value));
+      && (!$('filter-method').value || evaluationFamily(e) === $('filter-method').value);
   }).sort((a, b) => (evalSort === 'reference' ? value(a) - value(b) : String(value(a)).localeCompare(String(value(b)))) * evalSortDirection || a.id.localeCompare(b.id));
 }
 function renderLibrary() {
+  document.body.classList.toggle('contributor-workspace', activeWorkspace === 'personal' && requests.canSubmit());
   $('eval-count').textContent = evaluations.length;
+  const available = new Set(evaluations.map(e => e.id));
+  for (const id of librarySelection) if (!canWriteWorkspace() || !available.has(id)) librarySelection.delete(id);
+  document.querySelectorAll('.eval-select-column, .eval-select-cell').forEach(el => { el.hidden = !canWriteWorkspace(); });
   const visible = visibleEvaluations().filter(e => e.id !== inlineName?.record.id);
   if (inlineName) visible.unshift(inlineName.record);
   const focused = document.activeElement?.id === 'duplicate-name', selection = focused ? [$('duplicate-name').selectionStart, $('duplicate-name').selectionEnd] : null;
   renderingLibrary = true;
-  $('evaluation-rows').innerHTML = visible.map(e => '<tr><td class="evaluation-id">' + escape(e.reference || '—') + '</td>'
+  $('evaluation-rows').innerHTML = visible.map(e => '<tr>' + (canWriteWorkspace() ? '<td class="eval-select-cell"><input type="checkbox" data-library-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (librarySelection.has(e.id) ? ' checked' : '') + '></td>' : '') + '<td class="evaluation-id">' + escape(e.reference || '—') + '</td>'
     + '<td>' + (e.id === inlineName?.record.id ? inlineNameMarkup() : '<button class="eval-name" data-inspect="' + escape(e.id) + '" title="' + escape(e.name) + '">' + escape(e.name) + '</button>') + '</td>'
     + '<td><span class="eval-suite" title="' + escape(evaluationSuite(e)) + '">' + escape(evaluationSuite(e)) + '</span></td><td>' + badge(endpoint(e)) + '</td>'
     + '<td>' + evaluationMethod(e) + '</td><td><time datetime="' + escape(e.createdAt) + '">' + escape(date(e.createdAt)) + '</time></td>'
     + '<td><div class="row-actions">' + '<button class="text-button eval-action" data-inspect="' + escape(e.id) + '" title="Edit evaluation" aria-label="Edit ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M16 3l5 5-12 12H4v-5L16 3zM13 6l5 5"/></svg></button>' + '<button class="text-button eval-action" data-duplicate-evaluation="' + escape(e.id) + '" title="Duplicate evaluation" aria-label="Duplicate ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 9h12v12H9zM15 9V3H3v12h6"/></svg></button>' + '<button class="text-button eval-action danger" data-delete-evaluation="' + escape(e.id) + '" title="Delete evaluation" aria-label="Delete ' + escape(e.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>' + '</div></td></tr>').join('');
-  $('evaluation-rows').querySelectorAll('td:not(:nth-child(2)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
+  $('evaluation-rows').querySelectorAll('td:not(.eval-select-cell):not(:has(.eval-name, .inline-eval-name)):not(:last-child)').forEach(cell => { cell.title = cell.textContent.trim(); });
+  updateLibrarySelection();
+  if (activeWorkspace === 'personal' && requests.canSubmit()) for (const row of $('evaluation-rows').rows) {
+    const id = row.querySelector('[data-inspect]')?.dataset.inspect, evaluation = evaluations.find(e => e.id === id);
+    if (evaluation) row.querySelector('.row-actions').insertAdjacentHTML('beforeend', '<button class="text-button eval-action" data-request-inclusion="' + escape(id) + '" title="Request inclusion" aria-label="Request inclusion for ' + escape(evaluation.name) + '"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m3 3 18 9-18 9 4-9-4-9zm4 9h14"/></svg></button>');
+  }
   renderingLibrary = false;
   document.querySelectorAll('[data-duplicate-evaluation]').forEach(button => { button.disabled = duplicatingEvaluation; });
   if (focused && $('duplicate-name')) { $('duplicate-name').focus(); $('duplicate-name').setSelectionRange(...selection); }
@@ -122,6 +190,27 @@ function renderLibrary() {
   $('empty-library').hidden = visible.length > 0;
   $('empty-library').querySelector('h3').textContent = evaluations.length ? 'No evaluations match these filters.' : 'Your first evaluation starts here.';
   $('filtered-count').textContent = visible.length + ' of ' + evaluations.length + ' evaluations';
+}
+function updateLibrarySelection() {
+  const checkboxes = [...$('evaluation-rows').querySelectorAll('[data-library-select]')];
+  const selected = checkboxes.filter(el => librarySelection.has(el.dataset.librarySelect)).length;
+  $('library-select-all').checked = !!checkboxes.length && selected === checkboxes.length;
+  $('library-select-all').indeterminate = selected > 0 && selected < checkboxes.length;
+  $('library-select-all').disabled = !checkboxes.length || deletingLibrary;
+  for (const checkbox of checkboxes) {
+    checkbox.checked = librarySelection.has(checkbox.dataset.librarySelect); checkbox.disabled = deletingLibrary;
+    checkbox.closest('tr').classList.toggle('selected', checkbox.checked);
+  }
+  const count = librarySelection.size;
+  $('delete-selected-evaluations').hidden = !canWriteWorkspace() || !count;
+  $('delete-selected-evaluations').disabled = deletingLibrary;
+  $('delete-selected-evaluations').textContent = 'Delete selected (' + count + ')';
+  $('request-selected-evaluations').hidden = activeWorkspace !== 'personal' || !requests.canSubmit() || !count;
+  $('request-selected-evaluations').disabled = deletingLibrary;
+  $('request-selected-evaluations').textContent = 'Request inclusion (' + count + ')';
+  $('library-selected-count').textContent = count ? count + ' selected' : '';
+  $('clear-library-selection').hidden = !count;
+  $('clear-library-selection').disabled = deletingLibrary;
 }
 function setLanguages(preferred = $('language').value) {
   $('language').innerHTML = languages[$('framework').value].map(value => '<option value="' + value + '">' + names[value] + '</option>').join('');
@@ -214,6 +303,7 @@ function validateStep(step) {
 }
 function openForm(example = false, existing) {
   if (!session || !config) return;
+  if (!canWriteWorkspace()) { if (existing) inspectEvaluation(existing); return; }
   $('evaluation-form').reset(); $('form-error').textContent = '';
   closeSuiteEditor(false);
   editing = existing ? structuredClone(existing) : null;
@@ -419,26 +509,34 @@ async function duplicateEvaluation(id) {
   }
 }
 function askDeleteLibrary(kind, record) {
-  if (!record || deletingLibrary || savingEvaluation) return;
+  if (!canWriteWorkspace() || !record || deletingLibrary || savingEvaluation) return;
   libraryDeleteTarget = { kind, record, session };
-  $('delete-library-title').textContent = kind === 'suite' ? 'Delete suite?' : 'Delete evaluation?';
-  $('delete-library-name').textContent = record.name;
-  $('delete-library-description').textContent = kind === 'suite' ? 'Only this empty suite is removed; all runs remain saved.' : 'This definition will be permanently removed. Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
-  $('delete-library-error').textContent = ''; $('confirm-delete-library').textContent = kind === 'suite' ? 'Delete suite' : 'Delete evaluation';
+  const bulk = kind === 'evaluations';
+  $('delete-library-title').textContent = bulk ? 'Delete selected evaluations?' : kind === 'suite' ? 'Delete suite?' : 'Delete evaluation?';
+  $('delete-library-name').textContent = bulk ? record.length + ' selected ' + (record.length === 1 ? 'evaluation' : 'evaluations') + ', including any hidden by filters.' : record.name;
+  $('delete-library-items').hidden = !bulk;
+  $('delete-library-items').replaceChildren(...(bulk ? record.map(e => {
+    const item = document.createElement('li'); item.textContent = (e.reference ? e.reference + ' · ' : '') + e.name; return item;
+  }) : []));
+  $('delete-library-description').textContent = kind === 'suite' ? 'Only this empty suite is removed; all runs remain saved.' : (bulk ? 'These definitions will be permanently removed. If any selected evaluation has an active run or is no longer available, nothing will be deleted. ' : 'This definition will be permanently removed. ') + 'Previous runs keep their inputs, outputs, and results. Used model calls are not restored.';
+  $('delete-library-error').textContent = ''; $('confirm-delete-library').textContent = bulk ? 'Delete ' + record.length + (record.length === 1 ? ' evaluation' : ' evaluations') : kind === 'suite' ? 'Delete suite' : 'Delete evaluation';
   $('delete-library-dialog').showModal(); lockBody(); $('cancel-delete-library').focus();
 }
 async function deleteLibrary(event) {
   event.preventDefault(); const target = libraryDeleteTarget;
   if (!target || target.session !== session || deletingLibrary) return;
   deletingLibrary = true; $('confirm-delete-library').disabled = true; $('cancel-delete-library').disabled = true; $('delete-library-error').textContent = '';
+  updateLibrarySelection();
   let deleted = false;
   try {
-    await api('/api/' + (target.kind === 'suite' ? 'suites' : 'evaluations') + '/' + target.record.id, { method: 'DELETE' });
+    const bulk = target.kind === 'evaluations';
+    await api(bulk ? '/api/evaluations' : '/api/' + (target.kind === 'suite' ? 'suites' : 'evaluations') + '/' + target.record.id, { method: 'DELETE', ...(bulk ? { body: JSON.stringify({ evaluationIds: target.record.map(e => e.id) }) } : {}) });
     deleted = true; $('delete-library-dialog').close();
     if (target.kind === 'evaluation' && editing?.id === target.record.id) $('evaluation-dialog').close();
-    await loadLibrary(); toast(target.kind === 'suite' ? 'Suite deleted.' : 'Evaluation deleted. Previous runs are unchanged.');
+    if (bulk) for (const record of target.record) librarySelection.delete(record.id);
+    await loadLibrary(); toast(bulk ? target.record.length + (target.record.length === 1 ? ' evaluation deleted.' : ' evaluations deleted.') + ' Previous runs are unchanged.' : target.kind === 'suite' ? 'Suite deleted.' : 'Evaluation deleted. Previous runs are unchanged.');
   } catch (e) { if (target.session === session) { if (deleted) error('Deleted. Reload to refresh the library.'); else $('delete-library-error').textContent = e.message; } }
-  finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; } }
+  finally { if (target.session === session) { deletingLibrary = false; $('confirm-delete-library').disabled = false; $('cancel-delete-library').disabled = false; updateLibrarySelection(); } }
 }
 async function reviewWorkspace() {
   closeLibraryActions(true);
@@ -468,9 +566,9 @@ async function clearWorkspace(event) {
     clearTimeout(polling); runViewRevision++; libraryRequest++; runsRequest++;
     currentRun = null; lastRunJson = null; evaluations = []; suites = []; runs = []; lastRunRows = null; inlineName = null; editing = null;
     closeRunDraft(); runDetail.reset(); $('run-detail').replaceChildren();
-    for (const id of ['search', 'filter-suite', 'filter-type', 'filter-method', 'filter-status', 'run-search', 'run-status', 'run-model']) $(id).value = '';
+    for (const id of ['search', 'filter-suite', 'filter-type', 'filter-method', 'run-search', 'run-status', 'run-model']) $(id).value = '';
     renderSuites(); renderLibrary(); renderRunList(); $('runs-count').textContent = '0';
-    $('clear-workspace-dialog').close(); toast('Workspace cleared. You can load the workshop templates again.');
+    $('clear-workspace-dialog').close(); toast(activeWorkspace === 'personal' ? 'Workspace cleared. You can load the TestCraft suite again.' : 'Workspace cleared. You can load the workshop templates again.');
   } catch (e) { if (review.session === session) $('clear-workspace-error').textContent = e.message; }
   finally { if (review.session === session) { clearingWorkspace = false; $('cancel-clear-workspace').disabled = false; $('confirm-clear-workspace').disabled = false; } }
 }
@@ -484,16 +582,29 @@ async function loadWorkshop(basic = false) {
   } catch (e) { if (requestSession === session) error(e.message); }
   finally { $('workshop-button').disabled = false; $('basic-workshop-button').disabled = false; }
 }
+async function loadTestcraftSuite() {
+  if (activeWorkspace !== 'personal' || $('testcraft-suite-button').disabled) return;
+  const requestSession = session; $('testcraft-suite-button').disabled = true; error('');
+  try {
+    await api('/api/testcraft-suite', { method: 'POST', body: '{}' });
+    if (requestSession !== session) return;
+    await loadLibrary();
+    if (requestSession !== session) return;
+    $('filter-suite').value = ''; renderLibrary();
+    toast('TestCraft suite loaded into My workspace. Existing private edits are preserved.');
+  } catch (e) { if (requestSession === session) error(e.message); }
+  finally { $('testcraft-suite-button').disabled = false; }
+}
 function closeRunDraft() {
   runDraftRevision++; catalogRequest++; runSelection.clear(); runCatalog = null; runCatalogs.clear(); catalogLoads.clear(); creatingRun = false;
   $('create-run-dialog').close();
 }
 function selectedNeedsGrader() {
-  return evaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => isModelMethod(c.method)));
+  return runEvaluations.some(e => runSelection.has(e.id) && criterionObjects(e).some(c => isModelMethod(c.method)));
 }
 function visibleRunEvaluations() {
   const query = $('create-eval-search').value.trim().toLowerCase(), suite = $('create-eval-suite').value, type = $('create-eval-type').value, method = $('create-eval-method').value;
-  return evaluations.filter(e => (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name).toLowerCase().includes(query))
+  return runEvaluations.filter(e => (!query || ((e.reference || '') + ' ' + e.id + ' ' + e.name).toLowerCase().includes(query))
     && (!suite || (suite === '__unfiled' ? !e.suiteId : e.suiteId === suite))
     && (!type || endpoint(e) === type)
     && (!method || evaluationFamily(e) === method)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
@@ -510,6 +621,8 @@ function positionGenerationModels() {
   options.style.maxHeight = Math.max(80, Math.min(240, openAbove ? above : below)) + 'px';
 }
 function updateRunSubmit() {
+  const missingKey = session?.user.role !== 'admin' && !personalKey;
+  $('run-key-warning').hidden = !missingKey;
   const needsGrader = selectedNeedsGrader();
   const modelCount = selectedGenerationModels().length, combinations = runSelection.size * modelCount;
   $('create-grader-model').disabled = creatingRun || runModelsLoading;
@@ -519,20 +632,19 @@ function updateRunSubmit() {
   const modelLabels = [...$('generation-model-options').querySelectorAll('input:checked')].map(input => input.parentElement.textContent.trim());
   $('generation-model-selection').textContent = modelCount > 1 ? modelCount + ' models selected' : modelLabels[0] || 'Select models';
   $('generation-model-toggle').title = modelLabels.join(', ');
-  $('submit-create-run').disabled = creatingRun || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !modelCount || combinations > 100 || (needsGrader && !$('create-grader-model').value);
+  $('submit-create-run').disabled = creatingRun || missingKey || runModelsLoading || !runCatalog?.models.length || !runSelection.size || runSelection.size > 50 || !modelCount || combinations > 100 || (needsGrader && !$('create-grader-model').value);
   $('submit-create-run').textContent = creatingRun ? 'Creating…' : 'Create Run';
-  $('create-selected-count').textContent = runSelection.size + ' selected · maximum 50';
-  $('create-combination-count').textContent = runSelection.size + ' evals × ' + modelCount + ' models = ' + combinations + ' results · maximum 100';
+  $('create-combination-count').textContent = runSelection.size + ' evals × ' + modelCount + ' models = ' + combinations + ' results';
 }
 function renderRunEvaluations() {
   const visible = visibleRunEvaluations(), focusedId = document.activeElement?.dataset.runSelect;
-  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td class="evaluation-id">' + escape(e.reference || '—') + '</td><td>' + escape(e.name) + '</td><td>' + escape(evaluationSuite(e)) + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
+  $('create-eval-rows').innerHTML = visible.map(e => '<tr><td><input type="checkbox" data-run-select="' + escape(e.id) + '" aria-label="Select ' + escape(e.name) + '"' + (runSelection.has(e.id) ? ' checked' : '') + (creatingRun || (!runSelection.has(e.id) && runSelection.size >= 50) ? ' disabled' : '') + '></td><td class="evaluation-id">' + escape(e.reference || '—') + '</td><td>' + escape(e.name) + '</td><td>' + escape(runSuites.find(s => s.id === e.suiteId)?.name || 'None') + '</td><td>' + escape(names[endpoint(e)]) + '</td><td>' + escape(evaluationMethod(e)) + '</td></tr>').join('');
   $('create-eval-rows').querySelectorAll('td:not(:first-child)').forEach(cell => { cell.title = cell.textContent; });
   $('create-select-all').checked = !!visible.length && visible.every(e => runSelection.has(e.id));
   $('create-select-all').indeterminate = visible.some(e => runSelection.has(e.id)) && !$('create-select-all').checked;
   $('create-select-all').disabled = creatingRun || !visible.length;
   $('create-eval-empty').hidden = !!visible.length;
-  $('create-eval-empty').textContent = evaluations.length ? 'No evaluations match these filters.' : 'No evaluations yet. Add an evaluation in Evaluations first.';
+  $('create-eval-empty').textContent = runEvaluations.length ? 'No evaluations match these filters.' : 'No evaluations yet. Add an evaluation in Evaluations first.';
   if (focusedId) [...$('create-eval-rows').querySelectorAll('[data-run-select]')].find(input => input.dataset.runSelect === focusedId)?.focus({ preventScroll: true });
   updateRunSubmit();
 }
@@ -572,10 +684,15 @@ async function loadRunModels(useDefaults = false, force = false) {
   $('run-models-status').textContent = catalog.warning || '';
   $('retry-run-models').hidden = !catalog.warning; updateRunSubmit();
 }
-async function openCreateRun(sourceRun = null) {
+async function openCreateRun(sourceRun = null, request = null) {
   if (!session || !config || creatingRun) return;
   const draft = ++runDraftRevision;
+  reviewRunContext = request ? { id: request.id, submission: request.submission, version: request.version } : null;
+  runEvaluations = []; runSuites = [];
+  runSourceWorkspace = sourceRun?.sourceWorkspace?.alias || activeWorkspace;
+  $('run-destination').textContent = 'Evaluations from ' + (runSourceWorkspace === 'main' ? 'TestCraft' : 'My workspace') + '. Results saved in ' + (session.user.role !== 'admin' || runSourceWorkspace === 'personal' ? 'My workspace (private)' : 'TestCraft (visible to everyone)') + '. ' + (session.user.role === 'admin' ? 'Uses server credentials.' : 'Uses your OpenAI key.');
   runSelection.clear(); runCatalog = null; $('create-run-form').reset(); $('create-run-error').textContent = '';
+  if (request) $('run-destination').textContent = 'Request from ' + request.requester.login + ' · Submission ' + request.submission + '. Results visible only to admins. Uses server credentials.';
   $('generation-model-options').hidePopover();
   $('generation-model-options').replaceChildren();
   runModelDefaults = { generationModels: sourceRun?.settings?.generationModels || (sourceRun?.settings?.generationModel ? [sourceRun.settings.generationModel] : undefined), graderModel: sourceRun?.settings?.graderModel };
@@ -587,29 +704,35 @@ async function openCreateRun(sourceRun = null) {
   setCreatingRun(false); $('create-run-dialog').showModal(); lockBody(); renderRunEvaluations(); $('create-environment').focus();
   if ($('create-environment').value) void loadRunModels(true);
   try {
-    await loadLibrary();
+    const sourceAlias = runSourceWorkspace;
+    const submitted = request?.submissions.at(-1).evaluations;
+    const [sourceEvaluations, sourceSuites] = submitted ? [{ evaluations: submitted.map(entry => entry.evaluation) }, { suites: [...new Map(submitted.filter(entry => entry.suite).map(entry => [entry.suite.id, entry.suite])).values()] }] : await Promise.all([api(resourcePath('/api/evaluations', sourceAlias)), api(resourcePath('/api/suites', sourceAlias))]);
+    if (draft !== runDraftRevision) return;
+    runEvaluations = sourceEvaluations.evaluations; runSuites = sourceSuites.suites;
+    $('create-eval-suite').innerHTML = '<option value="">All suites</option><option value="__unfiled">None</option>' + runSuites.map(s => '<option value="' + escape(s.id) + '">' + escape(s.name) + '</option>').join('');
     if (draft !== runDraftRevision) return;
     if (sourceRun) {
       const ids = new Set(sourceRun.items.map(item => item.evaluationId || item.evaluation?.id).filter(Boolean));
-      runSelection = new Set([...ids].filter(id => evaluations.some(e => e.id === id)).slice(0, 50));
+      runSelection = new Set([...ids].filter(id => runEvaluations.some(e => e.id === id)).slice(0, 50));
       $('create-run-error').textContent = runSelection.size < ids.size ? 'Some evaluations are no longer available or exceed the 50-evaluation limit. Review the selection before creating the run.' : '';
     }
+    if (!sourceRun && request) runSelection = new Set(runEvaluations.slice(0, 50).map(e => e.id));
     renderRunEvaluations();
   }
   catch (e) { if (draft === runDraftRevision) $('create-run-error').textContent = e.message; }
 }
 async function rerun(id) {
-  const workspace = session, draft = runDraftRevision, request = ++rerunRequest, route = location.hash;
+  const workspace = session, draft = runDraftRevision, request = ++rerunRequest, route = routeHash();
   error('');
   try {
     const run = await api('/api/runs/' + encodeURIComponent(id));
-    if (workspace !== session || draft !== runDraftRevision || request !== rerunRequest || route !== location.hash) return;
+    if (workspace !== session || draft !== runDraftRevision || request !== rerunRequest || route !== routeHash()) return;
     await openCreateRun(run);
-  } catch (e) { if (workspace === session && draft === runDraftRevision && request === rerunRequest && route === location.hash) error(e.message); }
+  } catch (e) { if (workspace === session && draft === runDraftRevision && request === rerunRequest && route === routeHash()) error(e.message); }
 }
 function setCreatingRun(busy) {
   creatingRun = busy;
-  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models'].forEach(id => { $(id).disabled = busy; });
+  ['run-description', 'create-environment', 'create-eval-search', 'create-eval-suite', 'create-eval-type', 'create-eval-method', 'cancel-create-run', 'close-create-run', 'retry-run-models', 'set-run-api-key'].forEach(id => { $(id).disabled = busy; });
   renderRunEvaluations();
 }
 async function submitRun(event) {
@@ -619,9 +742,12 @@ async function submitRun(event) {
   const body = { evaluationIds: [...runSelection], description: $('run-description').value, environment: $('create-environment').value, generationModels: selectedGenerationModels(), graderModel: selectedNeedsGrader() ? $('create-grader-model').value : '' };
   setCreatingRun(true); $('create-run-error').textContent = '';
   try {
-    const run = await api('/api/runs', { method: 'POST', body: JSON.stringify(body) });
+    if (session.user.role !== 'admin') body.openAiApiKey = personalKey;
+    const review = reviewRunContext;
+    if (review) { body.version = review.version; body.submission = review.submission; }
+    const run = await api(review ? '/api/evaluation-requests/' + review.id + '/runs' : resourcePath('/api/runs', runSourceWorkspace), { method: 'POST', body: JSON.stringify(body) });
     if (workspace !== session || draft !== runDraftRevision) return;
-    setCreatingRun(false); $('create-run-dialog').close(); location.hash = 'runs/' + run.id;
+    setCreatingRun(false); $('create-run-dialog').close(); location.hash = review ? 'requests/' + review.id + '/runs/' + run.id : (run.resultWorkspace?.alias || activeWorkspace) + '/runs/' + run.id;
     toast('Run created. Generation and grading continue in the backend.');
   } catch (e) {
     if (workspace === session && draft === runDraftRevision) $('create-run-error').textContent = e.message;
@@ -651,7 +777,7 @@ function renderRunList() {
   const visible = visibleRuns(), focused = document.activeElement;
   const focusId = $('run-list').contains(focused) ? focused.closest('[data-run-row]')?.dataset.runRow : null;
   const focusAction = focused?.hasAttribute('data-delete-run') ? '[data-delete-run]' : focused?.hasAttribute('data-rerun') ? '[data-rerun]' : 'a';
-  const rows = visible.map(run => '<tr data-run-row="' + escape(run.id) + '"><td><a class="eval-name" data-run-link="' + escape(run.id) + '" href="#runs/' + escape(run.id) + '">' + escape(runName(run)) + '</a></td>'
+  const rows = visible.map(run => '<tr data-run-row="' + escape(run.id) + '"><td><a class="eval-name" data-run-link="' + escape(run.id) + '" href="#' + activeWorkspace + '/runs/' + escape(run.id) + '">' + escape(runName(run)) + '</a></td>'
     + '<td><time datetime="' + escape(run.createdAt) + '">' + escape(new Date(run.createdAt).toLocaleString()) + '</time></td>'
     + '<td>' + (run.models.length ? run.models.map(escape).join('<br>') : '—') + '</td><td>' + run.total + '</td>'
     + '<td><span class="badge ' + escape(run.status) + '">' + escape(runStatus(run)) + '</span>' + (run.errors ? '<span class="row-meta">' + run.errors + ' error' + (run.errors === 1 ? '' : 's') + '</span>' : '') + '</td>'
@@ -701,9 +827,9 @@ async function deleteRun(event) {
   }
   if (target.session !== session) return;
   deletingRun = false; target.deleted = true; $('delete-run-dialog').close(); error('');
-  const viewingDeleted = location.hash === '#runs/' + target.id;
+  const viewingDeleted = routeHash() === '#runs/' + target.id;
   if (viewingDeleted) {
-    history.replaceState(null, '', '#runs'); runViewRevision++; clearTimeout(polling);
+    history.replaceState(null, '', '#' + activeWorkspace + '/runs'); runViewRevision++; clearTimeout(polling);
     $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
   }
   runDetail.forget(target.id);
@@ -715,28 +841,28 @@ async function deleteRun(event) {
   toast(alreadyDeleted ? 'This run was already removed.' : 'Run deleted. Your evaluations are still saved.');
   try {
     await Promise.all([loadRuns(), loadLibrary()]);
-    if (target.session === session && viewingDeleted && location.hash === '#runs') { await route(); $('runs-title').focus(); }
-    else if (target.session === session && location.hash === '#runs') $('runs-title').focus();
+    if (target.session === session && viewingDeleted && routeHash() === '#runs') { await route(); $('runs-title').focus(); }
+    else if (target.session === session && routeHash() === '#runs') $('runs-title').focus();
   } catch {
     if (target.session === session) error('The run was removed, but the history could not refresh. Reload the page.');
   }
 }
 async function pollRun(id, revision = runViewRevision) {
-  if (!session || revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+  if (!session || revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
   try {
     const run = await api('/api/runs/' + id);
-    if (revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+    if (revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
     pollFailures = 0; currentRun = run;
     const serialized = JSON.stringify(run);
     if (serialized !== lastRunJson) { lastRunJson = serialized; renderRunDetail(); await loadRuns(); }
-    if (revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+    if (revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
     if (activeStatuses.includes(run.status)) polling = setTimeout(() => pollRun(id, revision), 900);
     else { await loadLibrary(); }
   } catch (e) {
-    if (!session || revision !== runViewRevision || location.hash !== '#runs/' + id) return;
+    if (!session || revision !== runViewRevision || routeHash() !== '#runs/' + id) return;
     if (e.status === 404) {
       currentRun = null; renderRunDetail();
-      history.replaceState(null, '', '#runs'); toast('This run is no longer available.');
+      history.replaceState(null, '', '#' + activeWorkspace + '/runs'); toast('This run is no longer available.');
       $('runs-list-page').hidden = false; $('run-detail-page').hidden = true;
       try { await loadLibrary(); if (revision === runViewRevision) await route(); }
       catch (refreshError) { if (session && revision === runViewRevision) error(refreshError.message); }
@@ -747,36 +873,62 @@ async function pollRun(id, revision = runViewRevision) {
   }
 }
 async function pollRunList(revision = runViewRevision) {
-  if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
+  if (!session || revision !== runViewRevision || routeHash() !== '#runs') return;
   try {
     await loadRuns();
-    if (revision !== runViewRevision || location.hash !== '#runs') return;
+    if (revision !== runViewRevision || routeHash() !== '#runs') return;
     pollFailures = 0;
     if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
     else { await loadLibrary(); }
   } catch (e) {
-    if (!session || revision !== runViewRevision || location.hash !== '#runs') return;
+    if (!session || revision !== runViewRevision || routeHash() !== '#runs') return;
     error(e.message);
     if (++pollFailures < 3) polling = setTimeout(() => pollRunList(revision), 1500);
   }
 }
 async function route() {
+  const isRequests = location.hash === '#requests' || location.hash.startsWith('#requests/');
+  const wasRequests = acceptedHash === '#requests' || acceptedHash.startsWith('#requests/');
+  if (session && location.hash !== acceptedHash && (isRequests || wasRequests) && (requests.busy() || creatingRun || savingEvaluation || savingSuite || clearingWorkspace || inlineName?.pending || (hasDraft() && !confirm('Discard unsaved changes and leave this page?')))) { history.replaceState(null, '', acceptedHash); return; }
+  if (session && location.hash !== acceptedHash && (isRequests || wasRequests)) {
+    if (inlineName) finishInlineName(inlineName);
+    if (suiteDraft) closeSuiteEditor(false);
+    for (const id of ['request-dialog', 'request-decision-dialog', 'evaluation-dialog', 'create-run-dialog', 'inspect-evaluation', 'api-key-dialog']) $(id).close();
+  }
+  const requested = location.hash.match(/^#(main|personal)\//)?.[1] || activeWorkspace;
+  if (session && requested !== activeWorkspace) {
+    if ((creatingRun || savingEvaluation || savingSuite || clearingWorkspace) || (hasDraft() && !confirm('Discard unsaved changes and switch workspaces?'))) {
+      history.replaceState(null, '', acceptedHash); $('workspace-switcher').value = activeWorkspace; return;
+    }
+    acceptedHash = location.hash; await changeWorkspace(requested); return;
+  }
+  if (session && !isRequests && !/^#(?:main|personal)\//.test(location.hash)) history.replaceState(null, '', '#' + activeWorkspace + '/' + (routeHash().slice(1) || 'evaluations'));
+  acceptedHash = location.hash;
   const revision = ++runViewRevision;
   clearTimeout(polling); runsRequest++; lastRunJson = null; pollFailures = 0;
   if (!session) return;
-  const isRuns = location.hash.startsWith('#runs');
+  const isRuns = routeHash().startsWith('#runs');
+  $('requests-panel').hidden = !isRequests;
+  document.querySelector('.workspace-controls').hidden = isRequests;
+  document.querySelector('.tabs').hidden = isRequests;
+  if (isRequests) { $('evaluations-panel').hidden = true; $('runs-panel').hidden = true; await requests.route(location.hash); return; }
+  void requests.route('');
   $('evaluations-panel').hidden = isRuns; $('runs-panel').hidden = !isRuns;
   $('evaluations-tab').setAttribute('aria-selected', String(!isRuns)); $('runs-tab').setAttribute('aria-selected', String(isRuns));
   $('evaluations-tab').tabIndex = isRuns ? -1 : 0; $('runs-tab').tabIndex = isRuns ? 0 : -1;
   if (isRuns) {
-    const id = location.hash.split('/')[1];
+    const id = routeHash().split('/')[1];
     $('runs-list-page').hidden = !!id; $('run-detail-page').hidden = !id;
     if (currentRun?.id !== id || !id) { currentRun = null; renderRunDetail(); }
     await loadRuns();
     if (revision !== runViewRevision) return;
     if (id) { await pollRun(id, revision); }
     else if (runs.some(run => activeStatuses.includes(run.status))) polling = setTimeout(() => pollRunList(revision), 900);
-  } else await loadLibrary();
+  } else {
+    await loadLibrary();
+    const id = routeHash().match(/^#evaluations\/([a-z0-9-]+)$/i)?.[1];
+    if (id && revision === runViewRevision) { const evaluation = evaluations.find(e => e.id === id); if (evaluation) openForm(false, evaluation); else error('Evaluation no longer available. Remove or replace it when resubmitting.'); }
+  }
 }
 $('evaluation-form').addEventListener('submit', saveEvaluation);
 ['new-button','empty-create'].forEach(id => $(id).addEventListener('click', () => openForm()));
@@ -799,9 +951,10 @@ document.addEventListener('keydown', event => {
 document.querySelector('.library-actions').addEventListener('focusout', event => {
   if (!event.currentTarget.contains(event.relatedTarget)) closeLibraryActions();
 });
-$('example-button').addEventListener('click', () => { closeLibraryActions(); openForm(true); });
-$('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(true); });
-$('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void loadWorkshop(); });
+$('example-button').addEventListener('click', () => { closeLibraryActions(); void personalLoader(() => openForm(true)).catch(e => error(e.message)); });
+$('basic-workshop-button').addEventListener('click', () => { closeLibraryActions(true); void personalLoader(() => void loadWorkshop(true)).catch(e => error(e.message)); });
+$('workshop-button').addEventListener('click', () => { closeLibraryActions(true); void personalLoader(() => void loadWorkshop()).catch(e => error(e.message)); });
+$('testcraft-suite-button').addEventListener('click', () => { closeLibraryActions(true); void loadTestcraftSuite(); });
 $('clear-workspace-button').addEventListener('click', reviewWorkspace);
 $('clear-workspace-form').addEventListener('submit', clearWorkspace);
 $('cancel-clear-workspace').addEventListener('click', () => { if (!clearingWorkspace) $('clear-workspace-dialog').close(); });
@@ -821,7 +974,7 @@ $('delete-run-dialog').addEventListener('cancel', event => { if (deletingRun) ev
 $('delete-run-dialog').addEventListener('close', () => {
   const target = deleteTarget; deleteTarget = null; lockBody();
   if (!target || target.deleted || target.session !== session) return;
-  const container = location.hash === '#runs' ? $('run-list') : $('run-detail');
+  const container = routeHash() === '#runs' ? $('run-list') : $('run-detail');
   [...container.querySelectorAll('[data-delete-run]')].find(button => button.dataset.deleteRun === target.id)?.focus();
 });
 $('back-step').addEventListener('click', () => setStep(1));
@@ -881,10 +1034,28 @@ $('criteria-list').addEventListener('click', event => {
 $('evaluation-rows').addEventListener('input', event => {
   if (event.target.id === 'duplicate-name' && inlineName) inlineName.text = event.target.value;
 });
+$('evaluation-rows').addEventListener('change', event => {
+  const id = event.target.dataset.librarySelect;
+  if (!id || !canWriteWorkspace() || deletingLibrary) return;
+  if (event.target.checked) librarySelection.add(id); else librarySelection.delete(id);
+  updateLibrarySelection();
+});
+$('library-select-all').addEventListener('change', () => {
+  if (!canWriteWorkspace() || deletingLibrary) return;
+  for (const checkbox of $('evaluation-rows').querySelectorAll('[data-library-select]')) {
+    if ($('library-select-all').checked) librarySelection.add(checkbox.dataset.librarySelect); else librarySelection.delete(checkbox.dataset.librarySelect);
+  }
+  updateLibrarySelection();
+});
+$('clear-library-selection').addEventListener('click', () => { if (!deletingLibrary) { librarySelection.clear(); updateLibrarySelection(); $('library-select-all').focus(); } });
+$('delete-selected-evaluations').addEventListener('click', async () => {
+  if (!canWriteWorkspace() || deletingLibrary || !librarySelection.size || !await saveDuplicateName()) return;
+  askDeleteLibrary('evaluations', evaluations.filter(e => librarySelection.has(e.id)));
+});
 $('evaluation-rows').addEventListener('focusout', event => {
   // Table actions save the name in their click handler before using the row.
   // Replacing the row during pointer-down would discard that pending click.
-  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation]')) return;
+  if (event.relatedTarget?.closest('[data-inspect], [data-delete-evaluation], [data-duplicate-evaluation], [data-request-inclusion], [data-library-select], #library-select-all, #delete-selected-evaluations, #request-selected-evaluations, #clear-library-selection')) return;
   if (!renderingLibrary && event.target.id === 'duplicate-name' && !event.target.parentElement.contains(event.relatedTarget)) void saveDuplicateName();
 });
 $('evaluation-rows').addEventListener('click', event => {
@@ -901,7 +1072,7 @@ $('evaluation-rows').addEventListener('keydown', event => {
 $('evaluation-form').addEventListener('input', resizeTextareas);
 new ResizeObserver(resizeTextareas).observe($('wizard-body'));
 $('framework').addEventListener('change', () => setLanguages());
-['search','filter-type','filter-method','filter-status'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
+['search','filter-type','filter-method'].forEach(id => $(id).addEventListener(id === 'search' ? 'input' : 'change', renderLibrary));
 $('filter-suite').addEventListener('change', () => { renderSuites(); renderLibrary(); });
 document.addEventListener('click', async event => {
   const el = event.target.closest('button');
@@ -912,8 +1083,11 @@ document.addEventListener('click', async event => {
   if (el.dataset.deleteEvaluation) askDeleteLibrary('evaluation', evaluations.find(e => e.id === el.dataset.deleteEvaluation));
   if (el.dataset.deleteRun) askDeleteRun(el.dataset.deleteRun);
   if (el.dataset.rerun) void rerun(el.dataset.rerun);
+  if (el.dataset.requestInclusion) { if (inlineName && !await saveDuplicateName()) return; void requests.openSubmit(evaluations.filter(e => e.id === el.dataset.requestInclusion)).catch(e => error(e.message)); }
 });
-$('evaluations-tab').addEventListener('click', () => { location.hash = 'evaluations'; });
+$('request-selected-evaluations').addEventListener('click', async () => { if (inlineName && !await saveDuplicateName()) return; void requests.openSubmit(evaluations.filter(e => librarySelection.has(e.id))).catch(e => error(e.message)); });
+$('open-requests').addEventListener('click', () => { closeUserMenu(); if (location.hash === '#requests') void route().catch(e => error(e.message)); else location.hash = 'requests'; });
+$('evaluations-tab').addEventListener('click', () => { navigate('evaluations'); });
 $('create-run').addEventListener('click', () => openCreateRun());
 $('create-run-form').addEventListener('submit', submitRun);
 ['cancel-create-run', 'close-create-run'].forEach(id => $(id).addEventListener('click', () => { if (!creatingRun) $('create-run-dialog').close(); }));
@@ -944,7 +1118,7 @@ $('create-select-all').addEventListener('change', () => {
   } else visible.forEach(e => runSelection.delete(e.id));
   $('create-run-error').textContent = ''; renderRunEvaluations();
 });
-$('runs-tab').addEventListener('click', () => { location.hash = 'runs'; });
+$('runs-tab').addEventListener('click', () => { navigate('runs'); });
 document.querySelector('.tabs').addEventListener('keydown', event => {
   if (['ArrowRight','ArrowLeft','Home','End'].includes(event.key)) {
     event.preventDefault(); const target = event.key === 'Home' ? $('evaluations-tab') : event.key === 'End' ? $('runs-tab') : event.target === $('runs-tab') ? $('evaluations-tab') : $('runs-tab'); target.click(); target.focus();
@@ -964,42 +1138,50 @@ document.querySelectorAll('[data-run-sort]').forEach(button => button.addEventLi
 $('run-list').addEventListener('click', event => {
   if (event.target.closest('a, button') || window.getSelection()?.toString()) return;
   const row = event.target.closest('[data-run-row]');
-  if (row) location.hash = 'runs/' + row.dataset.runRow;
+  if (row) navigate('runs/' + row.dataset.runRow);
 });
 window.addEventListener('hashchange', () => route().catch(e => error(e.message)));
 async function openWorkspace() {
   config = await api('/api/config');
-  if (config.version !== 9 || !config.evaluationMethods?.hybrid) throw new Error('This page needs the updated backend. Restart the local server or refresh after deployment.');
+  if (config.version !== 10 || !config.evaluationMethods?.hybrid) throw new Error('This page needs the updated backend. Restart the local server or refresh after deployment.');
   $('connection').textContent = '● Backend connected';
   $('setup-notice').hidden = true; error('');
-  if (!config.llmReady) { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
-  await Promise.all([loadLibrary(), loadRuns(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
+  if (!config.llmReady && session.user.role === 'admin') { $('setup-notice').hidden = false; $('setup-notice').textContent = 'LLM as a judge needs OPENAI_API_KEY in the backend. You can save evaluations and use TestCraft generation with Rule-based grading.'; }
+  await Promise.all([loadLibrary(), loadRuns(), requests.badge(), ...config.environments.filter(e => e.enabled).map(e => requestRunCatalog(e.id))]); await route();
   if (!session) return;
-  $('session-status').hidden = true; $('workspace').hidden = false; $('private-badge').hidden = false;
+  $('session-status').hidden = true; $('workspace').hidden = false; $('user-menu').hidden = false;
+  $('workspace-announcement').textContent = $('workspace-name').textContent + ' · ' + $('workspace-visibility').textContent;
   scheduleSessionCheck();
 }
-async function ensureBrowserSession() {
-  let current = await api('/api/session');
-  if (!current.authenticated) {
-    await api('/api/session', { method: 'POST', body: '{}' });
-    // Verify that the browser kept the HttpOnly cookie; do not loop when cookies are blocked.
-    current = await api('/api/session');
-    if (!current.authenticated) throw new Error('Allow cookies for this site, then retry. Your browser needs a cookie to keep its private workspace.');
+function inspectEvaluation(evaluation, suiteName = evaluationSuite(evaluation), context = 'TestCraft') {
+  $('inspect-title').textContent = evaluation.name;
+  $('inspect-content').replaceChildren();
+  const fields = [['Evaluation', (evaluation.reference || '') + ' · ' + context], ['Suite', suiteName], ['Endpoint', names[endpoint(evaluation)]], ['HTML', evaluation.html], ['Input', evaluation.input], ['Page URL', evaluation.pageUrl], ['Framework', evaluation.framework], ['Language', evaluation.language], ['Page object model', evaluation.type === 'code' ? (evaluation.pom ? 'Enabled' : 'Disabled') : ''], ['Ideas', evaluation.ideas], ['Criteria', criterionObjects(evaluation).map(c => c.method + ' (weight ' + (c.weight ?? 1) + '): ' + c.text + (c.description ? '\n' + c.description : '')).join('\n\n')]];
+  for (const [label, value] of fields) {
+    if (!value) continue;
+    const heading = document.createElement('h3'), text = document.createElement('pre'); heading.textContent = label; text.textContent = value;
+    $('inspect-content').append(heading, text);
   }
-  return current;
+  $('inspect-evaluation').showModal(); lockBody();
 }
 function connectWorkspace() {
   if (sessionSetup) return sessionSetup;
-  const previousWorkspace = session?.workspaceId;
-  showConnecting();
+  updateKey(''); showConnecting();
   sessionSetup = (async () => {
     try {
-      // Serialize first visits across tabs in browsers supporting Web Locks.
-      session = navigator.locks ? await navigator.locks.request('testcraft-session-bootstrap', ensureBrowserSession) : await ensureBrowserSession();
-      const renewed = previousWorkspace && previousWorkspace !== session.workspaceId;
-      if (renewed) history.replaceState(null, '', '#evaluations');
-      await openWorkspace();
-      if (renewed) toast('A new browser session was created. Previous evaluations remain in the previous workspace.');
+      const current = await api('/api/session');
+      if (!current.authenticated) {
+        $('session-message').textContent = 'Sign in to explore TestCraft and create evaluations in your personal workspace.';
+        $('github-login').hidden = !current.loginAvailable;
+        $('session-error').textContent = new URLSearchParams(location.search).has('login') ? 'GitHub login could not be completed. Please try again.' : current.loginAvailable ? '' : 'GitHub login is not configured. Contact the app administrator.';
+        return;
+      }
+      session = current;
+      const pendingRoute = sessionStorage.getItem('testcraft-login-route'); sessionStorage.removeItem('testcraft-login-route');
+      if (pendingRoute !== null) accountChannel?.postMessage('changed');
+      if (!location.hash && /^#(?:(?:main|personal)\/(?:evaluations|runs)(?:\/[a-z0-9-]+)?|requests(?:\/[a-z0-9-]+(?:\/runs\/[a-z0-9-]+)?)?)$/.test(pendingRoute || '')) history.replaceState(null, '', pendingRoute);
+      activeWorkspace = location.hash.match(/^#(main|personal)\//)?.[1] || (location.hash ? 'personal' : 'main');
+      applyWorkspaceControls(); await openWorkspace();
     } catch (e) {
       showConnecting(); $('session-message').textContent = 'Could not open your workspace.';
       $('session-error').textContent = e.message; $('retry-session').hidden = false;
@@ -1007,5 +1189,76 @@ function connectWorkspace() {
   })();
   return sessionSetup;
 }
+$('github-login').addEventListener('click', async () => {
+  $('github-login').disabled = true;
+  try {
+    const result = await api('/api/auth/github/start', { method: 'POST', body: '{}' });
+    sessionStorage.setItem('testcraft-login-route', location.hash);
+    location.assign(result.authorizeUrl);
+  } catch (e) { $('session-error').textContent = e.message; $('github-login').disabled = false; }
+});
+$('logout').addEventListener('click', async () => {
+  closeUserMenu(true);
+  if (hasDraft() && !confirm('Discard unsaved changes and sign out?')) return;
+  try { await api('/api/auth/logout', { method: 'POST', body: '{}' }); updateKey(''); accountChannel?.postMessage('changed'); await connectWorkspace(); }
+  catch (e) { error(e.message); }
+});
+$('workspace-switcher').addEventListener('change', () => { location.hash = $('workspace-switcher').value + '/evaluations'; });
+function closeUserMenu(restoreFocus = false) {
+  $('user-menu-panel').hidden = true; $('user-menu-toggle').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) $('user-menu-toggle').focus();
+}
+function openUserMenu() {
+  closeLibraryActions(); $('user-menu-panel').hidden = false; $('user-menu-toggle').setAttribute('aria-expanded', 'true');
+}
+$('user-menu-toggle').addEventListener('click', () => $('user-menu-panel').hidden ? openUserMenu() : closeUserMenu());
+$('user-menu-toggle').addEventListener('keydown', event => {
+  if (event.key !== 'ArrowDown') return;
+  event.preventDefault(); openUserMenu(); $('user-menu-panel').querySelector('button:not([hidden]), a').focus();
+});
+document.addEventListener('click', event => { if (!event.target.closest('#user-menu')) closeUserMenu(); });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('user-menu-panel').hidden) { event.preventDefault(); closeUserMenu(true); }
+});
+$('user-menu').addEventListener('focusout', event => { if (!event.currentTarget.contains(event.relatedTarget)) closeUserMenu(); });
+$('extension-link').addEventListener('click', () => closeUserMenu(true));
+function setKeyBusy(busy) {
+  validatingKey = busy; $('personal-api-key').disabled = busy; $('save-api-key').disabled = busy;
+  $('save-api-key').textContent = busy ? 'Checking…' : 'Save key';
+  $('clear-api-key').disabled = busy || !personalKey; $('api-key-progress').hidden = !busy;
+}
+function openKeyDialog(returnFocus) {
+  if (!session || session.user.role === 'admin') return;
+  keyReturnFocus = returnFocus; closeUserMenu(); $('personal-api-key').value = personalKey; $('api-key-error').textContent = ''; setKeyBusy(false);
+  $('api-key-dialog').showModal(); lockBody(); $('personal-api-key').focus();
+}
+$('open-api-key').addEventListener('click', () => openKeyDialog($('user-menu-toggle')));
+$('set-run-api-key').addEventListener('click', () => openKeyDialog($('set-run-api-key')));
+$('api-key-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!session || session.user.role === 'admin' || validatingKey) return;
+  const value = $('personal-api-key').value.trim(), workspace = session, request = ++keyRequest;
+  $('api-key-error').textContent = ''; setKeyBusy(true);
+  try {
+    const result = await api('/api/api-key/validate', { method: 'POST', body: JSON.stringify({ openAiApiKey: value }) });
+    if (request !== keyRequest || workspace !== session || !$('api-key-dialog').open) return;
+    if (result.valid !== true) throw new Error('The API key could not be validated. Please try again.');
+    updateKey(value); setKeyBusy(false); $('api-key-dialog').close(); toast('API key validated and saved for this tab.');
+  } catch (e) {
+    if (request === keyRequest && workspace === session && $('api-key-dialog').open) { $('api-key-error').textContent = e.message; setKeyBusy(false); $('personal-api-key').focus(); }
+  }
+});
+$('clear-api-key').addEventListener('click', () => { updateKey(''); $('api-key-dialog').close(); toast('API key cleared.'); });
+['close-api-key', 'cancel-api-key'].forEach(id => $(id).addEventListener('click', () => $('api-key-dialog').close()));
+$('api-key-dialog').addEventListener('close', () => {
+  keyRequest++; setKeyBusy(false); $('personal-api-key').value = ''; $('api-key-error').textContent = ''; lockBody();
+  if (session) (keyReturnFocus?.offsetParent ? keyReturnFocus : $('create-run-dialog').open ? $('create-environment') : $('user-menu-toggle')).focus();
+  keyReturnFocus = null;
+});
+$('close-inspect').addEventListener('click', () => $('inspect-evaluation').close());
+$('inspect-evaluation').addEventListener('close', lockBody);
+if (accountChannel) accountChannel.onmessage = () => { updateKey(''); void connectWorkspace(); };
+window.addEventListener('focus', () => { if (session) void refreshSession().catch(e => error(e.message)); });
+window.addEventListener('beforeunload', event => { if (requests.hasDraft()) { event.preventDefault(); event.returnValue = ''; } });
 $('retry-session').addEventListener('click', connectWorkspace);
 void connectWorkspace();

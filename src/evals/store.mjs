@@ -46,6 +46,10 @@ export class Store {
     }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE, workshop_id TEXT NOT NULL, access_version TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, github_id TEXT NOT NULL UNIQUE, login TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','collaborator')), created_at TEXT NOT NULL, last_login_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, workshop_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('main','personal')), user_id TEXT, UNIQUE(workshop_id,user_id));
+      CREATE UNIQUE INDEX IF NOT EXISTS main_workspace ON workspaces(workshop_id) WHERE kind='main';
+      CREATE TABLE IF NOT EXISTS account_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, workshop_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS access_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS evaluation_references (
       owner_id TEXT NOT NULL, workshop_id TEXT NOT NULL, evaluation_id TEXT NOT NULL,
@@ -84,6 +88,7 @@ export class Store {
       for (const row of this.db.prepare('SELECT id, data, owner_id, workshop_id FROM evaluations').all()) add(row, row.id, JSON.parse(row.data).createdAt);
       for (const row of this.db.prepare('SELECT data, owner_id, workshop_id FROM runs').all()) {
         const run = JSON.parse(row.data);
+        if (run.sourceWorkspace) continue;
         for (const item of run.items || []) add(row, item.evaluationId || item.evaluation?.id, item.evaluation?.createdAt || run.createdAt);
       }
       for (const candidate of [...candidates.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))) {
@@ -98,6 +103,7 @@ export class Store {
   #readRun(row, scope) {
     if (!row) return undefined;
     const run = JSON.parse(row.data);
+    if (run.sourceWorkspace) return run;
     for (const item of run.items || []) {
       const reference = this.#reference(item.evaluationId || item.evaluation?.id, scope);
       if (reference) item.evaluation = { ...item.evaluation, reference };
@@ -139,12 +145,17 @@ export class Store {
     return record;
   }
   create(data, scope) { return this.transaction(() => this.#insertEvaluation(data, scope)); }
+  // Trusted stored snapshot; caller owns the approval transaction.
+  insertContribution(snapshot, suiteId, scope) {
+    const { id, reference, createdAt, revision, sourceEvaluationId, suiteName, ...definition } = snapshot;
+    return this.#insertEvaluation({ ...definition, suiteId }, scope);
+  }
   updateEvaluation(id, data, revision, scope) {
     return this.transaction(() => {
       const current = this.evaluation(id, scope);
       if (!current) throw new AppError('Evaluation not found.', 404);
       requireRevision(revision, current.revision);
-      const record = { ...data, suiteId: this.#suiteId(data.suiteId, scope), id: current.id, reference: current.reference, createdAt: current.createdAt, revision: current.revision + 1 };
+      const record = { ...data, ...(current.sourceEvaluationId ? { sourceEvaluationId: current.sourceEvaluationId } : {}), suiteId: this.#suiteId(data.suiteId, scope), id: current.id, reference: current.reference, createdAt: current.createdAt, revision: current.revision + 1 };
       this.db.prepare('UPDATE evaluations SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(record), id, ...requireScope(scope));
       return record;
     });
@@ -156,7 +167,8 @@ export class Store {
       requireObject(body, ['name']);
       const name = body.name === undefined ? current.name : requireName(body.name);
       // Copy stored legacy criteria as-is; running a copy uses the engine's normalizer.
-      return this.#insertEvaluation({ ...current, name }, scope);
+      const { sourceEvaluationId, ...definition } = current;
+      return this.#insertEvaluation({ ...definition, name }, scope);
     });
   }
   renameEvaluation(id, body, scope) {
@@ -172,14 +184,23 @@ export class Store {
     });
   }
   deleteEvaluation(id, scope) {
+    this.deleteEvaluations({ evaluationIds: [id] }, scope);
+    return { deletedId: id };
+  }
+  deleteEvaluations(body, scope) {
+    requireObject(body, ['evaluationIds']);
+    const ids = body.evaluationIds;
+    if (!Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== 'string' || !/^[a-z0-9-]+$/i.test(id)) || new Set(ids).size !== ids.length) throw new AppError('Select one or more distinct evaluation IDs.');
     return this.transaction(() => {
-      if (!this.evaluation(id, scope)) throw new AppError('Evaluation not found.', 404);
-      const active = this.runs(scope).some(run => run.items.some(item => item.evaluationId === id &&
+      for (const id of ids) if (!this.evaluation(id, scope)) throw new AppError('Evaluation not found.', 404);
+      const selected = new Set(ids);
+      const active = this.runs(scope).some(run => run.items.some(item => selected.has(item.evaluationId) &&
         (['queued', 'running'].includes(run.status) || ['queued', 'generating', 'grading'].includes(item.status))));
       if (active) throw new AppError('This evaluation has an active run. Wait for it to finish before deleting it.', 409);
-      this.db.prepare('DELETE FROM evaluations WHERE id=? AND owner_id=? AND workshop_id=?').run(id, ...requireScope(scope));
+      const statement = this.db.prepare('DELETE FROM evaluations WHERE id=? AND owner_id=? AND workshop_id=?'), params = requireScope(scope);
+      for (const id of ids) statement.run(id, ...params);
       // Run snapshots and model usage remain independent of the library definition.
-      return { deletedId: id };
+      return { deletedIds: ids };
     });
   }
   suites(scope) {
@@ -214,6 +235,35 @@ export class Store {
       if (this.evaluations(scope).some(evaluation => evaluation.suiteId === id)) throw new AppError('Only empty suites can be deleted.', 409);
       this.db.prepare('DELETE FROM suites WHERE id=? AND owner_id=? AND workshop_id=?').run(id, ...requireScope(scope));
       return { deletedId: id };
+    });
+  }
+  importTestcraft(sourceScope, scope) {
+    return this.transaction(() => {
+      const sourceSuites = this.suites(sourceScope), sourceEvaluations = this.evaluations(sourceScope);
+      if (!sourceSuites.length && !sourceEvaluations.length) throw new AppError('The TestCraft workspace has no suites or evaluations to load.', 409);
+      const existingSuites = this.suites(scope), existingEvaluations = this.evaluations(scope);
+      const suites = [], evaluations = [], suiteIds = new Map();
+      let created = false;
+      for (const source of sourceSuites) {
+        let suite = existingSuites.find(item => item.sourceSuiteId === source.id);
+        if (!suite) {
+          created = true;
+          suite = { ...this.createSuite({ name: source.name }, scope), sourceSuiteId: source.id };
+          this.db.prepare('UPDATE suites SET data=? WHERE id=? AND owner_id=? AND workshop_id=?').run(JSON.stringify(suite), suite.id, ...requireScope(scope));
+        }
+        suiteIds.set(source.id, suite.id); suites.push(suite);
+      }
+      for (const source of sourceEvaluations) {
+        let evaluation = existingEvaluations.find(item => item.sourceEvaluationId === source.id);
+        if (!evaluation) {
+          created = true;
+          // Preserve stored legacy definitions while assigning private IDs and references.
+          const { id, reference, createdAt, revision, suiteId, sourceEvaluationId, ...definition } = source;
+          evaluation = this.#insertEvaluation({ ...definition, suiteId: suiteIds.get(suiteId) || '', sourceEvaluationId: id }, scope);
+        }
+        evaluations.push(evaluation);
+      }
+      return { created, suites, evaluations };
     });
   }
   importWorkshop(bundle, scope) {

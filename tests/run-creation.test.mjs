@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../server.mjs';
+import { createOAuthApp as createApp } from './helpers.mjs';
 import { createModelCatalog } from '../src/evals/models.mjs';
 import { environments, localAvailable } from '../src/evals/run-config.mjs';
 import { listen, client, waitForRun, syntheticStream } from './helpers.mjs';

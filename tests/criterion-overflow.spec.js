@@ -66,7 +66,7 @@ for (const { width, font } of [{ width: 1280 }, { width: 390 }, { width: 1280, f
   expect((await fields.nth(0).boundingBox()).height).toBe(38);
   expect(await page.locator('#evaluation-dialog').evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
 
-  const pending = page.waitForResponse(response => response.url().endsWith('/api/evaluations') && response.request().method() === 'POST');
+  const pending = page.waitForResponse(response => response.url().endsWith('/api/workspaces/personal/evaluations') && response.request().method() === 'POST');
   await page.locator('#save-evaluation').click();
   const saved = await (await pending).json();
   expect(saved.criteria.map(criterion => criterion.text)).toEqual([revised.trim(), 'Brief.', 'Short.']);
@@ -87,7 +87,7 @@ test('multiline exact-match text survives previewing and editing', async ({ page
   await expect(page.locator('.criterion-text-preview')).toHaveText('First line ↵ Second line with  two spaces');
   await field.focus(); await expect(field).toHaveValue(text);
   await field.press('ControlOrMeta+End'); await field.press('Enter'); await field.pressSequentially('Third line');
-  const pending = page.waitForResponse(response => response.url().endsWith('/api/evaluations') && response.request().method() === 'POST');
+  const pending = page.waitForResponse(response => response.url().endsWith('/api/workspaces/personal/evaluations') && response.request().method() === 'POST');
   await page.locator('#save-evaluation').click();
   expect((await (await pending).json()).criteria[0].text).toBe(text + '\nThird line');
 });

@@ -7,6 +7,7 @@ export function summarizeRun(run) {
     item.generationModel || item.evaluation?.model || (item.evaluation?.source === 'testcraft_api' ? 'API default' : 'Unknown'));
   return {
     id: run.id, createdAt: run.createdAt, status: run.status, finishedAt: run.finishedAt,
+    sourceWorkspace: run.sourceWorkspace, resultWorkspace: run.resultWorkspace, createdBy: run.createdBy,
     total: run.items.length, passed: run.items.filter(item => item.status === 'passed').length,
     failed: run.items.filter(item => item.status === 'failed').length, errors: run.items.filter(item => item.status === 'error').length,
     models: [...new Set(models)].sort(), score: scored.length ? scored.reduce((sum, item) => sum + item.score, 0) / scored.length : null,

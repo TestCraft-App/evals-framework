@@ -1,7 +1,7 @@
-const allowedKeys = new Set(['OPENAI_API_KEY', 'TESTCRAFT_OPENAI_API_KEY']);
+const allowedKeys = new Set(['OPENAI_API_KEY', 'TESTCRAFT_OPENAI_API_KEY', 'GITHUB_CLIENT_SECRET']);
 
 export function parseSecrets(raw) {
-  const invalid = () => new Error('The AWS secret must be a JSON object containing only the supported API-key fields.');
+  const invalid = () => new Error('The AWS secret must be a JSON object containing only the supported credential fields.');
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > 16384) throw invalid();
   let parsed;
   try { parsed = JSON.parse(raw); } catch { throw invalid(); }

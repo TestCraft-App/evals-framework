@@ -8,6 +8,9 @@ test('new runs default to Dev and GPT-6 Luna and preserve explicit choices', asy
   await expect(page.locator('#create-environment')).toHaveValue('dev');
   await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-6-luna');
   await expect(page.locator('#create-grader-model')).toHaveValue('gpt-6-luna');
+  await expect(page.locator('#create-combination-count')).toHaveText('0 evals × 1 models = 0 results');
+  await expect(page.locator('#create-selected-count')).toHaveCount(0);
+  await expect(page.locator('#create-run-dialog .dialog-footer')).not.toContainText(/maximum|\d+ selected/i);
   await selectGenerationModels(page, ['gpt-4o-mini']);
   await page.locator('#create-environment').selectOption('prod');
   await expect(page.locator('#generation-model-options input:checked')).toHaveAttribute('value', 'gpt-4o-mini');
@@ -39,8 +42,8 @@ test('rerun icon opens a reviewable draft and creates fresh output using current
   const button = page.locator('[data-rerun="rerun-source"]');
   await expect(button.locator('..').locator('[data-delete-run]')).toHaveCount(1);
   await button.focus(); await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/#runs$/);
-  await expect(page.locator('#create-selected-count')).toContainText('1 selected');
+  await expect(page).toHaveURL(/#personal\/runs$/);
+  await expect(page.locator('#create-combination-count')).toContainText('1 evals');
   await expect(page.getByRole('checkbox', { name: 'Select Alpha rules', exact: true })).toBeChecked();
   await expect(page.locator('#run-description')).toHaveValue(source.description);
   await expect(page.locator('#create-environment')).toHaveValue('dev');
@@ -54,10 +57,10 @@ test('rerun icon opens a reviewable draft and creates fresh output using current
   expect(generationCalls).toHaveLength(1);
   expect(generationCalls[0].body.sourceCode).toBe(saved[0].html);
   expect(generationCalls[0].body.model).toBe('gpt-4o');
-  const newId = new URL(page.url()).hash.split('/')[1];
+  const newId = new URL(page.url()).hash.split('/').at(-1);
   expect(newId).not.toBe(source.id);
-  expect((await (await page.request.get('/api/runs/' + newId)).json()).settings).toEqual({ environment: source.settings.environment, generationModels: [source.settings.generationModel], graderModel: '', testcraftBaseUrl: 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app' });
-  expect((await (await page.request.get('/api/runs/' + source.id)).json()).items[0].output).toBe('Historical output');
+  expect((await (await page.request.get('/api/workspaces/personal/runs/' + newId)).json()).settings).toEqual({ environment: source.settings.environment, generationModels: [source.settings.generationModel], graderModel: '', testcraftBaseUrl: 'https://openai-api-proxy-dev-rtu664353a-uc.a.run.app' });
+  expect((await (await page.request.get('/api/workspaces/personal/runs/' + source.id)).json()).items[0].output).toBe('Historical output');
 });
 
 test('legacy reruns identify missing evaluations and never invent unavailable model options', async ({ page, browserApp }) => {
@@ -68,14 +71,14 @@ test('legacy reruns identify missing evaluations and never invent unavailable mo
   browserApp.store.saveRun(source, scope);
   await page.getByRole('tab', { name: /^Runs/ }).click(); await page.locator('[data-rerun="legacy-rerun"]').click();
   await expect(page.locator('#create-run-error')).toContainText('Some evaluations are no longer available');
-  await expect(page.locator('#create-selected-count')).toContainText('1 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('1 evals');
   await expect(page.locator('#generation-model-options input:checked')).toHaveCount(0);
   await expect(page.locator('#generation-model-options input[value="gpt-6-luna"]')).toHaveCount(0);
   await expect(page.locator('#submit-create-run')).toBeDisabled();
   await page.locator('#cancel-create-run').click();
   browserApp.store.deleteEvaluation(saved[0].id, scope);
   await page.locator('[data-rerun="legacy-rerun"]').click();
-  await expect(page.locator('#create-selected-count')).toContainText('0 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('0 evals');
   await expect(page.locator('#submit-create-run')).toBeDisabled();
 });
 
@@ -84,7 +87,7 @@ test('failed rerun reads show an error without opening a draft or creating a run
   const session = await (await page.request.get('/api/session')).json();
   browserApp.store.saveRun({ id: 'missing-rerun', createdAt: '2026-09-09T12:00:00Z', status: 'completed', items: [] }, { ownerId: session.workspaceId, workshopId: 'browser-tests' });
   await page.getByRole('tab', { name: /^Runs/ }).click();
-  await page.route('**/api/runs/missing-rerun', route => route.fulfill({ status: 404, json: { error: 'Run not found.' } }));
+  await page.route('**/api/workspaces/personal/runs/missing-rerun', route => route.fulfill({ status: 404, json: { error: 'Run not found.' } }));
   await page.locator('[data-rerun="missing-rerun"]').click();
   await expect(page.locator('#app-error')).toHaveText('Run not found.');
   await expect(page.locator('#create-run-dialog')).toBeHidden();
@@ -97,7 +100,7 @@ test('catalogs preload once at startup and modal spacing stays compact with an a
   expect(reads.slice().sort()).toEqual(['dev', 'local', 'prod']);
   await openRunCreator(page);
   await expect(page.locator('#create-grader-model')).toBeEnabled();
-  await expect(page.locator('#create-selected-count')).toContainText('0 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('0 evals');
   await expect(page.locator('#run-models-status')).toBeHidden();
   const heading = await page.locator('#create-run-form .dialog-heading').boundingBox();
   const parameters = await page.locator('.run-settings').boundingBox();
@@ -145,13 +148,13 @@ async function seed(page, count = 3) {
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
   const suiteIds = {};
   if (count === 3) for (const name of ['Core suite', 'Code suite']) {
-    const response = await page.request.post('/api/suites', { headers, data: { name } }); expect(response.status()).toBe(201);
+    const response = await page.request.post('/api/workspaces/personal/suites', { headers, data: { name } }); expect(response.status()).toBe(201);
     suiteIds[name] = (await response.json()).id;
   }
   const definitions = count === 3 ? [rules, { ...rules, name: 'Beta model', method: 'model_grade', suiteId: suiteIds['Core suite'] }, { ...rules, name: 'Gamma code', type: 'code', framework: 'playwright', language: 'typescript', pageUrl: 'https://example.com', suiteId: suiteIds['Code suite'] }] : Array.from({ length: count }, (_, i) => ({ ...rules, name: 'Eval ' + i }));
   const saved = [];
   for (const data of definitions) {
-    const response = await page.request.post('/api/evaluations', { headers, data }); expect(response.status()).toBe(201); saved.push(await response.json());
+    const response = await page.request.post('/api/workspaces/personal/evaluations', { headers, data }); expect(response.status()).toBe(201); saved.push(await response.json());
   }
   return saved;
 }
@@ -197,7 +200,7 @@ test('generation dropdown runs the full evaluation/model matrix and reruns retai
   await models.getByRole('checkbox', { name: 'gpt-4o-mini', exact: true }).check();
   const second = models.getByRole('checkbox', { name: 'gpt-4o', exact: true });
   await second.focus(); await page.keyboard.press('Space'); await expect(second).toBeChecked(); await expect(second).toBeFocused();
-  await expect(page.locator('#create-combination-count')).toHaveText('3 evals × 2 models = 6 results · maximum 100');
+  await expect(page.locator('#create-combination-count')).toHaveText('3 evals × 2 models = 6 results');
   await page.locator('#create-eval-search').fill('Alpha');
   await page.locator('#create-environment').selectOption('prod');
   await expect(models.locator('input:checked')).toHaveCount(2);
@@ -211,8 +214,8 @@ test('generation dropdown runs the full evaluation/model matrix and reruns retai
     await expect(row.locator('td')).toHaveText(['1', '2', '0', '3', '0.67 3/3 scored']);
   }
   expect(generationCalls).toHaveLength(6);
-  const runId = new URL(page.url()).hash.split('/')[1];
-  const run = await (await page.request.get('/api/runs/' + runId)).json();
+  const runId = new URL(page.url()).hash.split('/').at(-1);
+  const run = await (await page.request.get('/api/workspaces/personal/runs/' + runId)).json();
   expect(run.settings.generationModels).toEqual(['gpt-4o-mini', 'gpt-4o']);
   for (const model of run.settings.generationModels) expect(new Set(run.items.filter(item => item.evaluation.model === model).map(item => item.evaluationId))).toEqual(new Set(saved.map(e => e.id)));
   await page.locator('#detail-filter-model').selectOption('gpt-4o');
@@ -221,7 +224,7 @@ test('generation dropdown runs the full evaluation/model matrix and reruns retai
   await page.getByRole('link', { name: 'Back to runs' }).click();
   await page.locator('[data-rerun="' + runId + '"]').click();
   await expect(models.locator('input:checked')).toHaveCount(2);
-  await expect(page.locator('#create-selected-count')).toContainText('3 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('3 evals');
   await expect(page.locator('#create-combination-count')).toContainText('6 results');
   expect(generationCalls).toHaveLength(6);
 });
@@ -229,7 +232,7 @@ test('generation dropdown runs the full evaluation/model matrix and reruns retai
 test('the modal counts evaluation/model combinations against the shared capacity', async ({ page }) => {
   await seed(page, 50); await openRunCreator(page); await page.locator('#create-select-all').check();
   await selectGenerationModels(page, ['gpt-4o-mini', 'gpt-4o', 'o3-mini']);
-  await expect(page.locator('#create-combination-count')).toHaveText('50 evals × 3 models = 150 results · maximum 100');
+  await expect(page.locator('#create-combination-count')).toHaveText('50 evals × 3 models = 150 results');
   await expect(page.locator('#submit-create-run')).toBeDisabled();
   await page.locator('#generation-model-toggle').click();
   await page.getByRole('group', { name: 'Generation models', exact: true }).getByRole('checkbox', { name: 'o3-mini', exact: true }).uncheck();
@@ -257,11 +260,11 @@ test('run modal selects across filters, requires a conditional grader and create
   await expect(page.locator('#run-grader-hint')).toHaveCount(0);
   await page.locator('#create-eval-search').fill('Alpha'); await page.locator('#create-select-all').check();
   await page.locator('#create-eval-search').fill('Beta'); await page.locator('#create-select-all').check();
-  await expect(page.locator('#create-selected-count')).toHaveText('2 selected · maximum 50');
+  await expect(page.locator('#create-combination-count')).toHaveText('2 evals × 1 models = 2 results');
   await expect(page.locator('#create-grader-model')).toBeEnabled(); await expect(page.locator('#create-grader-model')).toHaveValue('gpt-4o-mini');
   await page.locator('#create-grader-model').selectOption(''); await expect(page.locator('#submit-create-run')).toBeDisabled();
   await page.locator('#create-select-all').uncheck();
-  await expect(page.locator('#create-selected-count')).toHaveText('1 selected · maximum 50'); await expect(page.locator('#create-grader-model')).toBeEnabled();
+  await expect(page.locator('#create-combination-count')).toHaveText('1 evals × 1 models = 1 results'); await expect(page.locator('#create-grader-model')).toBeEnabled();
   await page.locator('#create-eval-search').clear(); await page.locator('#create-eval-type').selectOption('code');
   await expect(page.locator('#create-eval-rows')).toContainText('Gamma code'); await page.locator('#create-eval-method').selectOption('model_based');
   await expect(page.locator('#create-eval-empty')).toBeVisible();
@@ -272,7 +275,7 @@ test('run modal selects across filters, requires a conditional grader and create
   await expect(page.locator('.result-score')).toContainText('1.00'); await expect(page.locator('.run-top')).toContainText('Env: Dev');
   await expect(page.locator('.run-top')).not.toContainText('Dev check <script>inert</script>');
   await expect(page.locator('.run-top script')).toHaveCount(0);
-  const run = await (await page.request.get('/api/runs/' + new URL(page.url()).hash.split('/')[1])).json();
+  const run = await (await page.request.get('/api/workspaces/personal/runs/' + new URL(page.url()).hash.split('/').at(-1))).json();
   expect(run.items.map(item => item.evaluationId)).toEqual([saved[0].id]); expect(run.settings.environment).toBe('dev'); expect(run.settings.generationModels).toEqual(['gpt-4o']);
   expect(generationCalls).toHaveLength(1); expect(generationCalls[0].url).toContain('openai-api-proxy-dev'); expect(generationCalls[0].body.model).toBe('gpt-4o');
 });
@@ -287,7 +290,7 @@ test('catalog failure blocks creation, Retry preserves the draft, and another en
   await page.locator('#create-environment').selectOption('prod');
   await expect(page.locator('#run-models-status')).toContainText('unavailable'); await expect(page.locator('#submit-create-run')).toBeDisabled();
   failed = false; await page.locator('#retry-run-models').click(); await selectGenerationModels(page, ['gpt-4o-mini']);
-  await expect(page.locator('#run-description')).toHaveValue('Keep this draft'); await expect(page.locator('#create-selected-count')).toContainText('1 selected');
+  await expect(page.locator('#run-description')).toHaveValue('Keep this draft'); await expect(page.locator('#create-combination-count')).toContainText('1 evals');
 
   await page.locator('#create-environment').selectOption('dev'); await expect(page.locator('#run-models-status')).toHaveText('Dev unavailable');
   await expect(page.locator('#generation-model-options input:checked')).toHaveCount(0); await expect(page.locator('#submit-create-run')).toBeDisabled();
@@ -319,14 +322,14 @@ test('late catalog responses cannot overwrite a newer environment and Local avai
 test('select-all enforces 50, filters retain selections, and failed submission preserves the modal', async ({ page }) => {
   await seed(page, 51); await openRunCreator(page);
   await page.locator('#create-select-all').click(); await expect(page.locator('#create-run-error')).toContainText('at most 50');
-  await expect(page.locator('#create-selected-count')).toContainText('0 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('0 evals');
   await page.locator('#create-eval-search').fill('Eval 1'); await page.locator('#create-select-all').check();
-  await expect(page.locator('#create-selected-count')).toContainText('11 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('11 evals');
   await page.locator('#create-eval-search').fill('Eval 2'); await page.locator('#create-select-all').check();
-  await expect(page.locator('#create-selected-count')).toContainText('22 selected');
+  await expect(page.locator('#create-combination-count')).toContainText('22 evals');
   let attempts = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
-  await page.route('**/api/runs', async route => {
+  await page.route('**/api/workspaces/personal/runs', async route => {
     if (route.request().method() !== 'POST') return route.continue();
     attempts++; await gate; await route.fulfill({ status: 429, json: { error: 'Allowance exhausted' } });
   });
@@ -334,7 +337,7 @@ test('select-all enforces 50, filters retain selections, and failed submission p
     await page.locator('#submit-create-run').click(); await expect(page.locator('#submit-create-run')).toBeDisabled();
     await page.keyboard.press('Escape'); await expect(page.locator('#create-run-dialog')).toBeVisible();
     release(); await expect(page.locator('#create-run-error')).toHaveText('Allowance exhausted');
-    await expect(page.locator('#create-selected-count')).toContainText('22 selected'); expect(attempts).toBe(1);
+    await expect(page.locator('#create-combination-count')).toContainText('22 evals'); expect(attempts).toBe(1);
     await page.locator('#cancel-create-run').click(); await expect(page.locator('#create-run')).toBeFocused();
   } finally { release(); }
 });

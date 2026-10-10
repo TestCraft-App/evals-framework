@@ -24,7 +24,7 @@ test('description belongs only to rule criteria and survives method changes and 
   await page.getByRole('textbox', { name: 'Description for criterion 2', exact: true }).fill('Edited coverage');
   await page.locator('#back-step').click(); await page.locator('#save-evaluation').click();
   await expect(page.getByRole('textbox', { name: 'Description for criterion 2', exact: true })).toHaveValue('Edited coverage');
-  const pending = page.waitForResponse(r => r.url().endsWith('/api/evaluations') && r.request().method() === 'POST');
+  const pending = page.waitForResponse(r => r.url().endsWith('/api/workspaces/personal/evaluations') && r.request().method() === 'POST');
   await page.locator('#save-evaluation').click(); const saved = await (await pending).json();
   expect(saved.criteria[0]).not.toHaveProperty('description'); expect(saved.criteria[1].description).toBe('Edited coverage');
 });
@@ -43,7 +43,7 @@ test('saved descriptions reach Run Detail, remain inert, and persist through dup
   expect(await page.evaluate(() => window.descriptionExecuted)).toBeUndefined();
   expect(generationCalls).toHaveLength(1);
   for (const description of descriptions) expect(JSON.stringify(generationCalls[0].body)).not.toContain(description);
-  const runUrl = page.url(), run = await (await page.request.get('/api/runs/' + runUrl.split('/').at(-1))).json();
+  const runUrl = page.url(), run = await (await page.request.get('/api/workspaces/personal/runs/' + runUrl.split('/').at(-1))).json();
   expect(run.items[0].checks.map(c => c.description)).toEqual(descriptions);
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await page.locator('#evaluation-rows').getByRole('button', { name: 'Described rules', exact: true }).click(); await page.locator('#save-evaluation').click();
@@ -108,7 +108,7 @@ test('numbered cards allow rule edits while rejecting duplicate and second exact
   await page.getByRole('button', { name: 'Remove criterion 1', exact: true }).click();
   await expect(page.locator('.criterion-number')).toHaveText(['1.', '2.']);
   await page.getByRole('combobox', { name: 'Rule for criterion 1', exact: true }).selectOption('exact_match');
-  const pending = page.waitForResponse(r => r.url().endsWith('/api/evaluations') && r.request().method() === 'POST');
+  const pending = page.waitForResponse(r => r.url().endsWith('/api/workspaces/personal/evaluations') && r.request().method() === 'POST');
   await page.locator('#save-evaluation').click(); const saved = await (await pending).json();
   expect(saved.criteria.map(c => c.method)).toEqual(['exact_match', 'model_grade']);
   expect(saved.criteria[0].description).toBe('Second description'); expect(saved.method).toBe('hybrid');

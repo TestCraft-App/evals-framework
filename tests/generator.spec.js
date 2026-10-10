@@ -1,4 +1,7 @@
 import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
+
+// Template loaders are admin actions in the shared TestCraft workspace.
+test.use({ initialWorkspace: 'main' });
 let pageErrors;
 const catalog = { models: [
   { id: 'gpt-4o-mini', label: 'GPT-4o mini', graderCompatible: true },
@@ -39,7 +42,7 @@ test('create, persist, select and run an evaluation in the results tab', async (
   await page.reload();
   await expect(page.locator('.result-score')).toContainText('1.00');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
-  await page.locator('#filter-status').selectOption('passed');
+  await expect(page.locator('#evaluations-panel').getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await page.getByRole('tab', { name: /^Runs/ }).click();
   await expect(page.locator('#run-list .score')).toHaveText('1.00');
@@ -73,11 +76,11 @@ test('finished runs can be deleted with confirmation while evaluations stay runn
   await expect(page.locator('#run-detail-page')).toBeHidden();
   await expect(page.locator('.result-score')).toHaveCount(0);
   await page.goto(savedRunUrl);
-  await expect(page).toHaveURL(/#runs$/);
+  await expect(page).toHaveURL(/#main\/runs$/);
   await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here.');
   await page.getByRole('tab', { name: /^Evaluations/ }).click();
   await expect(page.locator('#evaluation-rows')).toContainText('Keep this evaluation');
-  await page.locator('#filter-status').selectOption('not_run');
+  await expect(page.locator('#evaluations-panel').getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(1);
   await openRunCreator(page);
   await page.getByRole('checkbox', { name: 'Select Keep this evaluation', exact: true }).check();
@@ -94,7 +97,7 @@ test('failed deletion keeps the run and lets the user retry or cancel', async ({
   await page.getByRole('checkbox', { name: 'Select all visible evaluations' }).check();
   await createSelectedRun(page);
   await expect(page.locator('.result-score')).toContainText('1.00');
-  await page.route('**/api/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
+  await page.route('**/api/workspaces/main/runs/*', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary deletion failure. Try again.' } }) : route.continue());
   await page.locator('#run-detail').getByRole('button', { name: 'Delete run', exact: true }).click();
   const confirmation = page.getByRole('alertdialog');
   await confirmation.getByRole('button', { name: 'Delete run', exact: true }).click();
@@ -110,8 +113,8 @@ test('batch selection grades each case independently and preserves HTML as inert
   const base = { name: 'Batch good', type: 'code', source: 'pasted', framework: 'playwright', language: 'typescript', method: 'contains', input: 'Test login', html: '<button onclick="alert(1)">Login</button><script>throw new Error("must not run")</script>', actualOutput: 'expect(page.getByRole("button")).toBeVisible()', criteria: ['valid credentials', 'invalid email'], model: '', judgeModel: '', pageUrl: 'https://example.com/login' };
   const session = await (await page.request.get('/api/session')).json();
   const headers = { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken };
-  expect((await page.request.post('/api/evaluations', { headers, data: base })).status()).toBe(201);
-  expect((await page.request.post('/api/evaluations', { headers, data: { ...base, name: 'Batch weak', criteria: ['valid credentials', 'getByRole'], actualOutput: 'expect(true)' } })).status()).toBe(201);
+  expect((await page.request.post('/api/workspaces/main/evaluations', { headers, data: base })).status()).toBe(201);
+  expect((await page.request.post('/api/workspaces/main/evaluations', { headers, data: { ...base, name: 'Batch weak', criteria: ['valid credentials', 'getByRole'], actualOutput: 'expect(true)' } })).status()).toBe(201);
   await page.goto('/');
   await page.getByRole('searchbox').fill('Batch');
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
@@ -124,6 +127,17 @@ test('batch selection grades each case independently and preserves HTML as inert
   await weak.locator('.detail-expand').click();
   await expect(weak.locator('.result-score')).toHaveText('0.50');
   await expect(page.getByText('Contains: “getByRole” — Not met', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: /^Evaluations/ }).click();
+  await expect(page.locator('#evaluations-panel .filters select')).toHaveCount(3);
+  await expect(page.locator('#evaluations-panel').getByRole('combobox', { name: 'Status', exact: true })).toHaveCount(0);
+  await expect(page.locator('#evaluation-rows tr')).toHaveCount(2);
+  await expect(page.locator('#evaluation-rows')).toContainText('Batch good');
+  await expect(page.locator('#evaluation-rows')).toContainText('Batch weak');
+  await page.getByRole('tab', { name: /^Runs/ }).click();
+  await page.locator('#run-status').selectOption('completed');
+  await expect(page.locator('#run-list tr')).toHaveCount(1);
+  await page.locator('#run-status').selectOption('interrupted');
+  await expect(page.locator('#run-list tr')).toHaveCount(0);
 });
 
 test('LLM as a judge has quality criteria and reports missing configuration honestly', async ({ page }) => {
@@ -181,7 +195,7 @@ test('wizard validates each step, preserves edits on Back, and saves typed crite
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByLabel('Criterion 1', { exact: true })).toHaveValue('Uses only controls from the HTML.');
   await expect(page.locator('#judge-model')).toHaveCount(0);
-  const savedResponse = page.waitForResponse(res => res.url().endsWith('/api/evaluations') && res.request().method() === 'POST');
+  const savedResponse = page.waitForResponse(res => res.url().endsWith('/api/workspaces/main/evaluations') && res.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   const response = await savedResponse, payload = response.request().postDataJSON(), saved = await response.json();
   expect(payload.criteria).toEqual([{ text: 'Uses only controls from the HTML.', method: 'model_grade', weight: 1 }]);

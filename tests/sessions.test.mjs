@@ -21,13 +21,13 @@ const start = async (participant, ids) => {
   assert.equal(response.status, 202, await response.clone().text()); return response.json();
 };
 
-test('anonymous bootstrap needs no code, but private APIs still require the browser session', async () => {
+test('GitHub login is required before private APIs can be used', async () => {
   let calls = 0;
   const app = await listen(createApp({ dbPath: ':memory:', env: { OPENAI_API_KEY: 'never-public' }, fetchImpl: async () => { calls++; return stream(); } }));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
     const initial = await fetch(url + '/api/session');
-    assert.deepEqual(await initial.json(), { authenticated: false, accessMode: 'anonymous' });
+    assert.deepEqual(await initial.json(), { authenticated: false, loginAvailable: true });
     assert.equal(initial.headers.get('set-cookie'), null, 'GET must not create sessions');
     assert.equal(app.store.db.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0);
     for (const path of ['/api/config', '/api/models', '/api/evaluations', '/api/evaluations/unknown', '/api/runs', '/api/runs/unknown']) assert.equal((await fetch(url + path)).status, 401);
@@ -76,7 +76,7 @@ test('external dashboard navigation is allowed without weakening cross-site API 
   } finally { await close(app); }
 });
 
-test('each browser gets an opaque HttpOnly session, while the same cookie keeps its private workspace', async () => {
+test('different accounts get opaque HttpOnly sessions and isolated personal workspaces', async () => {
   const app = await listen(createApp({ dbPath: ':memory:' }));
   try {
     const a = await client(app), b = await client(app), reload = await client(app, { cookie: a.cookie });
@@ -85,13 +85,13 @@ test('each browser gets an opaque HttpOnly session, while the same cookie keeps 
     assert.match(a.rawCookie, /HttpOnly; SameSite=Strict; Max-Age=86400/);
     assert.match(a.cookie, /^testcraft_session=[A-Za-z0-9_-]{43}$/);
     assert.equal(a.rawCookie.includes('Secure'), false, 'HTTP is restricted to loopback development');
-    const stored = app.store.db.prepare('SELECT * FROM sessions WHERE owner_id=?').get(a.info.workspaceId);
+    const stored = app.store.db.prepare('SELECT * FROM account_sessions WHERE user_id=?').get(a.info.user.id);
     const token = a.cookie.split('=')[1];
     assert.equal(stored.token_hash, createHash('sha256').update(token).digest('hex'));
     assert.equal(JSON.stringify(stored).includes(token), false);
     assert.equal(JSON.stringify(a.info).includes(token), false);
     assert.notEqual(a.info.csrfToken, b.info.csrfToken);
-    const rejoin = await a.post('/api/session', {});
+    const rejoin = await a.request('/api/session');
     assert.equal((await rejoin.json()).workspaceId, a.info.workspaceId);
     assert.equal(rejoin.headers.get('set-cookie'), null);
   } finally { await close(app); }
@@ -131,7 +131,7 @@ test('all authenticated mutations require the matching Origin and CSRF token', a
       const response = await a.request('/api/evaluations', { method: 'POST', headers, body: JSON.stringify(evaluation) });
       assert.equal(response.status, 403);
     }
-    const noOriginJoin = await fetch(a.url + '/api/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const noOriginJoin = await fetch(a.url + '/api/auth/github/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     assert.equal(noOriginJoin.status, 403);
     assert.deepEqual((await a.get('/api/evaluations')).evaluations, []);
     assert.equal((await save(a)).name, evaluation.name);
@@ -240,7 +240,7 @@ test('forged, duplicated and expired cookies cannot read another workspace; toke
       assert.equal((await a.request('/api/evaluations', { headers: { cookie } })).status, 401);
     }
     assert.equal((await fetch(a.url + '/api/evaluations?session=' + a.cookie.split('=')[1])).status, 401);
-    app.store.db.prepare('UPDATE sessions SET expires_at=? WHERE owner_id=?').run(Date.now() - 1, a.info.workspaceId);
+    app.store.db.prepare('UPDATE account_sessions SET expires_at=? WHERE user_id=?').run(Date.now() - 1, a.info.user.id);
     assert.equal((await a.request('/api/evaluations')).status, 401);
     const fresh = await client(app);
     assert.notEqual(fresh.info.workspaceId, a.info.workspaceId);
@@ -263,17 +263,18 @@ test('new sessions are rate limited across restarts and spoofed addresses; exist
   let app = await listen(createApp({ dbPath }));
   try {
     let url = `http://127.0.0.1:${app.server.address().port}`;
-    let existingCookie;
-    for (let count = 0; count < 20; count++) {
-      const response = await fetch(url + '/api/session', { method: 'POST', headers: { origin: url, 'content-type': 'application/json', 'x-forwarded-for': `10.0.0.${count}` }, body: '{}' });
-      assert.equal(response.status, 200); existingCookie = response.headers.get('set-cookie').split(';')[0];
+    const signedIn = await client(app);
+    const existingCookie = signedIn.cookie;
+    for (let count = 1; count < 20; count++) {
+      const response = await fetch(url + '/api/auth/github/start', { method: 'POST', headers: { origin: url, 'content-type': 'application/json', 'x-forwarded-for': `10.0.0.${count}` }, body: '{}' });
+      assert.equal(response.status, 200);
     }
     await close(app); app = await listen(createApp({ dbPath })); url = `http://127.0.0.1:${app.server.address().port}`;
-    const response = await fetch(url + '/api/session', { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: '{}' });
+    const response = await fetch(url + '/api/auth/github/start', { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: '{}' });
     assert.equal(response.status, 429);
     const existing = await client(app, { cookie: existingCookie });
     for (let count = 0; count < 3; count++) {
-      const reused = await existing.post('/api/session', {});
+      const reused = await existing.request('/api/session');
       assert.equal(reused.status, 200); assert.equal(reused.headers.get('set-cookie'), null);
       assert.equal((await reused.json()).workspaceId, existing.info.workspaceId);
     }
@@ -353,15 +354,15 @@ test('sessions, data and CSRF survive restart; obsolete access-code settings hav
   } finally { await close(app); await rm(dir, { recursive: true, force: true }); }
 });
 
-test('session creation rejects caller-chosen identifiers and cross-origin requests', async () => {
+test('login initiation rejects caller-chosen identifiers and cross-origin requests', async () => {
   const app = await listen(createApp({ dbPath: ':memory:' }));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
     for (const body of [null, [], 'text', { code: 'obsolete-code' }, { ownerId: 'someone-else' }, { token: 'chosen-token' }]) {
-      const res = await fetch(url + '/api/session', { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await fetch(url + '/api/auth/github/start', { method: 'POST', headers: { origin: url, 'content-type': 'application/json' }, body: JSON.stringify(body) });
       assert.equal(res.status, 400); assert.equal(res.headers.get('set-cookie'), null);
     }
-    const crossOrigin = await fetch(url + '/api/session', { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' });
+    const crossOrigin = await fetch(url + '/api/auth/github/start', { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' });
     assert.equal(crossOrigin.status, 403);
     assert.equal(app.store.db.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0);
   } finally { await close(app); }

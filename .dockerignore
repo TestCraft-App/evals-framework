@@ -11,4 +11,9 @@
 !public/
 !public/index.html
 !public/app.js
+!public/run-detail.js
 !public/styles.css
+!public/assets/
+!public/assets/testcraft-logo.png
+!public/assets/Sora-VariableFont_wght.ttf
+!public/assets/OFL-Sora.txt

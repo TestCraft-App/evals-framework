@@ -1,10 +1,18 @@
 # TestCraft evaluation collection: design and workshop guide
 
+## Accounts and workspace selection
+
+Sign in with GitHub, then select **My workspace** to edit exercises. The **TestCraft** workspace is read-only for collaborators, including its official history. Running those definitions creates private results in My workspace without copying the definitions. Reruns use the current source definitions and preserve earlier evidence.
+
+Check the workspace bar above the tabs before making changes: teal **TestCraft workspace · Shared** identifies the shared library; blue **My workspace · Private** identifies your personal space. The permission text explains your access separately. Switch with the Workspace dropdown; when a collaborator creates a run from TestCraft, the bar changes to My workspace as the private results open.
+
+Collaborators enter one OpenAI key in the UI for TestCraft generation and OpenAI grading. The key is never saved and must be entered again after refresh. Admins use configured server credentials and can maintain the main library. In My workspace, both roles see only **Load TestCraft suite** and **Clear workspace** in Actions. Loading copies the current shared suites and evaluations, including empty suites and unfiled cases, without provider calls or run history. Repeat loads preserve private edits and add newly published cases; shared edits and deletions do not change existing copies. An empty shared library shows an error. The Actions menu is hidden in collaborators' TestCraft view; admins retain its template loaders. Personal references and TestCraft references are separate namespaces. Collaborators can submit contribution requests from their personal library and follow feedback through My requests.
+
 The Full collection in `src/evals/workshop.mjs` contains **156 evaluations in six suites**, each with **13–19 criteria that each check one property**. It is an input-only design: importing the module or using **Load Full Suite** creates no generated responses, grades, or runs. No live API calls were needed to develop these fixtures; endpoint contracts were inspected in the local API source and adapter.
 
 ## Basic collection
 
-Choose **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, each with 2–9 criteria and no rubric splitting. Choose **Load Full Suite** for the existing comprehensive collection. Both can coexist, and repeated loads preserve participant edits.
+An admin selects TestCraft and chooses **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, each with 2–9 criteria and no rubric splitting. Choose **Load Full Suite** for the existing comprehensive collection. Both can coexist. Participants select My workspace and choose **Actions → Load TestCraft suite** to copy the published collection; repeated loads preserve their edits.
 
 | Suite | Basic cases |
 | --- | --- |
@@ -37,7 +45,7 @@ You can create another run while earlier runs are active, including the same eva
 
 The Model summary below the run header compares model-graded, rule-based, hybrid, and total evaluation counts plus each model’s average score. Method counts refer to evaluations, not individual criteria. A hybrid evaluation counts only in Hybrid. Scores use 0.00–1.00 and show scored/total coverage; pending work and errors without scores are excluded. The summary stays across the whole run when filtering the results below it.
 
-To start over, choose **Actions → Clear workspace** in the evaluation library. Review the named suites, all evaluation counts (including unfiled items), and run history, then confirm. This permanently clears the current private workspace, including items hidden by filters. Active runs must finish first; changes made after review require a fresh confirmation. Cancel preserves everything. Load the workshop suite again to restore the original templates; previous edits and run evidence cannot be recovered.
+To start over, choose **Actions → Clear workspace** in the evaluation library. Review the named suites, all evaluation counts (including unfiled items), and run history, then confirm. This permanently clears the current private workspace, including items hidden by filters. Active runs must finish first; changes made after review require a fresh confirmation. Cancel preserves everything. Choose **Load TestCraft suite** again to copy the current shared library; previous private edits and run evidence cannot be recovered.
 
 | Suite | Evaluations | Focus | Attempts if every case is explicitly run |
 | --- | ---: | --- | ---: |
@@ -150,3 +158,11 @@ Evaluation tables in the library, Create Run, and Run Detail show the same short
 Both **Load Basic Suite** and **Load Full Suite** assign Eval IDs from the same workspace sequence, continuing after any existing evaluations. In an empty workspace, loading Basic first assigns `EVAL-1` through `EVAL-12`; loading Full next assigns `EVAL-13` through `EVAL-168`. Loading Full first uses `EVAL-1` through `EVAL-156`, with Basic continuing from `EVAL-157`. Reloading either collection preserves its IDs. IDs appear in the import response, evaluation library, run selector, and run results; they are assigned on import rather than hard-coded in the shared templates.
 
 Evaluation tables use a compact Eval ID column. Long cell values, including suite and model names, stay on one line with an ellipsis; hover to read the full value. Expanded criteria and generated output retain their detailed layout.
+
+## Contributing evaluations to TestCraft
+
+In **My workspace**, use a row's **Request inclusion** icon or select evaluations and choose **Request inclusion (N)**. Describe the contribution, check the selected cases (including any hidden by filters), and confirm **Send request**. No model call is made.
+
+Open **My requests** from the user menu to follow status and feedback. On request detail, choose **Review history** beside the Submission dropdown to open the dated history and comments in a modal. If an admin requests changes, edit the personal evaluations, then open the request and choose **Revise and resubmit**. You can change the selection and description; each submission preserves its own snapshots and review history. Deleting a personal evaluation does not delete a submitted snapshot, but the missing evaluation must be removed or replaced before resubmitting.
+
+Admins use **Evaluation requests** in their menu. Inspect the submitted cases, optionally create an admin-only review run, then approve all, reject with a comment, or request changes with a comment. Review runs use server credentials and are never visible to collaborators. Approval does not require passing results: it copies every submitted evaluation into TestCraft with new IDs and preserves suite grouping. Rejection closes the request. Badges show pending admin work and unread collaborator feedback; there are no email notifications.

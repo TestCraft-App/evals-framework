@@ -5,7 +5,7 @@ test('short references are searchable and consistent across the library, selecto
   const saved = await page.evaluate(async () => {
     const session = await (await fetch('/api/session')).json(), records = [];
     for (let index = 1; index <= 10; index++) {
-      const response = await fetch('/api/evaluations', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': session.csrfToken }, body: JSON.stringify({ name: 'Case ' + index, type: 'ideas', method: 'contains', html: '<button>Login</button>', criteria: ['valid credentials'] }) });
+      const response = await fetch('/api/workspaces/personal/evaluations', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': session.csrfToken }, body: JSON.stringify({ name: 'Case ' + index, type: 'ideas', method: 'contains', html: '<button>Login</button>', criteria: ['valid credentials'] }) });
       if (!response.ok) throw new Error('Could not seed reference case');
       records.push(await response.json());
     }
@@ -62,7 +62,7 @@ test('historical results resolve deleted evaluation references and show a dash w
     { id: 'unknown', evaluation: { name: 'Missing identity' }, status: 'error', checks: [] },
   ] }, scope);
   browserApp.store.deleteEvaluation(evaluation.id, scope);
-  await page.goto('/#runs/historical-references');
+  await page.goto('/#personal/runs/historical-references');
   await expect(page.locator('.detail-eval-row .evaluation-id')).toHaveText([reference, '—']);
   await page.locator('#detail-sort-reference').click();
   await page.locator('#detail-sort-reference').click();

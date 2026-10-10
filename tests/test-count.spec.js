@@ -21,7 +21,7 @@ async function createEvaluation(page, type = 'ideas', quality = false) {
   await page.locator('#add-criterion').click();
   await expect(page.locator('#add-criterion')).toBeDisabled();
   await expect(page.locator('#criteria-list .badge').last()).toHaveText('Test count');
-  const saving = page.waitForResponse(r => r.url().endsWith('/api/evaluations') && r.request().method() === 'POST');
+  const saving = page.waitForResponse(r => r.url().endsWith('/api/workspaces/personal/evaluations') && r.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   expect((await saving).status()).toBe(201);
 }
@@ -56,7 +56,7 @@ for (const type of ['ideas', 'code', 'code_ideas']) {
     await expect(page.locator('#detail-delete-run')).toBeEnabled();
     await page.locator('#detail-delete-run').click();
     await page.locator('#confirm-delete-run').click();
-    await expect(page).toHaveURL(/#runs$/);
+    await expect(page).toHaveURL(/#personal\/runs$/);
   });
 }
 
@@ -90,7 +90,7 @@ test('count criterion survives duplication and can be removed without changing t
   await expect(page.locator('#add-criterion')).toBeEnabled();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#evaluation-dialog')).toBeHidden();
-  const records = (await (await page.request.get('/api/evaluations')).json()).evaluations;
+  const records = (await (await page.request.get('/api/workspaces/personal/evaluations')).json()).evaluations;
   expect(records.find(e => e.name === 'Quantity comparison').criteria.map(c => c.method)).toEqual(['contains', 'test_count']);
   expect(records.find(e => e.name === 'Quantity comparison (copy)').criteria.map(c => c.method)).toEqual(['contains']);
   expect(generationCalls).toHaveLength(0);
@@ -104,7 +104,7 @@ test('counts sort numerically and model totals retain units and state through po
     ...(count === undefined ? {} : { testCount: count, testCountUnit: type === 'ideas' ? 'ideas' : 'automated_tests' }),
     checks: count === undefined ? [] : [{ id: 'c1', method: 'test_count', count, unit: type === 'ideas' ? 'ideas' : 'automated_tests', evidence: 'Synthetic cases.', reason: 'Static count.' }] });
   const run = { id: 'count-polling', createdAt: '2026-09-10T12:00:00Z', status: 'running', settings: { environment: 'prod', generationModels: ['gpt-4o-mini'], graderModel: 'gpt-4o-mini' }, items: [makeItem('ideas', 'ideas', 12), makeItem('code', 'code', 2), makeItem('pending', 'ideas', undefined)] };
-  browserApp.store.saveRun(run, scope); await page.goto('/#runs/' + run.id);
+  browserApp.store.saveRun(run, scope); await page.goto('/#personal/runs/' + run.id);
   await expect(page.locator('.model-count-total')).toHaveText(['12 ideas', '2 automated tests']);
   await expect(page.locator('.model-summary')).not.toContainText('Test counts sum measured outputs');
   await expect(page.locator('#model-summary-help')).toHaveCount(0);

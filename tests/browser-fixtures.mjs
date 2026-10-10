@@ -1,10 +1,22 @@
 import { test as base, expect } from '@playwright/test';
 import { once } from 'node:events';
-import { createApp } from '../server.mjs';
+import { createOAuthApp as createApp } from './helpers.mjs';
 
 // Each test gets real HTTP/session/database behavior with its own app instance.
 // This avoids sharing rate-limit state or weakening production's session limits.
 export const test = base.extend({
+  signedIn: [true, { option: true }],
+  githubId: [1, { option: true }],
+  initialWorkspace: ['personal', { option: true }],
+  context: async ({ context, baseURL, signedIn, githubId, initialWorkspace }, use) => {
+    if (signedIn) {
+      const started = await context.request.post(baseURL + '/api/auth/github/start', { data: {}, headers: { origin: baseURL } });
+      const authorization = new URL((await started.json()).authorizeUrl);
+      await context.request.get(baseURL + '/api/auth/github/callback?' + new URLSearchParams({ state: authorization.searchParams.get('state'), code: String(githubId) }));
+    }
+    await context.addInitScript(workspace => { if (!location.hash) history.replaceState(null, '', '#' + workspace + '/evaluations'); }, initialWorkspace);
+    await use(context);
+  },
   generationOutput: ['Generated ideas: valid credentials; invalid email; empty password.', { option: true }],
   generationCalls: async ({}, use) => { await use([]); },
   judgeCount: [3, { option: true }],
@@ -13,6 +25,9 @@ export const test = base.extend({
       dbPath: ':memory:',
       env: { NODE_ENV: 'test', WORKSHOP_ID: 'browser-tests', OPENAI_API_KEY: '', TESTCRAFT_OPENAI_API_KEY: '' },
       fetchImpl: async (url, options) => {
+        if (url === 'https://api.openai.com/v1/models') return options.headers.authorization === 'Bearer invalid-key'
+          ? Response.json({ error: { message: 'Private provider details' } }, { status: 401 })
+          : Response.json({ object: 'list', data: [{ id: 'gpt-4o-mini' }] });
         if (url.endsWith('/api/models')) return Response.json({ models: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].map(id => ({ id, label: id })) });
         if (url === 'https://api.openai.com/v1/chat/completions') {
           const body = JSON.parse(options.body);

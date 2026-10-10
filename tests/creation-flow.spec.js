@@ -1,6 +1,9 @@
 import { workshopSuites } from '../src/evals/workshop.mjs';
 import { test, expect, openRunCreator, createSelectedRun } from './browser-fixtures.mjs';
 
+// Template loaders are admin actions in the shared TestCraft workspace.
+test.use({ initialWorkspace: 'main' });
+
 const workshopCount = workshopSuites.reduce((sum, suite) => sum + suite.evaluations.length, 0);
 
 test.beforeEach(async ({ page }) => {
@@ -10,7 +13,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function save(page) {
-  const pending = page.waitForResponse(r => r.url().endsWith('/api/evaluations') && r.request().method() === 'POST');
+  const pending = page.waitForResponse(r => r.url().endsWith('/api/workspaces/main/evaluations') && r.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create evaluation', exact: true }).click();
   const response = await pending;
   expect(response.status()).toBe(201);
@@ -63,7 +66,7 @@ test('workshop templates have no supplied output and use the same editor and gen
   await page.getByRole('button', { name: 'Actions', exact: true }).click();
   await page.getByRole('button', { name: 'Load Full Suite', exact: true }).click();
   await expect(page.locator('#evaluation-rows tr')).toHaveCount(workshopCount);
-  const entries = (await (await page.request.get('/api/evaluations')).json()).evaluations;
+  const entries = (await (await page.request.get('/api/workspaces/main/evaluations')).json()).evaluations;
   expect(entries.every(e => e.source === 'testcraft_api' && e.actualOutput === '' && e.latest === null)).toBe(true);
   expect(generationCalls).toHaveLength(0);
   const example = entries.find(e => e.name.startsWith('IDEAS-1 '));
@@ -85,24 +88,23 @@ test('workshop templates have no supplied output and use the same editor and gen
 test('editing an older pasted case switches to generation on save and preserves its saved snapshot', async ({ page, generationCalls, browserApp }) => {
   const headers = await auth(page);
   const legacy = { name: 'Older pasted example', type: 'ideas', source: 'pasted', method: 'contains', html: '<button>Login</button>', actualOutput: 'OLD SUPPLIED RESPONSE', criteria: ['OLD'], judgeModel: '' };
-  const saved = await (await page.request.post('/api/evaluations', { headers, data: legacy })).json();
-  const session = await (await page.request.get('/api/session')).json();
+  const saved = await (await page.request.post('/api/workspaces/main/evaluations', { headers, data: legacy })).json();
   const run = { id: 'historical-pasted', status: 'completed', createdAt: '2025-01-01T00:00:00Z', items: [{ id: 'old-item', evaluationId: saved.id, evaluation: saved, status: 'passed', score: 100, output: legacy.actualOutput, checks: [], events: [] }] };
-  browserApp.store.saveRun(run, { ownerId: session.workspaceId, workshopId: 'browser-tests' });
+  browserApp.store.saveRun(run, { ownerId: browserApp.store.db.prepare("SELECT id FROM workspaces WHERE kind='main'").get().id, workshopId: 'browser-tests' });
   await page.reload();
   await page.getByRole('button', { name: legacy.name, exact: true }).click();
   await expect(page.locator('#actual-output, #actual-field')).toHaveCount(0);
   await expect(page.locator('#evaluation-dialog')).not.toContainText(legacy.actualOutput);
   await expect(page.locator('#source-hint, #input')).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  expect((await (await page.request.get('/api/evaluations/' + saved.id)).json()).source).toBe('pasted');
+  expect((await (await page.request.get('/api/workspaces/main/evaluations/' + saved.id)).json()).source).toBe('pasted');
   await page.getByRole('button', { name: legacy.name, exact: true }).click();
   await page.getByRole('button', { name: 'Next', exact: false }).click();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#evaluation-dialog')).not.toBeVisible();
-  const updated = await (await page.request.get('/api/evaluations/' + saved.id)).json();
+  const updated = await (await page.request.get('/api/workspaces/main/evaluations/' + saved.id)).json();
   expect(updated.source).toBe('testcraft_api'); expect(updated.actualOutput).toBe('');
-  const snapshot = await (await page.request.get('/api/runs/' + run.id)).json();
+  const snapshot = await (await page.request.get('/api/workspaces/main/runs/' + run.id)).json();
   expect(snapshot.items[0].evaluation.source).toBe('pasted');
   expect(snapshot.items[0].evaluation.actualOutput).toBe(legacy.actualOutput);
   expect(generationCalls).toHaveLength(0);

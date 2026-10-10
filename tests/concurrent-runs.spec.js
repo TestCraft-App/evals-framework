@@ -6,7 +6,7 @@ test('Create Run reuses an active evaluation and shows separate running and comp
   try {
     await page.goto('/'); await expect(page.locator('#workspace')).toBeVisible();
     const session = await (await page.request.get('/api/session')).json();
-    const response = await page.request.post('/api/evaluations', {
+    const response = await page.request.post('/api/workspaces/personal/evaluations', {
       headers: { origin: new URL(page.url()).origin, 'x-csrf-token': session.csrfToken },
       data: { name: 'Concurrent login', type: 'ideas', html: '<button>Login</button>', method: 'contains', criteria: ['valid credentials'] },
     });
@@ -21,9 +21,9 @@ test('Create Run reuses an active evaluation and shows separate running and comp
       }
       await createSelectedRun(page);
       await expect(page.locator('#run-detail-page')).toBeVisible();
-      const id = new URL(page.url()).hash.split('/')[1];
+      const id = new URL(page.url()).hash.split('/').at(-1);
       runs.push(id);
-      await expect.poll(async () => (await (await page.request.get('/api/runs/' + id)).json()).status).toBe('running');
+      await expect.poll(async () => (await (await page.request.get('/api/workspaces/personal/runs/' + id)).json()).status).toBe('running');
     }
     expect(runs[0]).not.toBe(runs[1]); expect(browserApp.engine.active).toBe(2);
     await page.getByRole('tab', { name: /^Runs/ }).click();

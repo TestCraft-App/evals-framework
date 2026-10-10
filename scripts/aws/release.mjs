@@ -27,13 +27,15 @@ export function releaseConfig(env) {
     release: checked('GITHUB_SHA', /^[a-f0-9]{40}$/),
     run: `${checked('GITHUB_RUN_ID', /^\d+$/)}-${checked('GITHUB_RUN_ATTEMPT', /^\d+$/)}`,
     workshop: checked('WORKSHOP_ID', /^[A-Za-z0-9_-]{1,80}$/),
+    githubClientId: checked('OAUTH_GITHUB_CLIENT_ID', /^[A-Za-z0-9_.-]{1,100}$/),
+    adminGithubIds: checked('ADMIN_GITHUB_IDS', /^[1-9][0-9]*(?:,[1-9][0-9]*)*$/),
   };
 }
 
 export function manifestFor(config, digest) {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Expected an immutable ECR image digest.');
-  const { account, region, origin, secretArn, workshop, release } = config;
-  return { account, region, origin, secretArn, workshop, release, image: `${config.repository}@${digest}` };
+  const { account, region, origin, secretArn, workshop, release, githubClientId, adminGithubIds } = config;
+  return { account, region, origin, secretArn, workshop, release, githubClientId, adminGithubIds, image: `${config.repository}@${digest}` };
 }
 
 const exec = (program, args, options = {}) => execFileSync(program, args, { encoding: 'utf8', maxBuffer: 5 * 1024 * 1024, ...options });

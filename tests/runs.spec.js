@@ -59,7 +59,7 @@ test('row and keyboard navigation preserve filters, direct detail links and brow
   await seed(page, browserApp);
   await page.locator('#run-search').fill('run-alpha');
   await page.locator('[data-run-row="run-alpha"] td').nth(1).click();
-  await expect(page).toHaveURL(/#runs\/run-alpha$/);
+  await expect(page).toHaveURL(/#personal\/runs\/run-alpha$/);
   await expect(page.locator('#runs-list-page')).toBeHidden(); await expect(page.locator('.result-score').first()).toContainText('1.00');
   await page.getByRole('link', { name: 'Back to runs' }).click();
   await expect(page.locator('#runs-list-page')).toBeVisible();
@@ -67,7 +67,7 @@ test('row and keyboard navigation preserve filters, direct detail links and brow
   await page.locator('[data-run-row="run-alpha"] a').focus(); await page.keyboard.press('Enter');
   await expect(page.locator('#run-detail-page')).toBeVisible();
   await page.reload(); await expect(page.locator('.result-score').first()).toContainText('1.00');
-  await page.getByRole('tab', { name: /^Runs/ }).click(); await expect(page).toHaveURL(/#runs$/);
+  await page.getByRole('tab', { name: /^Runs/ }).click(); await expect(page).toHaveURL(/#personal\/runs$/);
   await page.goBack(); await expect(page.locator('#run-detail-page')).toBeVisible();
   await page.goForward(); await expect(page.locator('#runs-list-page')).toBeVisible();
 });
@@ -75,14 +75,14 @@ test('row and keyboard navigation preserve filters, direct detail links and brow
 test('table deletion stays on list, supports cancellation and failure, then removes the row', async ({ page, browserApp }) => {
   await seed(page, browserApp);
   const button = page.locator('[data-run-row="run-alpha"] [data-delete-run]');
-  await button.click(); await expect(page).toHaveURL(/#runs$/);
+  await button.click(); await expect(page).toHaveURL(/#personal\/runs$/);
   await page.locator('#cancel-delete-run').click(); await expect(button).toBeFocused();
-  await page.route('**/api/runs/run-alpha', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary failure' } }) : route.continue());
+  await page.route('**/api/workspaces/personal/runs/run-alpha', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 503, json: { error: 'Temporary failure' } }) : route.continue());
   await button.click(); await page.locator('#confirm-delete-run').click();
   await expect(page.locator('#delete-run-error')).toHaveText('Temporary failure'); await expect(button).toHaveCount(1);
-  await page.unroute('**/api/runs/run-alpha'); await page.locator('#confirm-delete-run').click();
+  await page.unroute('**/api/workspaces/personal/runs/run-alpha'); await page.locator('#confirm-delete-run').click();
   await expect(page.locator('#delete-run-dialog')).toBeHidden(); await expect(button).toHaveCount(0);
-  await expect(page).toHaveURL(/#runs$/); await expect(page.locator('#filtered-runs-count')).toHaveText('3 of 3 runs');
+  await expect(page).toHaveURL(/#personal\/runs$/); await expect(page.locator('#filtered-runs-count')).toHaveText('3 of 3 runs');
 });
 
 test('visible active runs update automatically and stop polling after completion', async ({ page, browserApp }) => {
@@ -93,7 +93,7 @@ test('visible active runs update automatically and stop polling after completion
   await expect(page.locator('[data-run-row="run-active"]')).toContainText('0.75');
   await expect(page.locator('[data-run-row="run-active"] [data-delete-run]')).toBeEnabled();
   await page.clock.install();
-  let reads = 0; page.on('request', request => { if (request.url().endsWith('/api/runs')) reads++; });
+  let reads = 0; page.on('request', request => { if (request.url().endsWith('/api/workspaces/personal/runs')) reads++; });
   await page.clock.fastForward(5000); expect(reads).toBe(0);
 });
 
@@ -101,7 +101,7 @@ test('successful detail deletion returns to the table even if the following read
   await seed(page, browserApp);
   await page.locator('[data-run-row="run-alpha"] a').click();
   await expect(page.locator('.result-score').first()).toContainText('1.00');
-  await page.route('**/api/runs', route => route.fulfill({ status: 503, json: { error: 'Temporary read failure' } }));
+  await page.route('**/api/workspaces/personal/runs', route => route.fulfill({ status: 503, json: { error: 'Temporary read failure' } }));
   await page.locator('#run-detail [data-delete-run]').click(); await page.locator('#confirm-delete-run').click();
   await expect(page.locator('#app-error')).toContainText('The run was removed');
   await expect(page.locator('#runs-list-page')).toBeVisible(); await expect(page.locator('#run-detail-page')).toBeHidden();
@@ -110,7 +110,7 @@ test('successful detail deletion returns to the table even if the following read
 
 test('empty history and narrow table remain usable without page overflow', async ({ page, browserApp }) => {
   await page.setViewportSize({ width: 390, height: 780 });
-  await page.goto('/#runs'); await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here');
+  await page.goto('/#personal/runs'); await expect(page.locator('#empty-runs')).toContainText('Your runs will appear here');
   await expect(page.locator('#filtered-runs-count')).toHaveText('0 of 0 runs');
   await seed(page, browserApp);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(2);
@@ -125,7 +125,7 @@ test('an older table response cannot restore a deleted run', async ({ page, brow
   const gate = new Promise(resolve => { release = resolve; });
   const pending = new Promise(resolve => { started = resolve; });
   let held = false;
-  await page.route('**/api/runs', async route => {
+  await page.route('**/api/workspaces/personal/runs', async route => {
     if (held) return route.continue();
     held = true;
     const response = await route.fetch();
@@ -137,7 +137,7 @@ test('an older table response cannot restore a deleted run', async ({ page, brow
     await page.locator('[data-run-row="run-alpha"] [data-delete-run]').click();
     await page.locator('#confirm-delete-run').click();
     await expect(page.locator('[data-run-row="run-alpha"]')).toHaveCount(0);
-    const returned = page.waitForResponse(response => response.url().endsWith('/api/runs'));
+    const returned = page.waitForResponse(response => response.url().endsWith('/api/workspaces/personal/runs'));
     release(); await returned;
     await expect(page.locator('#filtered-runs-count')).toHaveText('3 of 3 runs');
     await expect(page.locator('[data-run-row="run-alpha"]')).toHaveCount(0);
@@ -149,14 +149,14 @@ test('late detail responses do not reopen detail after returning to the table', 
   let release, started;
   const gate = new Promise(resolve => { release = resolve; });
   const pending = new Promise(resolve => { started = resolve; });
-  await page.route('**/api/runs/run-alpha', async route => {
+  await page.route('**/api/workspaces/personal/runs/run-alpha', async route => {
     const response = await route.fetch(); started(); await gate; await route.fulfill({ response });
   });
   try {
     await page.locator('[data-run-row="run-alpha"] a').click(); await pending;
     await page.getByRole('link', { name: 'Back to runs' }).click();
     await expect(page.locator('#runs-list-page')).toBeVisible();
-    const returned = page.waitForResponse(response => response.url().endsWith('/api/runs/run-alpha'));
+    const returned = page.waitForResponse(response => response.url().endsWith('/api/workspaces/personal/runs/run-alpha'));
     release(); await returned;
     await expect(page.locator('#run-detail-page')).toBeHidden();
     await expect(page.locator('#run-list tr')).toHaveCount(4);
