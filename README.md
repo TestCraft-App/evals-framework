@@ -23,7 +23,7 @@ Open [TestCraft Evals](http://127.0.0.1:3000). If port 3000 is occupied, stop th
 
 ## GitHub accounts and workspaces
 
-Sign in with GitHub to create an account. Any GitHub user can join as a collaborator; `ADMIN_GITHUB_IDS` is the operator-managed list of numeric GitHub IDs that receive admin access. Usernames may change without losing account data. No passwords, emails, repository permissions, or GitHub tokens are stored.
+The welcome screen presents a centered sign-in card with **Sign in with GitHub**, responsive spacing for phones, and inline connection or login errors. The button shows progress while opening GitHub; failed attempts can be retried. Sign in with GitHub to create an account. Any GitHub user can join as a collaborator; `ADMIN_GITHUB_IDS` is the operator-managed list of numeric GitHub IDs that receive admin access. Usernames may change without losing account data. No passwords, emails, repository permissions, or GitHub tokens are stored.
 
 Register a GitHub OAuth App for each environment. Use `OAUTH_GITHUB_CLIENT_ID` for both local configuration and the GitHub Actions variable. Set `GITHUB_CLIENT_SECRET` locally; for AWS deployment, store `GITHUB_CLIENT_SECRET` in AWS Secrets Manager. Use the callback `APP_ORIGIN/api/auth/github/callback`; for local development use `http://127.0.0.1:3000/api/auth/github/callback` and open that same hostname. Set `ADMIN_GITHUB_IDS=12345,67890` using immutable account IDs from GitHub's user API, not usernames. Missing OAuth configuration leaves sign-in unavailable, with no anonymous fallback. Admin changes take effect after restart. There is no role-management UI.
 

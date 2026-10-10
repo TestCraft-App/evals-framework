@@ -372,6 +372,7 @@ test.describe('sign-in', () => {
     await expect(page.locator('#workspace')).toBeHidden();
     await page.locator('#github-login').click();
     await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.locator('#session-status')).toBeHidden();
     await expect(page.locator('#user-menu-name')).toHaveText('user-1001');
     await page.locator('#user-menu-toggle').click();
     await expect(page.locator('#private-badge')).toContainText('user-1001 · collaborator');

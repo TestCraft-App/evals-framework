@@ -24,11 +24,22 @@
       </div>
     </div>
   </header>
-  <section id="session-status" class="session-status" aria-live="polite">
-    <p id="session-message">Opening your private workspace…</p>
-    <p id="session-error" class="session-error" role="alert"></p>
-    <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
-    <button id="github-login" type="button" class="button primary" hidden>Sign in with GitHub</button>
+  <section id="session-status" class="session-status" aria-labelledby="session-title" aria-live="polite">
+    <div class="login-card">
+      <div class="login-logo" aria-hidden="true"><img src="/assets/testcraft-logo.png" width="48" height="48" alt=""></div>
+      <p class="login-eyebrow">TESTCRAFT EVALS</p>
+      <h1 id="session-title">Opening your workspace</h1>
+      <p id="session-message" class="login-description">A little space for better tests.</p>
+      <p id="session-error" class="session-error" role="alert"></p>
+      <div class="login-actions">
+        <button id="retry-session" type="button" class="button" hidden>Retry connection</button>
+        <button id="github-login" type="button" class="button primary" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.14.68-3.8-1.33-3.8-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.03-.7.08-.69.08-.69 1.14.08 1.73 1.17 1.73 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.51-2.51-.29-5.15-1.26-5.15-5.59 0-1.23.44-2.23 1.16-3.02-.12-.29-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.1-1.16 3.1-1.16.61 1.55.23 2.69.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.34-2.64 5.3-5.16 5.58.4.35.76 1.03.76 2.09v3.09c0 .3.2.65.78.54A11.25 11.25 0 0 0 12 .75Z"/></svg>
+          <span id="github-login-label">Sign in with GitHub</span>
+        </button>
+      </div>
+      <p id="session-note" class="login-note" hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Your personal workspace stays private.</p>
+    </div>
   </section>
   <p id="workspace-announcement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
   <main class="shell" id="workspace" hidden>

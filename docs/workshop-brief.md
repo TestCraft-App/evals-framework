@@ -8,7 +8,7 @@ TestCraft's browser extension is the application being evaluated. This project s
 
 The top-left checkmark logo and blue Sora TestCraft wordmark match the extension's branding; **Evals** identifies this dashboard. The brand link returns to Evaluations in the selected workspace.
 
-Open the workshop URL directly or follow a shared link from another site or phone app in your browser. External links can load the public dashboard, where users sign in with GitHub and choose TestCraft or My workspace. Cross-site API access remains blocked.
+Open the workshop URL directly or follow a shared link from another site or phone app in your browser. A centered welcome card offers **Sign in with GitHub** on desktop and mobile. Sign-in progress, login errors, and connection retries appear within the card. After signing in, choose TestCraft or My workspace. Cross-site API access remains blocked.
 
 The workspace bar above Evaluations and Runs shows teal **TestCraft workspace · Shared** or blue **My workspace · Private**, with distinct icons and permission text. Use its Workspace dropdown to switch. Shared visibility does not grant editing permission; collaborator runs from TestCraft open in My workspace, and the bar updates to match their private destination.
 
