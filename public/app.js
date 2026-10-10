@@ -122,7 +122,10 @@ function showConnecting() {
   $('workspace').hidden = true; $('user-menu').hidden = true; $('session-status').hidden = false;
   $('workspace-announcement').textContent = '';
   $('private-badge').textContent = ''; $('user-menu-name').textContent = ''; $('user-menu-toggle').removeAttribute('title');
-  $('session-message').textContent = 'Opening your workspace…';
+  $('session-title').textContent = 'Opening your workspace';
+  $('session-message').textContent = 'A little space for better tests.';
+  $('session-note').hidden = true; $('github-login').hidden = true; $('github-login').disabled = false;
+  $('github-login-label').textContent = 'Sign in with GitHub';
   $('session-error').textContent = ''; $('retry-session').hidden = true;
 }
 function scheduleSessionCheck() {
@@ -1171,7 +1174,9 @@ function connectWorkspace() {
     try {
       const current = await api('/api/session');
       if (!current.authenticated) {
-        $('session-message').textContent = 'Sign in to explore TestCraft and create evaluations in your personal workspace.';
+        $('session-title').textContent = 'Welcome to TestCraft';
+        $('session-message').textContent = 'Explore evaluations, refine your test ideas, and make a workspace of your own.';
+        $('session-note').hidden = false;
         $('github-login').hidden = !current.loginAvailable;
         $('session-error').textContent = new URLSearchParams(location.search).has('login') ? 'GitHub login could not be completed. Please try again.' : current.loginAvailable ? '' : 'GitHub login is not configured. Contact the app administrator.';
         return;
@@ -1183,7 +1188,8 @@ function connectWorkspace() {
       activeWorkspace = location.hash.match(/^#(main|personal)\//)?.[1] || (location.hash ? 'personal' : 'main');
       applyWorkspaceControls(); await openWorkspace();
     } catch (e) {
-      showConnecting(); $('session-message').textContent = 'Could not open your workspace.';
+      showConnecting(); $('session-title').textContent = 'Let’s try that again';
+      $('session-message').textContent = 'Could not open your workspace.';
       $('session-error').textContent = e.message; $('retry-session').hidden = false;
     } finally { sessionSetup = null; }
   })();
@@ -1191,11 +1197,12 @@ function connectWorkspace() {
 }
 $('github-login').addEventListener('click', async () => {
   $('github-login').disabled = true;
+  $('github-login-label').textContent = 'Connecting to GitHub…'; $('session-error').textContent = '';
   try {
     const result = await api('/api/auth/github/start', { method: 'POST', body: '{}' });
     sessionStorage.setItem('testcraft-login-route', location.hash);
     location.assign(result.authorizeUrl);
-  } catch (e) { $('session-error').textContent = e.message; $('github-login').disabled = false; }
+  } catch (e) { $('session-error').textContent = e.message; $('github-login').disabled = false; $('github-login-label').textContent = 'Sign in with GitHub'; }
 });
 $('logout').addEventListener('click', async () => {
   closeUserMenu(true);
