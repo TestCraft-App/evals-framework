@@ -1,4 +1,4 @@
-# AWS workshop operations runbook
+# TestCraft Evals AWS operations runbook
 
 Use this checklist with the [deployment guide](aws-deployment.md) for architecture, OAuth, permissions, and release behavior. Commands below are for an operator to run against verified targets; updating this document does not provision or deploy anything.
 
@@ -10,12 +10,11 @@ Use this checklist with the [deployment guide](aws-deployment.md) for architectu
 | Resource region | `us-east-1` |
 | Stack | `testcraft-evals-workshop` |
 | Repository | `TestCraft-App/evals-framework` |
-| Intended GitHub operator | `jfagundez-uy`, subject to current access verification |
 | Release gate | Actions variable `AWS_DEPLOY_ENABLED` |
 
-The `default` AWS profile and GitHub account `juan-fagundez_cldev` belong to another context. Do not use them here. The Endava SSO region was previously recorded as `eu-central-1`; it does not determine the resource region. Verify the current profile rather than changing unrelated profiles.
+Verify that the selected AWS profile and GitHub account have access to the configured targets. The SSO region does not determine the resource region. Do not change unrelated profiles.
 
-Record the responsible operator, approved budget, retention decision, and a **new teardown date/time**. The previous September 10, 2026 workshop deadline has passed and is not an active shutdown schedule. This repository has no automated teardown.
+Record the responsible operator, approved budget, retention decision, and planned teardown date/time when applicable. This repository has no automated teardown.
 
 From PowerShell in the repository root:
 
@@ -37,7 +36,7 @@ Only a confirmed stack-not-found response means absence. Authentication, permiss
 
 ## 2. Prepare the runtime secret privately
 
-In the Endava console, select **N. Virginia (`us-east-1`) → Secrets Manager**. Identify the existing app secret before creating another. A historical reference appears at the end of this runbook; verify its ownership and active status before reuse.
+In the Endava console, select **N. Virginia (`us-east-1`) → Secrets Manager**. Identify the existing app secret before creating another; verify its ownership and active status before reuse.
 
 Use **Other type of secret** with JSON fields `OPENAI_API_KEY`, optional `TESTCRAFT_OPENAI_API_KEY`, and `GITHUB_CLIENT_SECRET`. The deployment guide explains their distinct destinations. Use default Secrets Manager encryption unless a reviewed customer-managed KMS policy is required. Do not enable automatic rotation without an integration that actually rotates those credentials.
 
@@ -98,7 +97,7 @@ $taskAppOrigin = 'REPLACE_WITH_APP_ORIGIN_OUTPUT'
 Invoke-WebRequest -Uri "$taskAppOrigin/healthz"
 ```
 
-Expect HTTP 200, `Cache-Control: no-store`, and the intended release SHA. This verifies process readiness/routing, not OAuth validity or model credentials. Complete browser acceptance before inviting participants.
+Expect HTTP 200, `Cache-Control: no-store`, and the intended release SHA. This verifies process readiness/routing, not OAuth validity or model credentials. Complete browser acceptance before inviting users.
 
 For an existing anonymous installation, verify its pre-release backup before migration. Legacy data remains preserved but inaccessible through new accounts. Sign in as an administrator and use Actions to populate the initially empty TestCraft workspace; accounts do not claim anonymous data.
 
@@ -106,7 +105,7 @@ For an existing anonymous installation, verify its pre-release backup before mig
 
 Use synthetic inputs. Loading, editing, saving, inspecting, and deleting examples needs no model calls. Actual runs can consume credits; use controlled provider budgets for live checks.
 
-1. Sign in with an allowlisted administrator. Confirm role, TestCraft write access, and My workspace access. Load examples/workshop content into the intended workspace.
+1. Sign in with an allowlisted administrator. Confirm role, TestCraft write access, and My workspace access. Load example evaluations or Basic/Full suites into the intended workspace.
 2. Sign in with a different, non-allowlisted GitHub account in another browser profile. Confirm TestCraft is readable, editing is unavailable, and personal content is writable. Collaborator loader actions in TestCraft should target My workspace.
 3. Test personal isolation with two **different GitHub accounts**. The same account across profiles/devices intentionally sees the same workspace. Neither account, including an administrator, should access the other's personal data.
 4. Confirm a collaborator cannot run without a key. Enter a dedicated OpenAI key and run a small TestCraft evaluation. Its result should open in My workspace, retain its TestCraft source label, and leave official TestCraft latest results unchanged.
@@ -150,12 +149,3 @@ Teardown removes the app from the internet and can destroy evaluations, runs, ba
 8. Remove only snapshots/backups selected for deletion. Recheck EBS, NAT/Elastic IP, S3, ECR, Secrets Manager, and CloudFront against the inventory; report residual resources. Billing can lag, so an immediate billing view cannot establish zero future cost.
 
 A reminder does not remove resources. Renew expired SSO with `aws sso login --profile endava`. Even if the app never released successfully, inspect manual secrets, partial stacks, and retained volumes before concluding nothing remains.
-
-## Historical references: verify before reuse
-
-These preserve earlier operator context, not current inventory or permission checks:
-
-- September 8, 2026: VPC quota reportedly increased from five to six under request `01e70684f5604ff8936d147ed9435069CrrGGtaM`. That created no infrastructure; check available quota again.
-- Previously recorded secret: `evals-app`, ARN `arn:aws:secretsmanager:us-east-1:419466290453:secret:evals-app-S8XRid`. Verify metadata, ownership, and active status before reuse; avoid creating a duplicate simply because setup is repeated.
-- A previous private-repository branch-protection request returned 403 due to plan limitations. Check current plan/settings. PR convention alone does not block direct pushes.
-- Previous workshop cost estimates and the September 10 teardown date are obsolete planning references. Obtain a current estimate and assign a new teardown owner/date.

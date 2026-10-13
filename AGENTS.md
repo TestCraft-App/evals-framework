@@ -7,13 +7,13 @@ These instructions apply to the entire repository. This project is a small Node.
 ## Repository map
 
 - `server.mjs`: HTTP entry point and `createApp()` composition root. It serves the API and the static dashboard.
-- `src/evals/`: active backend domain code: validation, methods, providers, graders, execution, sessions, persistence, and workshop fixtures.
+- `src/evals/`: active backend domain code: validation, methods, providers, graders, execution, sessions, persistence, and evaluation fixtures.
 - `src/runtime/`: startup-only secret loading.
 - `public/`: dependency-free browser UI (`index.html`, `app.js`, and `styles.css`); there is no frontend build step.
 - `tests/*.test.mjs`: Node test-runner unit and integration coverage.
 - `tests/*.spec.js`: Playwright browser coverage. The fixtures start isolated in-memory servers and mock provider traffic.
 - `scripts/aws/`, `Dockerfile`, and `.github/workflows/ci-deploy.yml`: production packaging and AWS deployment.
-- `docs/`: workshop and deployment documentation.
+- `docs/`: evaluation-suite and deployment documentation.
 - `src/generator.mjs`, `src/runner.mjs`, `src/evaluator.mjs`, `src/scenarios.mjs`, and `public/demo-app.html`: historical prototype references, not active runtime code.
 
 ## Setup and commands
@@ -53,7 +53,7 @@ There is no configured lint, format, type-check, or compile command. Do not clai
 
 ## Security and provider boundaries
 
-- Browser workspaces must remain isolated by server-issued, HttpOnly, SameSite=Strict session cookies. Do not accept caller-selected owner/workshop identifiers.
+- Browser workspaces must remain isolated by server-issued, HttpOnly, SameSite=Strict session cookies. Do not accept caller-selected owner or storage-scope identifiers.
 - Preserve exact-origin and session-bound CSRF enforcement on authenticated mutations. Never place API keys or session tokens in URLs or browser-visible configuration.
 - Keep admin generator and grader credentials separate. `TESTCRAFT_OPENAI_API_KEY` may go only to TestCraft; `OPENAI_API_KEY` may go only to `OPENAI_BASE_URL` and server-side AWS secret loading. Collaborators explicitly supply one per-run key for both destinations; keep that key only in tab/job memory, never persisted or mixed into shared environment configuration.
 - Generation must not receive expected outputs, grading criteria, or judge-only context.

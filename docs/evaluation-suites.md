@@ -1,8 +1,8 @@
-# TestCraft evaluation collection: design and workshop guide
+# TestCraft evaluation suites: design and usage
 
 ## Accounts and workspace selection
 
-Sign in with GitHub, then select **My workspace** to edit exercises. The **TestCraft** workspace is read-only for collaborators, including its official history. Running those definitions creates private results in My workspace without copying the definitions. Reruns use the current source definitions and preserve earlier evidence.
+Sign in with GitHub, then select **My workspace** to edit evaluations. The **TestCraft** workspace is read-only for collaborators, including its official history. Running those definitions creates private results in My workspace without copying the definitions. Reruns use the current source definitions and preserve earlier evidence.
 
 Check the workspace bar above the tabs before making changes: teal **TestCraft workspace · Shared** identifies the shared library; blue **My workspace · Private** identifies your personal space. The permission text explains your access separately. Switch with the Workspace dropdown; when a collaborator creates a run from TestCraft, the bar changes to My workspace as the private results open.
 
@@ -12,7 +12,7 @@ The Full collection in `src/evals/workshop.mjs` contains **156 evaluations in si
 
 ## Basic collection
 
-An admin selects TestCraft and chooses **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, each with 2–9 criteria and no rubric splitting. Choose **Load Full Suite** for the existing comprehensive collection. Both can coexist. Participants select My workspace and choose **Actions → Load TestCraft suite** to copy the published collection; repeated loads preserve their edits.
+An admin selects TestCraft and chooses **Actions → Load Basic Suite** for 12 evaluations: two per Full suite, each with 2–9 criteria and no rubric splitting. Choose **Load Full Suite** for the existing comprehensive collection. Both can coexist. Collaborators select My workspace and choose **Actions → Load TestCraft suite** to copy the published collection; repeated loads preserve their edits.
 
 | Suite | Basic cases |
 | --- | --- |
@@ -27,7 +27,7 @@ The selected login injection uses the reserved example endpoint `https://login-v
 
 Model criteria each target one concise objective. Code rubrics combine semantic checks with a literal Markdown-fence rule. The rule-only evaluation rejects Markdown fences, `waitForTimeout(`, `test.skip(`, and `test.only(`; those text checks are intentionally limited and do not prove valid or correct code. All 12 cases fit in one run, requiring 12 generation and 11 judge attempts per selected generation model. These evaluate generated output quality, not endpoint transport or live application execution.
 
-`basicWorkshopSuites` exports this collection with independent `workshop-basic-v1-*` seeds. `POST /api/basic-workshop-suite {}` uses the same private, atomic, idempotent import contract and response shape as Full. It accepts only an empty JSON object and requires the existing origin/session/CSRF checks. No environment settings change.
+The Basic collection has independent seed identities, so it can coexist with Full. `POST /api/basic-workshop-suite {}` uses the same private, atomic, idempotent import contract and response shape as Full. It accepts only an empty JSON object and requires the existing origin/session/CSRF checks. No environment settings change. Import routes and module names retain their legacy identifiers.
 
 ## Comparing output quantity
 
@@ -129,29 +129,19 @@ The v1 adapter sends `sourceCode` and `stream` on every route. Code routes also 
 
 The inspected API rejects a leading doctype with its current tag check, removes scripts and comments, and minifies HTML. Fixtures therefore start with `<html>` and carry application assumptions in ordinary text. Attacks are also placed where that preprocessing will not deliberately strip them. These contracts come from the local checkout; the deployed API was not probed.
 
-All fixture URLs use `workshop.testcraft.invalid`. They are context, not deployed applications. HTML describes assumed transitions using non-rendered templates; generated code must not treat those templates as visible UI. The evaluator grades code as text and does not execute it, navigate the URL, compile it, or establish that a real application behaves as specified. Transport errors, authentication failures, rate limits, and malformed request/stream handling belong to the backend integration tests, because the current evaluation schema grades completed generation outputs rather than HTTP response contracts.
+All fixture URLs use a reserved `.invalid` host. They are context, not deployed applications. HTML describes assumed transitions using non-rendered templates; generated code must not treat those templates as visible UI. The evaluator grades code as text and does not execute it, navigate the URL, compile it, or establish that a real application behaves as specified. Transport errors, authentication failures, rate limits, and malformed request/stream handling belong to the backend integration tests, because the current evaluation schema grades completed generation outputs rather than HTTP response contracts.
 
 Every criterion produces Pass/Fail evidence and a reason. The overall threshold is 0.80 in the UI (80 internally); a high aggregate can hide a failed scenario or injection defense. Review individual results and judge evidence. Model verdicts can vary or be wrong, and a literal formatting check alone proves little. The automated fixture tests use canned provider responses and validate plumbing, isolation and accounting; they do not certify semantic quality or model robustness.
 
 ## Loading later and preserving existing work
 
-**Load Full Suite** imports the six suites atomically and shows all evaluations. The Suite filter then selects individual suites. It never starts a run. Existing `workshop-v1` and `workshop-v2-live` imports, participant edits and historical snapshots remain unchanged. Stable new keys are `workshop-v3-ideas`, `workshop-v3-code`, `workshop-v3-selected`, `workshop-v3-bindings`, `workshop-v3-adversarial`, and `workshop-v3-injection`.
+**Load Full Suite** imports the six suites atomically and shows all evaluations. The Suite filter then selects individual suites. It never starts a run. Earlier imports, user edits and historical snapshots remain unchanged. Each suite has a stable seed identity.
 
 Seed identities are unchanged by this design-only rubric revision. If the earlier design was already imported, loading does not silently replace its criteria. Repeated loads reuse existing seeded suites, including renamed suites, and do not recreate deleted members or move edited evaluations back. After moving/deleting all members, deleting that empty suite allows it to be imported again; other suites are retained. A failure in any newly imported suite rolls back the entire collection import. Private session and CSRF rules are unchanged.
 
 `workshopSuites` is the canonical collection export; `workshopSuite` is a compatibility alias for the first suite. `POST /api/workshop-suite {}` returns `{ suite, suites, evaluations }`, where `suite` aliases the first returned suite and `evaluations` includes members of all six. It returns 201 if any suite was created, otherwise 200. No new environment variables are needed. When explicitly running model-graded cases, configure the backend grader credential separately from the TestCraft generation credential and choose available models in Create Run.
 
-## Optional one-hour workshop
-
-| Minutes | Activity |
-| --- | --- |
-| 0–10 | Read one fixture and its criteria; distinguish specified behavior from unknown context. |
-| 10–25 | If generation is authorized, select one ideas case and its direct-code counterpart; inspect outputs and individual verdicts. |
-| 25–40 | Compare a selected-ideas case and one language/POM variant; examine assertions, binding correctness and scope fidelity. |
-| 40–50 | Inspect a sparse-context or injection case; review critical failures regardless of aggregate score. |
-| 50–60 | Duplicate one evaluation, improve a rubric with concrete evidence, and record unresolved behavior or judge disagreements. |
-
-Loading definitions is enough for a design review. Execution is an explicit, separate decision.
+## Evaluation references
 
 Evaluation tables in the library, Create Run, and Run Detail show the same short **Eval ID** (for example, `EVAL-1`) for referencing a case. Numbers are assigned independently per private workspace, so include workspace context when sharing references. Editing keeps the ID, duplicating creates a new one, and saved runs retain it even after a case is deleted. Numbers are never reused, including after clearing a workspace. Search by ID in the library or run selector; the library and Run Detail also support sorting by Eval ID.
 

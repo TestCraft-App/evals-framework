@@ -1,6 +1,6 @@
 # Deploying TestCraft Evals to AWS
 
-This guide describes the deployment implemented in this repository. Use the [workshop runbook](aws-workshop-runbook.md) for operator commands, acceptance checks, and teardown. Reviewed against the source and provider documentation on October 6, 2026; this is not a verification of live AWS resources or GitHub settings.
+This guide describes the deployment implemented in this repository. Use the [operations runbook](aws-operations.md) for operator commands, acceptance checks, and teardown. Reviewed against the source and provider documentation on October 6, 2026; this is not a verification of live AWS resources or GitHub settings.
 
 The app runs as one Node.js container with persistent SQLite storage. Anyone can sign in with GitHub as a collaborator; numeric GitHub IDs designate administrators. Collaborators can view TestCraft and run its evaluations privately, or manage their personal workspace. They supply their own OpenAI key. Administrators use server credentials. There is no application-wide model-call budget; configure spending controls with the providers.
 
@@ -15,7 +15,7 @@ The app runs as one Node.js container with persistent SQLite storage. Anyone can
 
 For an existing stack, inspect its resources and outputs and proceed to configuration/release. `provision.ps1` refuses to update or overwrite an existing stack. Infrastructure changes need a separately reviewed CloudFormation update; the workflow only updates the application.
 
-Use [AWS Pricing Calculator](https://calculator.aws/) with current [EC2](https://aws.amazon.com/ec2/pricing/on-demand/), [VPC](https://aws.amazon.com/vpc/pricing/), and [EBS](https://aws.amazon.com/ebs/pricing/) prices. Include NAT hours/traffic, public IPv4, EC2, both disks, CloudFront, ECR/S3, Secrets Manager, backups, and model calls. Stopping EC2 does not stop all those charges. Budget alerts do not automatically cap spending. Previous workshop estimates are not current quotes.
+Use [AWS Pricing Calculator](https://calculator.aws/) with current [EC2](https://aws.amazon.com/ec2/pricing/on-demand/), [VPC](https://aws.amazon.com/vpc/pricing/), and [EBS](https://aws.amazon.com/ebs/pricing/) prices. Include NAT hours/traffic, public IPv4, EC2, both disks, CloudFront, ECR/S3, Secrets Manager, backups, and model calls. Stopping EC2 does not stop all those charges. Budget alerts do not automatically cap spending.
 
 ## 2. Infrastructure created by the template
 
@@ -131,7 +131,7 @@ The [workflow](../.github/workflows/ci-deploy.yml) runs Node tests, Bash syntax 
 
 [deploy-host.sh](../scripts/aws/deploy-host.sh) then:
 
-1. Tests the image with an empty in-memory database and the runtime secret, without touching participant data or calling models.
+1. Tests the image with an empty in-memory database and the runtime secret, without touching user data or calling models.
 2. Stops admission of new runs and waits up to ten minutes for accepted runs. On timeout it aborts and attempts to reopen admission.
 3. Stops the old container and archives the entire `data/` directory to `backups/predeploy-...tar.gz` on the data volume.
 4. Starts the new container against persistent data and checks local health/release identity.
